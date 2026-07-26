@@ -32,7 +32,7 @@ get_tmux_option() {
 STATUS_POSITION=$(get_tmux_option "@tmon-status-position" "right")
 POLL_INTERVAL=$(get_tmux_option "@tmon-poll-interval" "3000")
 ACTIVITY_THRESHOLD=$(get_tmux_option "@tmon-activity-threshold" "500")
-IO_THRESHOLD=$(get_tmux_option "@tmon-io-threshold" "1024")
+IO_THRESHOLD=$(get_tmux_option "@tmon-io-threshold" "102400")
 DASHBOARD_KEY=$(get_tmux_option "@tmon-dashboard-key" "a")
 
 export TMON_POLL_INTERVAL_MS="$POLL_INTERVAL"

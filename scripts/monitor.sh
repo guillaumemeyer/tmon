@@ -16,7 +16,7 @@ POLL_INTERVAL_MS="${TMON_POLL_INTERVAL_MS:-3000}"  # milliseconds between full s
 POLL_INTERVAL_SEC=$(( POLL_INTERVAL_MS / 1000 ))
 [[ "$POLL_INTERVAL_SEC" -lt 1 ]] && POLL_INTERVAL_SEC=1
 ACTIVITY_THRESHOLD_MS="${TMON_ACTIVITY_THRESHOLD_MS:-500}"  # CPU ms/s to consider "active"
-IO_ACTIVITY_THRESHOLD="${TMON_IO_ACTIVITY_THRESHOLD:-1024}"  # min IO bytes/poll to consider "active"
+IO_ACTIVITY_THRESHOLD="${TMON_IO_ACTIVITY_THRESHOLD:-102400}"  # min IO bytes/poll to consider "active"
 mkdir -p "$STATE_DIR"
 
 # ─── Agent Detection Signatures ───────────────────────────────────────────────

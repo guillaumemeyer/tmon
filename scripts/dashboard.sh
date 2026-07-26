@@ -11,6 +11,7 @@
 #   /         — start full-text search (filters by agent name, session, window)
 #   r         — refresh agent list
 #   q/Esc     — quit
+#   (auto-refreshes every 1.5s, full reload every 6s)
 
 set -euo pipefail
 
@@ -18,6 +19,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MONITOR_SCRIPT="$SCRIPT_DIR/monitor.sh"
 PANE_MAPPER="$SCRIPT_DIR/pane-map.sh"
 STATE_FILE="${HOME}/.cache/tmon/agents.state"
+ANIM_FRAME_FILE="${HOME}/.cache/tmon/animation.frame"
+REFRESH_INTERVAL=1.5  # seconds between auto-refresh ticks
+FULL_REFRESH_TICKS=4  # full data refresh every N ticks (~6s at 1.5s interval)
 
 # ─── ANSI escape codes ────────────────────────────────────────────────────────
 
@@ -298,6 +302,50 @@ agent_icon() {
   esac
 }
 
+# ─── Animation ────────────────────────────────────────────────────────────────
+
+# Read the animation frame counter (written by monitor.sh each poll).
+# Returns 0 if the file doesn't exist yet.
+read_animation_frame() {
+  local frame=0
+  if [[ -f "$ANIM_FRAME_FILE" ]]; then
+    frame=$(cat "$ANIM_FRAME_FILE" 2>/dev/null || echo "0")
+  fi
+  echo "$frame"
+}
+
+# Return a colored, animated status character for an individual agent.
+# Toggles on alternating frames (matches monitor.sh behavior):
+#   blocked: ? ↔ ! (orange)
+#   active:  ● ↔ ! (green)
+#   idle:    ‖     (blue, static)
+animated_status_char() {
+  local status="$1" frame="$2"
+
+  case "$status" in
+    blocked)
+      if [[ $((frame % 2)) -eq 0 ]]; then
+        echo "${FG_ORANGE}?${RESET}"
+      else
+        echo "${FG_ORANGE}!${RESET}"
+      fi
+      ;;
+    active|running)
+      if [[ $((frame % 2)) -eq 0 ]]; then
+        echo "${FG_GREEN}●${RESET}"
+      else
+        echo "${FG_GREEN}!${RESET}"
+      fi
+      ;;
+    idle)
+      echo "${FG_BLUE}‖${RESET}"
+      ;;
+    *)
+      echo "${FG_DIM}·${RESET}"
+      ;;
+  esac
+}
+
 # ─── Status display ───────────────────────────────────────────────────────────
 
 status_dot() {
@@ -349,6 +397,10 @@ render() {
   printf '━%.0s' $(seq 1 "$terms_cols")
   printf '%s' "$RESET"
 
+  # Read animation frame for status character toggling
+  local frame
+  frame=$(read_animation_frame)
+
   # --- Body (line 3+) ---
   local row=3
   local max_body_row=$((terms_lines - 1))  # last line is footer
@@ -365,13 +417,14 @@ render() {
       [[ "$row" -ge "$max_body_row" ]] && break
 
       local i="${FILTERED_INDICES[$fi]}"
-      local label name path
+      local label name path sc
       label="${AGENT_LABELS[$i]}"
       name=$(agent_full_name "$label")
       path=$(tmux_path_display "$i")
+      sc=$(animated_status_char "${AGENT_STATUSES[$i]}" "$frame")
 
       local line
-      printf -v line ' %s: %s' "$name" "$path"
+      printf -v line ' %s %s: %s' "$sc" "$name" "$path"
 
       if [[ "$fi" -eq "$selected" ]]; then
         printf "${CSI}${row};1H%s%s%s" "$BG_HL" "$line" "$BG_DEFAULT"
@@ -421,9 +474,22 @@ main() {
   refresh_data
   render
 
+  local auto_ticks=0
+
   while true; do
     local key=""
-    IFS= read -r -s -n 1 key 2>/dev/null || { key="q"; }
+    local read_rc=0
+    IFS= read -r -s -n 1 -t "$REFRESH_INTERVAL" key 2>/dev/null || read_rc=$?
+
+    # Auto-refresh on timeout (no key pressed within REFRESH_INTERVAL)
+    if [[ $read_rc -ne 0 ]]; then
+      auto_ticks=$((auto_ticks + 1))
+      if [[ $((auto_ticks % FULL_REFRESH_TICKS)) -eq 0 ]]; then
+        refresh_data
+      fi
+      render
+      continue
+    fi
 
     # Handle escape sequences
     if [[ "$key" == $'\033' ]]; then
