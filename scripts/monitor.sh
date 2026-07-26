@@ -11,6 +11,7 @@ set -euo pipefail
 
 STATE_DIR="${TMON_STATE_DIR:-$HOME/.cache/tmon}"
 STATE_FILE="$STATE_DIR/agents.state"
+ANIM_FRAME_FILE="$STATE_DIR/animation.frame"
 POLL_INTERVAL_MS="${TMON_POLL_INTERVAL_MS:-3000}"  # milliseconds between full scans
 POLL_INTERVAL_SEC=$(( POLL_INTERVAL_MS / 1000 ))
 [[ "$POLL_INTERVAL_SEC" -lt 1 ]] && POLL_INTERVAL_SEC=1
@@ -357,8 +358,23 @@ detect_blocked() {
 TMUX_FG_GREEN='#[fg=green]'
 TMUX_FG_ORANGE='#[fg=colour208]'
 TMUX_FG_BLUE='#[fg=blue]'
+TMUX_FG_CYAN='#[fg=cyan]'
 TMUX_FG_DIM='#[fg=colour240]'
 TMUX_RESET='#[default]'
+
+# ─── Icon Animation ───────────────────────────────────────────────────────────
+
+# Advance the animation frame counter and return the current frame (0-indexed).
+# Wraps at 100 to avoid unbounded growth.
+tick_animation_frame() {
+  local frame=0
+  if [[ -f "$ANIM_FRAME_FILE" ]]; then
+    frame=$(cat "$ANIM_FRAME_FILE" 2>/dev/null || echo "0")
+  fi
+  frame=$(( (frame + 1) % 100 ))
+  echo "$frame" > "$ANIM_FRAME_FILE"
+  echo "$frame"
+}
 
 # Render the full status line — count-based aggregate format
 render_status() {
@@ -389,10 +405,14 @@ render_status() {
   # Remove stale PIDs from state (processes that died)
   prune_stale_state "$current_pids"
 
+  # Tick animation frame for status character toggling
+  local frame
+  frame=$(tick_animation_frame)
+
   # If nothing detected, show all zeros with constant width
   if [[ "$total" -eq 0 ]]; then
     printf -v z " 0"
-    echo -n "🤖: "
+    echo -n "${TMUX_FG_CYAN}[@]${TMUX_RESET} "
     echo -n "${TMUX_FG_ORANGE}?${z}${TMUX_RESET}"
     echo -n " - "
     echo -n "${TMUX_FG_GREEN}●${z}${TMUX_RESET}"
@@ -402,15 +422,27 @@ render_status() {
   fi
 
   # Render count segments: always show all three, padded to 2 chars
-  # Format: 🤖: ? 2 - ● 3 - ‖ 1  (constant width, standard chars)
   printf -v b_pad "%2d" "$blocked_count"
   printf -v a_pad "%2d" "$active_count"
   printf -v i_pad "%2d" "$idle_count"
 
-  echo -n "🤖: "
-  echo -n "${TMUX_FG_ORANGE}?${b_pad}${TMUX_RESET}"
+  # Animated status characters: toggle only when agents exist in that state
+  local b_char a_char
+  if [[ "$blocked_count" -gt 0 ]] && [[ $((frame % 2)) -ne 0 ]]; then
+    b_char="!"
+  else
+    b_char="?"
+  fi
+  if [[ "$active_count" -gt 0 ]] && [[ $((frame % 2)) -ne 0 ]]; then
+    a_char="!"
+  else
+    a_char="●"
+  fi
+
+  echo -n "${TMUX_FG_CYAN}[@]${TMUX_RESET} "
+  echo -n "${TMUX_FG_ORANGE}${b_char}${b_pad}${TMUX_RESET}"
   echo -n " - "
-  echo -n "${TMUX_FG_GREEN}●${a_pad}${TMUX_RESET}"
+  echo -n "${TMUX_FG_GREEN}${a_char}${a_pad}${TMUX_RESET}"
   echo -n " - "
   echo -n "${TMUX_FG_BLUE}‖${i_pad}${TMUX_RESET}"
 }

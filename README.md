@@ -20,7 +20,7 @@ jump straight to their pane.
 ### Status bar
 
 ```
-🤖: ? 2 - ● 3 - ‖ 1
+[@] ? 2 - ● 3 - ‖ 1
      ↑      ↑      ↑
   blocked  active  idle
 ```
@@ -28,7 +28,7 @@ jump straight to their pane.
 - **? orange** — agent is frozen, waiting for you (permission prompt, plan approval, y/n question)
 - **● green** — agent is cooking (CPU or IO activity detected, or just booted up)
 - **‖ blue** — agent is idle (no activity for a few polls)
-- **🤖: ? 0 - ● 0 - ‖ 0** — no agents detected (peace and quiet)
+- **[@] ? 0 - ● 0 - ‖ 0** — no agents detected (peace and quiet)
 
 Every segment always renders at a fixed width, so your status bar won't
 dance around when counts change.

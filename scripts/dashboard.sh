@@ -224,7 +224,7 @@ refresh_data() {
     AGENT_PANE_INDEXES+=("${pane_index:-?}")
     AGENT_SESSION_IDS+=("${session_id:-?}")
     idx=$((idx + 1))
-  done < <(detect_agents | bash "$PANE_MAPPER" 2>/dev/null)
+  done < <(detect_agents | bash "$PANE_MAPPER" 2>/dev/null | sort -t'|' -k11,11n -k8,8n -k10,10n)
 
   agent_count=$idx
   rebuild_filter
@@ -281,6 +281,23 @@ agent_full_name() {
   esac
 }
 
+agent_icon() {
+  case "$1" in
+    Grok)      echo "🧠" ;;   # deep understanding ("grok")
+    Claude)    echo "🏛️" ;;   # classical / Anthropic aesthetic
+    Codex)     echo "📖" ;;   # codex = ancient manuscript / book
+    Cursor)    echo "🖱️" ;;   # the editor is named after the cursor
+    Cline)     echo "🔧" ;;   # a tool / VS Code extension
+    Aider)     echo "🤝" ;;   # "aider" = "to help" in French
+    Copilot)   echo "👨‍✈️" ;;  # pilot / copilot
+    CodeBuddy) echo "🧑‍💻" ;;  # coding buddy / developer
+    Windsurf)  echo "🏄" ;;   # windsurfing
+    Hermes)    echo "🪶" ;;   # Hermes' winged sandals / messenger
+    OpenClaw)  echo "🦞" ;;   # claw
+    *)         echo "[@]" ;;   # generic AI fallback
+  esac
+}
+
 # ─── Status display ───────────────────────────────────────────────────────────
 
 status_dot() {
@@ -312,7 +329,7 @@ tmux_path_display() {
   local wi="${AGENT_WINDOW_INDEXES[$i]:-?}"
   local wn="${AGENT_WINDOW_NAMES[$i]:-?}"
   local pi="${AGENT_PANE_INDEXES[$i]:-?}"
-  echo "[${sid}]:${sn}/[${wi}]:${wn}/[${pi}]"
+  echo "[${sid}]:${sn} / [${wi}]:${wn} / [${pi}]"
 }
 
 # ─── Rendering ────────────────────────────────────────────────────────────────
@@ -325,7 +342,7 @@ render() {
   printf '%s%s' "$HOME" "$CLEAR"
 
   # --- Header (line 1) ---
-  printf "${CSI}1;1H%s%s tmon — Agent Navigation %*s%s" "$BOLD" "$FG_CYAN" $((terms_cols - 28)) "[q] quit" "$RESET"
+  printf "${CSI}1;1H%s%s [@] TMON%s" "$BOLD" "$FG_CYAN" "$RESET"
 
   # --- Divider (line 2) ---
   printf "${CSI}2;1H%s" "$FG_DIM"
@@ -348,35 +365,21 @@ render() {
       [[ "$row" -ge "$max_body_row" ]] && break
 
       local i="${FILTERED_INDICES[$fi]}"
-      local name label sd sl
+      local label name path
       label="${AGENT_LABELS[$i]}"
       name=$(agent_full_name "$label")
-      sd=$(status_dot "${AGENT_STATUSES[$i]}")
-      sl=$(status_label "${AGENT_STATUSES[$i]}")
+      path=$(tmux_path_display "$i")
 
-      local tmux_path
-      tmux_path=$(tmux_path_display "$i")
+      local line
+      printf -v line ' %s: %s' "$name" "$path"
 
       if [[ "$fi" -eq "$selected" ]]; then
-        printf "${CSI}${row};1H"
-        printf '%s' "$BG_HL"
-        printf ' %s %s  %s' "$sd" "$name" "$sl"
-        printf '%s' "$BG_DEFAULT"
-
-        printf "${CSI}$((row + 1));1H"
-        printf '%s' "$BG_HL"
-        printf '    %s' "$tmux_path"
-        printf '%s' "$BG_DEFAULT"
+        printf "${CSI}${row};1H%s%s%s" "$BG_HL" "$line" "$BG_DEFAULT"
       else
-        printf "${CSI}${row};1H"
-        printf ' %s %s  %s' "$sd" "$name" "$sl"
-
-        printf "${CSI}$((row + 1));1H"
-        printf '%s    %s' "$FG_DIM" "$tmux_path"
-        printf '%s' "$RESET"
+        printf "${CSI}${row};1H%s" "$line"
       fi
 
-      row=$((row + 2))
+      row=$((row + 1))
     done
   fi
 
@@ -389,7 +392,7 @@ render() {
     printf "${CSI}${terms_lines};$((terms_cols - ${#match_str}))H%s" "$match_str"
     printf '%s' "$RESET"
   else
-    local hints="  ↑↓/jk navigate  enter/→ focus  / search  r refresh  q quit"
+    local hints="  ↑↓/jk navigate  enter/→/l focus  / search  r refresh  q quit"
     printf "${CSI}${terms_lines};1H%s" "$FG_DIM"
     printf '━%.0s' $(seq 1 $((terms_cols - ${#hints})))
     printf '%s%s' "$hints" "$RESET"
