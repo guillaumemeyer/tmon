@@ -120,6 +120,14 @@ set -g @plugin 'guillaumemeyer/tmon'
 
 Then `prefix I` to install.
 
+> **Note:** If you're setting up TPM for the first time, make sure the
+> TPM initializer runs at the **very bottom** of your `~/.tmux.conf`:
+>
+> ```tmux
+> # Initialize TMUX plugin manager (keep this line at the very bottom of tmux.conf)
+> run '~/.tmux/plugins/tpm/tpm'
+> ```
+
 ### Manual
 
 ```bash
