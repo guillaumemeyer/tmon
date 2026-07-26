@@ -15,19 +15,18 @@
 #   @tmon-dashboard-key      "a" (default) — chord leader for popup (prefix a a)
 # ==============================================================================
 
-set -euo pipefail
+set -eu
 
-CURRENT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+CURRENT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MONITOR_SCRIPT="$CURRENT_DIR/scripts/monitor.sh"
 
 # ─── Configuration ────────────────────────────────────────────────────────────
 
 get_tmux_option() {
-  local option="$1"
-  local default_value="$2"
-  local value
-  value=$(tmux show-option -gqv "$option" 2>/dev/null)
-  echo "${value:-$default_value}"
+  _tmo_option="$1"
+  _tmo_default_value="$2"
+  _tmo_value=$(tmux show-option -gqv "$_tmo_option" 2>/dev/null)
+  echo "${_tmo_value:-$_tmo_default_value}"
 }
 
 STATUS_POSITION=$(get_tmux_option "@tmon-status-position" "right")
@@ -50,27 +49,34 @@ main() {
   chmod +x "$CURRENT_DIR/scripts/notify.sh" 2>/dev/null || true
 
   # Build the monitor interpolation string, wrapped in a clickable range
-  local monitor_widget
-  monitor_widget="#[range=user|tmon]#(bash '$MONITOR_SCRIPT' --once 2>/dev/null)#[norange]"
+  _tmon_widget="#[range=user|tmon]#(bash '$MONITOR_SCRIPT' --once 2>/dev/null)#[norange]"
 
-  # Set the status bar interpolation
-  if [[ "$STATUS_POSITION" == "left" ]]; then
-    local existing_left
-    existing_left=$(tmux show-option -gqv status-left 2>/dev/null || echo "")
-    if [[ -n "$existing_left" ]]; then
-      tmux set -g status-left "$monitor_widget $existing_left"
-    else
-      tmux set -g status-left "$monitor_widget"
-    fi
+  # Set the status bar interpolation (skip if already present — guards against double-load)
+  if [ "$STATUS_POSITION" = "left" ]; then
+    _tmon_existing=$(tmux show-option -gqv status-left 2>/dev/null || echo "")
+    case "$_tmon_existing" in
+      *"$MONITOR_SCRIPT"*) ;;  # already present, skip
+      *)
+        if [ -n "$_tmon_existing" ]; then
+          tmux set -g status-left "$_tmon_widget $_tmon_existing"
+        else
+          tmux set -g status-left "$_tmon_widget"
+        fi
+        ;;
+    esac
   else
     # Append to status-right
-    local existing_right
-    existing_right=$(tmux show-option -gqv status-right 2>/dev/null || echo "")
-    if [[ -n "$existing_right" ]]; then
-      tmux set -g status-right "$existing_right $monitor_widget"
-    else
-      tmux set -g status-right "$monitor_widget"
-    fi
+    _tmon_existing=$(tmux show-option -gqv status-right 2>/dev/null || echo "")
+    case "$_tmon_existing" in
+      *"$MONITOR_SCRIPT"*) ;;  # already present, skip
+      *)
+        if [ -n "$_tmon_existing" ]; then
+          tmux set -g status-right "$_tmon_existing $_tmon_widget"
+        else
+          tmux set -g status-right "$_tmon_widget"
+        fi
+        ;;
+    esac
   fi
 
   # Setup chord table for agent navigation popup
@@ -79,7 +85,9 @@ main() {
 
   # Mouse click on the status bar agent indicator opens the dashboard
   tmux bind-key -T root MouseDown1Status \
-    "if -F '#{==:#{mouse_status_range},tmon}' 'display-popup -w 80% -h 80% -E \"bash \\'$CURRENT_DIR/scripts/dashboard.sh\\'\"' ''"
+    if -F "#{==:#{mouse_status_range},tmon}" \
+    "display-popup -w 80% -h 80% -E 'bash $CURRENT_DIR/scripts/dashboard.sh'" \
+    "select-window -t ="
 }
 
 main "$@"
