@@ -96,20 +96,20 @@ has_children() {
 # Scan all running processes for AI agent matches.
 # Returns lines: "PID|LABEL|CMDLINE_SNIPPET|CWD"
 detect_agents() {
-  local regex
-  regex=$(build_detect_regex)
+  local regex="${AGENT_DETECT_REGEX}"
 
   for pid_dir in /proc/[0-9]*; do
     local pid="${pid_dir##*/}"
     local cmdline=""
-    # Read cmdline, replacing null bytes with spaces
+    # Read cmdline, replacing null bytes with spaces (pure bash, no tr fork)
     if [[ -r "$pid_dir/cmdline" ]]; then
-      cmdline=$(tr '\0' ' ' < "$pid_dir/cmdline" 2>/dev/null || true)
+      IFS= read -r -d '' cmdline < "$pid_dir/cmdline" 2>/dev/null || true
+      cmdline="${cmdline//$'\0'/ }"
     fi
     [[ -n "$cmdline" ]] || continue
 
-    # Quick grep against the combined regex
-    if ! echo "$cmdline" | grep -qE "$regex"; then
+    # Quick match against the combined regex (pure bash [[ =~ ]], no grep fork)
+    if [[ ! "$cmdline" =~ $regex ]]; then
       continue
     fi
 
@@ -119,7 +119,7 @@ detect_agents() {
       local label regex_p
       label=$(sig_label "$sig")
       regex_p=$(sig_regex "$sig")
-      if echo "$cmdline" | grep -qE "$regex_p"; then
+      if [[ "$cmdline" =~ $regex_p ]]; then
         matched_label="$label"
         break
       fi
@@ -127,12 +127,12 @@ detect_agents() {
 
     [[ -n "$matched_label" ]] || continue
 
-    # Get working directory
+    # Get working directory (pure bash truncation, no readlink+rev+cut forks)
     local cwd="?"
     if [[ -r "$pid_dir/cwd" ]]; then
       cwd=$(readlink "$pid_dir/cwd" 2>/dev/null || echo "?")
-      # Truncate to last 2 path components for display
-      cwd=$(echo "$cwd" | rev | cut -d'/' -f1-2 | rev)
+      # Truncate to last 2 path components: /a/b/c/d → c/d
+      cwd="${cwd#${cwd%/*/*}/}"
     fi
 
     echo "${pid}|${matched_label}|${cmdline:0:80}|${cwd}"
@@ -142,23 +142,33 @@ detect_agents() {
 # ─── Activity Sampling ────────────────────────────────────────────────────────
 
 # Read CPU ticks (user + system) for a PID from /proc/PID/stat
+# Uses pure bash instead of awk to avoid a fork per agent.
 read_cpu_ticks() {
-  local pid="$1"
+  local pid="$1" stat_line stat_rest sf
   local stat_file="/proc/$pid/stat"
   if [[ -r "$stat_file" ]]; then
-    # Fields: 14=utime, 15=stime, 16=cutime, 17=cstime
-    awk '{print $14 + $15 + $16 + $17}' "$stat_file" 2>/dev/null || echo "0"
+    read -r stat_line < "$stat_file" 2>/dev/null || { echo "0"; return; }
+    # /proc/PID/stat format: pid (comm) state ppid ... utime(14) stime(15) cutime(16) cstime(17)
+    # Strip "pid (comm) " prefix to get clean space-delimited fields
+    stat_rest="${stat_line##*\) }"
+    read -r -a sf <<< "$stat_rest"
+    # sf[0]=state, sf[1]=ppid, ..., sf[11]=utime, sf[12]=stime, sf[13]=cutime, sf[14]=cstime
+    echo $(( ${sf[11]:-0} + ${sf[12]:-0} + ${sf[13]:-0} + ${sf[14]:-0} ))
   else
     echo "0"
   fi
 }
 
 # Read IO read+write bytes for a PID from /proc/PID/io
+# Uses pure bash while-read instead of awk to avoid a fork per agent.
 read_io_bytes() {
-  local pid="$1"
-  local io_file="/proc/$pid/io"
+  local pid="$1" io_file="/proc/$pid/io"
   if [[ -r "$io_file" ]]; then
-    awk '/^rchar|^wchar/{sum+=$2}END{print sum}' "$io_file" 2>/dev/null || echo "0"
+    local key val total=0
+    while IFS=':' read -r key val; do
+      [[ "$key" == "rchar" || "$key" == "wchar" ]] && (( total += ${val:-0} ))
+    done < "$io_file" 2>/dev/null
+    echo "$total"
   else
     echo "0"
   fi
@@ -221,8 +231,7 @@ prune_stale_state() {
 # Also updates PREV_CPU, PREV_IO, PREV_STATUS, PREV_PANE globals.
 evaluate_activity() {
   local pid="$1" label="$2" pane="${3:-?}"
-  local hz ticks_per_sec
-  hz=$(getconf CLK_TCK 2>/dev/null || echo "100")
+  local hz="${CLK_TCK}" ticks_per_sec
   ticks_per_sec="$hz"
 
   local cpu_now io_now
@@ -329,6 +338,21 @@ BLOCKED_PATTERNS=(
   "Do you want me to"
 )
 
+# Precomputed combined blocked regex (built once at script startup)
+BLOCKED_COMBINED_REGEX=""
+build_blocked_regex() {
+  local IFS='|'
+  BLOCKED_COMBINED_REGEX="${BLOCKED_PATTERNS[*]}"
+}
+build_blocked_regex
+
+# Precomputed agent detection regex (built once at script startup)
+AGENT_DETECT_REGEX=""
+AGENT_DETECT_REGEX=$(build_detect_regex)
+
+# Cached clock tick rate (getconf CLK_TCK is constant, no need to call per agent)
+CLK_TCK=$(getconf CLK_TCK 2>/dev/null || echo "100")
+
 # Returns 0 (true) if the pane content matches any blocked-state pattern
 detect_blocked() {
   local pane="$1"
@@ -342,14 +366,130 @@ detect_blocked() {
     return 1
   fi
 
-  local pattern
-  for pattern in "${BLOCKED_PATTERNS[@]}"; do
-    if echo "$content" | grep -qEi "$pattern" 2>/dev/null; then
-      return 0
+  # Single grep with precomputed combined regex (31 patterns → 1 call)
+  if echo "$content" | grep -qEi "$BLOCKED_COMBINED_REGEX" 2>/dev/null; then
+    return 0
+  fi
+
+  return 1
+}
+
+# ─── Pane Mapping (inlined from pane-map.sh) ─────────────────────────────────
+
+# Parse /proc/PID/stat to extract a single field by index (0-based after stripping "pid (comm) ")
+# Field mapping after "pid (comm) ": 0=state, 1=ppid, 2=pgrp, 3=session, 4=tty_nr, ...
+read_stat_field() {
+  local pid="$1" field_idx="$2" stat_file="/proc/$pid/stat" stat_line stat_rest sf
+  if [[ -r "$stat_file" ]]; then
+    read -r stat_line < "$stat_file" 2>/dev/null || { echo "0"; return; }
+    stat_rest="${stat_line##*\) }"
+    read -r -a sf <<< "$stat_rest"
+    echo "${sf[$field_idx]:-0}"
+  else
+    echo "0"
+  fi
+}
+
+# Read /proc/PID/stat field 7 (tty_nr) and convert to /dev/pts/N
+pid_to_tty() {
+  local pid="$1" tty_nr major minor minor_ext
+  tty_nr=$(read_stat_field "$pid" 4)  # field 4 = tty_nr (0-based after stripping pid+comm)
+  major=$(( (tty_nr >> 8) & 0xFFF ))
+  minor=$(( tty_nr & 0xFF ))
+
+  # Check extended minor for devpts (major 136-143)
+  local minor_ext=$(( (tty_nr >> 12) & 0xFFFFF ))
+  if [[ "$minor_ext" -gt 0 ]]; then
+    minor="$minor_ext"
+  fi
+
+  if [[ "$major" -ge 136 && "$major" -le 143 ]]; then
+    local pts_num=$(( ((major - 136) << 20) | minor ))
+    echo "/dev/pts/$pts_num"
+  elif [[ "$major" -eq 4 ]]; then
+    echo "/dev/tty$minor"
+  else
+    echo "?"
+  fi
+}
+
+# Build pane maps from tmux for O(1) lookups (no grep/cut forks).
+# Populates two associative arrays:
+#   PANE_BY_TTY[/dev/pts/N] = "PANE_TARGET|SID|SNAME|WIDX|WNAME|PIDX|PPID"
+#   PANE_BY_PID[pid]        = same value
+declare -A PANE_BY_TTY
+declare -A PANE_BY_PID
+build_pane_map() {
+  PANE_BY_TTY=()
+  PANE_BY_PID=()
+  if [[ -z "${TMUX:-}" ]]; then return; fi
+  local line tty entry pane_pid
+  while IFS='|' read -r tty entry pane_pid rest; do
+    # entry = session_name:window_index.pane_index, rest = session_id|...|pane_index
+    # Full value: PANE_TARGET|SID|SNAME|WIDX|WNAME|PIDX|PPID
+    # input format: TTY|SNAME:WIDX.PIDX|SID|SNAME|WIDX|WNAME|PIDX|PPID
+    local full="${entry}|${rest}|${pane_pid}"
+    PANE_BY_TTY["$tty"]="$full"
+    PANE_BY_PID["${pane_pid}"]="$full"
+  done < <(tmux list-panes -a -F '#{pane_tty}|#{session_name}:#{window_index}.#{pane_index}|#{pane_pid}|#{session_id}|#{session_name}|#{window_index}|#{window_name}|#{pane_index}' 2>/dev/null)
+}
+
+# Resolve a PID to pane info: output "PANE_TARGET|SESSION_ID|SESSION_NAME|WINDOW_INDEX|WINDOW_NAME|PANE_INDEX"
+# or "?|?|?|?|?|?" if not in a tmux pane. Uses pre-built associative arrays for O(1) lookup.
+resolve_pane_for_pid() {
+  local pid="$1" tty entry
+
+  # Method 0: Direct PID lookup
+  entry="${PANE_BY_PID[$pid]:-}"
+  if [[ -n "$entry" ]]; then
+    echo "$entry"
+    return
+  fi
+
+  # Method 1: TTY lookup
+  tty=$(pid_to_tty "$pid")
+  if [[ "$tty" != "?" ]]; then
+    entry="${PANE_BY_TTY[$tty]:-}"
+    if [[ -n "$entry" ]]; then
+      echo "$entry"
+      return
+    fi
+  fi
+
+  # Method 2: Walk up process tree for parent PID match
+  local anc_pid ppid depth=0 max_depth=10
+  anc_pid="$pid"
+  while [[ "$depth" -lt "$max_depth" ]]; do
+    ppid=$(read_stat_field "$anc_pid" 1)  # field 1 = ppid
+    if [[ "$ppid" -le 1 ]]; then break; fi
+    anc_pid="$ppid"
+    depth=$((depth + 1))
+    entry="${PANE_BY_PID[$anc_pid]:-}"
+    if [[ -n "$entry" ]]; then
+      echo "$entry"
+      return
     fi
   done
 
-  return 1
+  echo "?|?|?|?|?|?"
+}
+
+# Annotate detect_agents output with pane info (in-process, no subprocess)
+# Input:  PID|LABEL|CMDLINE|CWD
+# Output: PID|LABEL|CMDLINE|CWD|PANE_TARGET|TTY|session_name|window_index|window_name|pane_index|session_id
+annotate_agents_with_panes() {
+  local pid label cmdline cwd pane_info tty IFS_save="$IFS"
+  while IFS='|' read -r pid label cmdline cwd; do
+    pane_info=$(resolve_pane_for_pid "$pid")
+    # Parse pane_info with pure bash (no cut fork): "PANE_TARGET|SID|SNAME|WIDX|WNAME|PIDX|PPID"
+    local pane_target="?" session_id="?" session_name="?" window_index="?" window_name="?" pane_index="?"
+    if [[ "$pane_info" != "?|?|?|?|?|?" ]]; then
+      IFS='|' read -r pane_target session_id session_name window_index window_name pane_index _ <<< "$pane_info"
+      session_id="${session_id#\$}"
+    fi
+    tty=$(pid_to_tty "$pid")
+    echo "${pid}|${label}|${cmdline}|${cwd}|${pane_target}|${tty}|${session_name}|${window_index}|${window_name}|${pane_index}|${session_id}"
+  done
 }
 
 # ─── Rendering ────────────────────────────────────────────────────────────────
@@ -383,8 +523,8 @@ render_status() {
   local blocked_count=0
   local total=0
 
-  # Path to pane-map.sh (same directory as this script)
-  local pane_mapper="${BASH_SOURCE[0]%/*}/pane-map.sh"
+  # Build pane map once per poll (in-process, no subprocess)
+  build_pane_map
 
   # Collect all currently detected agents, annotate with pane info
   local current_pids=""
@@ -400,7 +540,7 @@ render_status() {
       active|running) active_count=$((active_count + 1)) ;;
       idle) idle_count=$((idle_count + 1)) ;;
     esac
-  done < <(detect_agents | bash "$pane_mapper" 2>/dev/null)
+  done < <(detect_agents | annotate_agents_with_panes)
 
   # Remove stale PIDs from state (processes that died)
   prune_stale_state "$current_pids"
@@ -488,7 +628,7 @@ main() {
     if $do_notify; then
       # Check for state transitions
       declare -A current_statuses
-      local pane_mapper="${BASH_SOURCE[0]%/*}/pane-map.sh"
+      build_pane_map
       while IFS='|' read -r pid label cmdline cwd pane tty; do
         local status old_status
         evaluate_activity "$pid" "$label" "$pane"
@@ -499,7 +639,7 @@ main() {
         if [[ "$status" != "$old_status" && -n "$old_status" ]]; then
           notify_state_change "$label" "$old_status" "$status" "$cwd"
         fi
-      done < <(detect_agents | bash "$pane_mapper" 2>/dev/null)
+      done < <(detect_agents | annotate_agents_with_panes)
     fi
 
     save_state

@@ -8,10 +8,12 @@ Agent does. Wouldn't it be nice to know who's actually working, who's stuck
 waiting for your approval, and who's just daydreaming?
 
 **tmon** sits quietly in your tmux status bar and tells you exactly that.
-It sniffs out running AI coding agents from `/proc`, tracks their activity,
-and renders it all as a dead-simple count indicator. Need details? Hit
-`prefix a a` for an interactive dashboard that shows every agent and lets you
-jump straight to their pane.
+It sniffs out running AI coding agents from `/proc`, tracks their activity
+via CPU ticks and IO bytes, and renders it all as a dead-simple count
+indicator with animated status characters. Need details? Hit `prefix a a`
+for an interactive dashboard that shows every agent and lets you jump
+straight to their pane. Or just **click the status bar indicator** — that
+works too.
 
 ---
 
@@ -21,63 +23,68 @@ jump straight to their pane.
 
 ```
 [@] ? 2 - ● 3 - ‖ 1
-     ↑      ↑      ↑
-  blocked  active  idle
+ ↑    ↑      ↑      ↑
+icon blocked  active  idle
 ```
 
-- **? orange** — agent is frozen, waiting for you (permission prompt, plan approval, y/n question)
-- **● green** — agent is cooking (CPU or IO activity detected, or just booted up)
-- **‖ blue** — agent is idle (no activity for a few polls)
+- **● cyan `[@]` prefix** — your personal fleet of AI agents
+- **? orange** — agent is blocked, waiting for you (permission prompt, plan approval, y/n question). Toggles to **!** every other poll as a visual nudge.
+- **● green** — agent is cooking (CPU or IO activity detected, or just booted up). Toggles to **!** every other poll as a visual pulse.
+- **‖ blue** — agent is idle (no meaningful activity for several polls)
 - **[@] ? 0 - ● 0 - ‖ 0** — no agents detected (peace and quiet)
 
 Every segment always renders at a fixed width, so your status bar won't
 dance around when counts change.
 
+> **Note:** The green ● segment includes both "active" agents (actively using
+> CPU/IO above threshold) and "running" agents (just detected, haven't yet
+> shown activity). Both are doing real work. The distinction matters mainly
+> for the dashboard where you can see the exact status label.
+
 ### Navigation (`prefix a a`)
 
-An 80%×80% popup that lists every running agent with its status and exact
-tmux location:
+An 80%×80% popup that lists every running agent with its emoji icon, status,
+and exact tmux location — all on one compact line per agent:
 
 ```
 ┌──────────────────────────────────────────────────┐
-│  tmon — Agent Navigation              [q] quit   │
-├──────────────────────────────────────────────────┤
+│  [@] TMON                         [ESC] to quit  │
+│ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ │
 │                                                  │
-│  ▸ ● Grok Build  active                          │
-│      [1]:main/[0]:code/[0]                       │
+│  ●   Grok Build: $1:main / 0:code / 0            │
+│  ●   Claude Code: $1:main / 1:chat / 0           │
+│  ‖   Hermes Agent: $0:main / 2:tmon / 3          │
 │                                                  │
-│  ● Claude Code  active                           │
-│      [1]:main/[1]:chat/[0]                       │
-│                                                  │
-│  ‖ Hermes Agent  idle                            │
-│      [0]:main/[2]:tmon/[3]                       │
-│                                                  │
-├──────────────────────────────────────────────────┤
-│  ━━━━━━━━━━━━━━━━━━━━━━━━━━━  ↑↓/jk nav  /...    │
+│ ▌ type to filter               ↑↓ nav  enter/→…  │
 └──────────────────────────────────────────────────┘
 ```
 
-Each agent gets **two lines**: full name with status indicator and label
-on line one, the exact tmux path (`[session]:name/[window]:name/[pane]`)
-on line two.
+Each agent gets **one compact line** with an emoji icon, full display name,
+and its tmux path (`[session_id]:session / [window_index]:window / [pane_index]`).
+The selected row is highlighted with a dim background.
 
-**Status indicator** is always accurate — it reads from the same state file
-that drives the status bar, so the navigation and status bar never disagree.
+**Status is always accurate** — the dashboard reads from the same state file
+that drives the status bar, so the two never disagree. "Blocked" detection
+runs live against each pane's visible content on every refresh.
 
-Hit `Enter` or `→` on any agent and you're teleported directly to its pane
-(session, window, and pane all switch at once).
+Hit `Enter` or `→` on any agent and you're teleported directly to its
+pane (session, window, and pane all switch at once).
 
-**Search**: Press `/` to filter the list by agent name, session name, or
-window name. Type your query and the list updates in real time. The first
-matching agent is auto-selected. Press `Esc` or `/` again to clear.
+**Type to filter** — The popup is always in filter mode. Just start typing
+to narrow the list by agent name, session, or window name. The list updates
+in real time, and a match count appears in the footer. Press `Esc` to clear
+the filter. Press `Esc` again (with no filter) to close the popup.
+
+**Auto-refresh**: The dashboard refreshes every 1.5 seconds, with a full
+data reload every ~6 seconds.
 
 | Key | Action |
 |-----|--------|
-| `↑` `↓` / `j` `k` | Navigate the list |
+| `↑` `↓` | Navigate the list |
 | `Enter` / `→` | Jump to the selected agent's pane |
-| `/` | Start / cancel full-text search |
-| `r` | Refresh |
-| `q` / `Esc` | Close |
+| Type | Filter the list (agent name, session, window) |
+| `Backspace` | Remove last character from filter |
+| `Esc` | Clear filter; if already clear, close popup |
 
 ### Who's on the guest list
 
@@ -168,6 +175,22 @@ state faster than that anyway, and `/proc` scans are cheap.
 set -g @tmon-activity-threshold "200"   # more sensitive
 ```
 
+### `@tmon-io-threshold`
+
+> The minimum IO throughput for calling an agent "active." Agents streaming
+> responses or writing files generate IO — this threshold distinguishes real
+> work from background filesystem noise (logs, terminal echo).
+
+| | |
+|---|---|
+| **Default** | `102400` |
+| **Unit** | bytes per poll interval |
+| **Range** | `1024`–`10485760` |
+
+```tmux
+set -g @tmon-io-threshold "51200"  # more sensitive to IO
+```
+
 ### `@tmon-status-position`
 
 > Which side of your status bar gets the tmon indicator.
@@ -195,6 +218,19 @@ set -g @tmon-status-position "left"
 set -g @tmon-dashboard-key "b"   # use prefix b b instead
 ```
 
+### Advanced: environment variables
+
+These are set by `tmon.tmux` from the tmux options above but can also be
+overridden directly for custom setups:
+
+| Variable | From option | Description |
+|----------|-------------|-------------|
+| `TMON_POLL_INTERVAL_MS` | `@tmon-poll-interval` | Poll interval in ms |
+| `TMON_ACTIVITY_THRESHOLD_MS` | `@tmon-activity-threshold` | CPU threshold in ms/s |
+| `TMON_IO_ACTIVITY_THRESHOLD` | `@tmon-io-threshold` | IO threshold in bytes |
+| `TMON_IDLE_DECAY_POLLS` | *(no tmux option)* | Consecutive idle polls before "idle" (default: 3) |
+| `TMON_STATE_DIR` | *(always `~/.cache/tmon`)* | Directory for state files |
+
 ---
 
 ## How it works (the juicy details)
@@ -212,10 +248,18 @@ tmon reads two counters from `/proc`:
 - **CPU ticks** from `/proc/[pid]/stat` (fields 14+15+16+17: user + system + child user + child system)
 - **IO bytes** from `/proc/[pid]/io` (rchar + wchar)
 
-On first sight of an agent, it's marked "running" regardless of CPU — agents
-often think remotely with near-zero local CPU. On subsequent polls, any CPU or
-IO delta > 0 bumps it to "active." After 3 consecutive idle polls (9 seconds at
-default interval), it decays to "idle."
+Agents transition through a **4-state machine**:
+
+1. **running** — First sight of an agent; shown immediately regardless of activity
+   (agents often think remotely with near-zero local CPU).
+2. **active** — CPU delta ≥ `@tmon-activity-threshold` or IO delta ≥ `@tmon-io-threshold`
+   since the last poll. This filters out scheduler noise and terminal cursor updates.
+3. **blocked** — Overrides everything. If the pane content matches any blocked-state
+   pattern (permission prompts, y/n questions, approval wait), the agent is stuck
+   waiting for you.
+4. **idle** — No meaningful CPU or IO activity for 3 consecutive polls (9 seconds
+   at default 3s interval). The grace period prevents flickering for agents
+   between API calls.
 
 ### Blocked state detection
 
@@ -232,13 +276,19 @@ for you, it won't call it "active" no matter how much CPU it's burning.
 
 ### Pane mapping
 
-Matching an agent PID to a specific tmux pane is a two-step dance:
+Matching an agent PID to a specific tmux pane uses three strategies, in order:
 
-1. **TTY matching**: Read `/proc/[pid]/stat` field 7 (tty_nr), convert the
-   major/minor to `/dev/pts/N`, then match against `tmux list-panes -a -F`.
-2. **Process tree fallback**: If TTY matching fails (e.g., the agent is a
-   child process), walk up the parent chain looking for a PID that matches
-   a tmux `pane_pid`.
+1. **Direct PID match** — Check if the PID itself is a tmux `pane_pid` (O(1) via
+   pre-built associative array).
+2. **TTY matching** — Read `/proc/[pid]/stat` field 7 (tty_nr), convert the
+   major/minor to `/dev/pts/N`, then match against `tmux list-panes -a -F`
+   (also O(1) via associative array).
+3. **Process tree fallback** — If both above fail (e.g., the agent is a child
+   process), walk up the parent chain looking for a PID that matches a tmux
+   `pane_pid`.
+
+All pane maps are built once per poll using pure bash associative arrays,
+so lookups are O(1) with no `grep` or `cut` forks.
 
 This means tmon works even when the agent binary is launched deep inside a
 shell pipeline or subshell.
@@ -248,10 +298,11 @@ shell pipeline or subshell.
 ```
 tmon.tmux                  ← Plugin entrypoint (sourced by tmux)
 ├── scripts/monitor.sh     ← Process scanner + activity evaluator + blocked detection
-│   └── --once             ← Called by tmux #() interpolation for status bar
-├── scripts/pane-map.sh    ← Maps agent PIDs to tmux pane addresses
-├── scripts/dashboard.sh   ← Interactive navigation popup
-└── scripts/notify.sh      ← Notification dispatcher
+│   ├── --once             ← Called by tmux #() interpolation for status bar
+│   └── --notify           ← Daemon mode with tmux display-message notifications
+├── scripts/pane-map.sh    ← Standalone PID-to-pane resolver
+├── scripts/dashboard.sh   ← Interactive navigation popup (self-contained)
+└── scripts/notify.sh      ← Notification dispatcher (stdin or arg)
 ```
 
 No npm, no pip, no cargo. Just bash and `/proc`.
@@ -263,8 +314,27 @@ No npm, no pip, no cargo. Just bash and `/proc`.
 | Binding | Action |
 |---------|--------|
 | `prefix a a` | Open the agent navigation popup |
+| Click status bar indicator | Open the agent navigation popup |
+
+> **Tip:** The status bar indicator is a clickable `#[range=user|tmon]` range.
+> Clicking anywhere on it opens the dashboard without needing a keyboard
+> shortcut.
 
 ---
+
+## Notifications
+
+tmon can send tmux `display-message` popups on state transitions (agent
+started, agent became active). Run the monitor in notify mode:
+
+```bash
+bash ~/.tmux/plugins/tmon/scripts/monitor.sh --notify
+```
+
+This runs continuously in the background, emitting transient popups like
+"Grok Build started in code/tmon" or "Claude Code is now active in src/api"
+whenever an agent changes state. Notifications are opt-in and off by default
+to avoid noise.
 
 ## Adding your own agent
 
@@ -276,9 +346,10 @@ Edit `scripts/monitor.sh` and `scripts/dashboard.sh`. Add an entry to the
 "YourAgent:your-tool( |-)(agent|chat|run)"
 ```
 
-Then add its full display name in `dashboard.sh`'s `agent_full_name()` function.
-The regex is matched against the process command line (null-separated args
-joined with spaces, no trailing newline).
+Then add its full display name in `dashboard.sh`'s `agent_full_name()` function,
+and optionally an emoji icon in the `agent_icon()` function. The regex is
+matched against the process command line (null-separated args joined with
+spaces, no trailing newline).
 
 ---
 
@@ -301,6 +372,13 @@ Normal and harmless — the status bar still tracks them.
 **High CPU from tmon** — Increase `@tmon-poll-interval`. The default 3000ms
 is already conservative; bumping to 10000ms (10s) makes the scan cost
 essentially invisible.
+
+**Stale agent counts after crash** — tmon persists agent state to
+`~/.cache/tmon/agents.state`. If counts seem wrong after an abnormal tmux
+exit, delete this file and let it rebuild:
+```bash
+rm ~/.cache/tmon/agents.state
+```
 
 ---
 

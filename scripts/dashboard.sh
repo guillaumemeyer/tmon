@@ -5,12 +5,11 @@
 # running AI coding agents with their status and tmux path.
 #
 # Keybindings:
-#   ↑/k       — move selection up
-#   ↓/j       — move selection down
-#   →/l/Enter — focus selected agent's pane (switches to its session)
-#   /         — start full-text search (filters by agent name, session, window)
-#   r         — refresh agent list
-#   q/Esc     — quit
+#   ↑/↓        — move selection up/down
+#   Enter/→    — focus selected agent's pane (switches to its session)
+#   type       — filter the list in real time (matches agent name, session, window)
+#   Backspace  — remove last filter character
+#   Esc        — clear filter; if already clear, close popup
 #   (auto-refreshes every 1.5s, full reload every 6s)
 
 set -euo pipefail
@@ -64,8 +63,7 @@ selected=0
 
 # ─── Search state ─────────────────────────────────────────────────────────────
 
-search_mode=false
-search_query=""
+filter_query=""
 declare -a FILTERED_INDICES
 filtered_count=0
 
@@ -123,19 +121,23 @@ build_detect_regex() {
   join_by "|" "${patterns[@]}"
 }
 
+# Precomputed agent detection regex (built once at script startup)
+AGENT_DETECT_REGEX=""
+AGENT_DETECT_REGEX=$(build_detect_regex)
+
 detect_agents() {
-  local regex
-  regex=$(build_detect_regex)
+  local regex="${AGENT_DETECT_REGEX}"
 
   for pid_dir in /proc/[0-9]*; do
     local pid="${pid_dir##*/}"
     local cmdline=""
     if [[ -r "$pid_dir/cmdline" ]]; then
-      cmdline=$(tr '\0' ' ' < "$pid_dir/cmdline" 2>/dev/null || true)
+      IFS= read -r -d '' cmdline < "$pid_dir/cmdline" 2>/dev/null || true
+      cmdline="${cmdline//$'\0'/ }"
     fi
     [[ -n "$cmdline" ]] || continue
 
-    if ! echo "$cmdline" | grep -qE "$regex" 2>/dev/null; then
+    if [[ ! "$cmdline" =~ $regex ]]; then
       continue
     fi
 
@@ -144,7 +146,7 @@ detect_agents() {
       local label regex_p
       label=$(sig_label "$sig")
       regex_p=$(sig_regex "$sig")
-      if echo "$cmdline" | grep -qE "$regex_p" 2>/dev/null; then
+      if [[ "$cmdline" =~ $regex_p ]]; then
         matched_label="$label"
         break
       fi
@@ -154,10 +156,102 @@ detect_agents() {
     local cwd="?"
     if [[ -r "$pid_dir/cwd" ]]; then
       cwd=$(readlink "$pid_dir/cwd" 2>/dev/null || echo "?")
-      cwd=$(echo "$cwd" | rev | cut -d'/' -f1-2 | rev)
+      cwd="${cwd#${cwd%/*/*}/}"
     fi
 
     echo "${pid}|${matched_label}|${cmdline:0:80}|${cwd}"
+  done
+}
+
+# ─── Pane Mapping (inlined from pane-map.sh) ─────────────────────────────────
+
+# Parse /proc/PID/stat to extract a single field by index (0-based after stripping "pid (comm) ")
+read_stat_field() {
+  local pid="$1" field_idx="$2" stat_file="/proc/$pid/stat" stat_line stat_rest sf
+  if [[ -r "$stat_file" ]]; then
+    read -r stat_line < "$stat_file" 2>/dev/null || { echo "0"; return; }
+    stat_rest="${stat_line##*\) }"
+    read -r -a sf <<< "$stat_rest"
+    echo "${sf[$field_idx]:-0}"
+  else
+    echo "0"
+  fi
+}
+
+pid_to_tty() {
+  local pid="$1" tty_nr major minor minor_ext
+  tty_nr=$(read_stat_field "$pid" 4)
+  major=$(( (tty_nr >> 8) & 0xFFF ))
+  minor=$(( tty_nr & 0xFF ))
+  local minor_ext=$(( (tty_nr >> 12) & 0xFFFFF ))
+  if [[ "$minor_ext" -gt 0 ]]; then minor="$minor_ext"; fi
+  if [[ "$major" -ge 136 && "$major" -le 143 ]]; then
+    local pts_num=$(( ((major - 136) << 20) | minor ))
+    echo "/dev/pts/$pts_num"
+  elif [[ "$major" -eq 4 ]]; then
+    echo "/dev/tty$minor"
+  else
+    echo "?"
+  fi
+}
+
+PANE_MAP_CACHE=""  # no longer used
+declare -A PANE_BY_TTY
+declare -A PANE_BY_PID
+build_pane_map() {
+  PANE_BY_TTY=()
+  PANE_BY_PID=()
+  if [[ -z "${TMUX:-}" ]]; then return; fi
+  local tty entry pane_pid
+  while IFS='|' read -r tty entry pane_pid rest; do
+    local full="${entry}|${rest}|${pane_pid}"
+    PANE_BY_TTY["$tty"]="$full"
+    PANE_BY_PID["${pane_pid}"]="$full"
+  done < <(tmux list-panes -a -F '#{pane_tty}|#{session_name}:#{window_index}.#{pane_index}|#{pane_pid}|#{session_id}|#{session_name}|#{window_index}|#{window_name}|#{pane_index}' 2>/dev/null)
+}
+
+find_foreground_ancestors() {
+  local pid="$1" max_depth=10 depth=0 ppid
+  while [[ "$depth" -lt "$max_depth" ]]; do
+    ppid=$(read_stat_field "$pid" 1)
+    if [[ "$ppid" -le 1 ]]; then break; fi
+    pid="$ppid"; depth=$((depth + 1))
+    echo "$pid"
+  done
+}
+
+resolve_pane_for_pid() {
+  local pid="$1" tty entry
+  entry="${PANE_BY_PID[$pid]:-}"
+  if [[ -n "$entry" ]]; then echo "$entry"; return; fi
+  tty=$(pid_to_tty "$pid")
+  if [[ "$tty" != "?" ]]; then
+    entry="${PANE_BY_TTY[$tty]:-}"
+    if [[ -n "$entry" ]]; then echo "$entry"; return; fi
+  fi
+  local anc_pid depth=0
+  anc_pid="$pid"
+  while [[ "$depth" -lt 10 ]]; do
+    ppid=$(read_stat_field "$anc_pid" 1)
+    if [[ "$ppid" -le 1 ]]; then break; fi
+    anc_pid="$ppid"; depth=$((depth + 1))
+    entry="${PANE_BY_PID[$anc_pid]:-}"
+    if [[ -n "$entry" ]]; then echo "$entry"; return; fi
+  done
+  echo "?|?|?|?|?|?"
+}
+
+annotate_agents_with_panes() {
+  local pid label cmdline cwd pane_info tty
+  while IFS='|' read -r pid label cmdline cwd; do
+    pane_info=$(resolve_pane_for_pid "$pid")
+    local pane_target="?" session_id="?" session_name="?" window_index="?" window_name="?" pane_index="?"
+    if [[ "$pane_info" != "?|?|?|?|?|?" ]]; then
+      IFS='|' read -r pane_target session_id session_name window_index window_name pane_index _ <<< "$pane_info"
+      session_id="${session_id#\$}"
+    fi
+    tty=$(pid_to_tty "$pid")
+    echo "${pid}|${label}|${cmdline}|${cwd}|${pane_target}|${tty}|${session_name}|${window_index}|${window_name}|${pane_index}|${session_id}"
   done
 }
 
@@ -196,11 +290,27 @@ refresh_data() {
 
   load_state_statuses
 
+  # Build pane map once per refresh (in-process, no subprocess)
+  build_pane_map
+
   local idx=0
   while IFS='|' read -r pid label cmdline cwd pane tty session_name window_index window_name pane_index session_id; do
-    local cpu io
-    cpu=$(awk '{print $14+$15+$16+$17}' "/proc/$pid/stat" 2>/dev/null || echo "0")
-    io=$(awk '/^rchar|^wchar/{sum+=$2}END{print sum+0}' "/proc/$pid/io" 2>/dev/null || echo "0")
+    local cpu io stat_line stat_rest sf
+    read -r stat_line < "/proc/$pid/stat" 2>/dev/null || stat_line=""
+    if [[ -n "$stat_line" ]]; then
+      stat_rest="${stat_line##*\) }"
+      read -r -a sf <<< "$stat_rest"
+      cpu=$(( ${sf[11]:-0} + ${sf[12]:-0} + ${sf[13]:-0} + ${sf[14]:-0} ))
+    else
+      cpu=0
+    fi
+    io=0
+    if [[ -r "/proc/$pid/io" ]]; then
+      local key val
+      while IFS=':' read -r key val; do
+        [[ "$key" == "rchar" || "$key" == "wchar" ]] && (( io += ${val:-0} ))
+      done < "/proc/$pid/io" 2>/dev/null
+    fi
 
     # Use the monitor's state file status if available (accurate delta-based),
     # otherwise default to "running" for first detection.
@@ -228,7 +338,7 @@ refresh_data() {
     AGENT_PANE_INDEXES+=("${pane_index:-?}")
     AGENT_SESSION_IDS+=("${session_id:-?}")
     idx=$((idx + 1))
-  done < <(detect_agents | bash "$PANE_MAPPER" 2>/dev/null | sort -t'|' -k11,11n -k8,8n -k10,10n)
+  done < <(detect_agents | annotate_agents_with_panes | sort -t'|' -k11,11n -k8,8n -k10,10n)
 
   agent_count=$idx
   rebuild_filter
@@ -238,13 +348,13 @@ refresh_data() {
 
 rebuild_filter() {
   FILTERED_INDICES=()
-  if ! $search_mode || [[ -z "$search_query" ]]; then
+  if [[ -z "$filter_query" ]]; then
     # No filter active: all agents
     for ((i = 0; i < agent_count; i++)); do
       FILTERED_INDICES+=("$i")
     done
   else
-    local q="${search_query,,}"
+    local q="${filter_query,,}"
     for ((i = 0; i < agent_count; i++)); do
       local haystack
       haystack="$(agent_full_name "${AGENT_LABELS[$i]}")"
@@ -390,7 +500,9 @@ render() {
   printf '%s%s' "$HOME" "$CLEAR"
 
   # --- Header (line 1) ---
+  local esc_hint="[ESC] to quit"
   printf "${CSI}1;1H%s%s [@] TMON%s" "$BOLD" "$FG_CYAN" "$RESET"
+  printf "${CSI}1;$((terms_cols - ${#esc_hint}))H%s%s%s" "$FG_DIM" "$esc_hint" "$RESET"
 
   # --- Divider (line 2) ---
   printf "${CSI}2;1H%s" "$FG_DIM"
@@ -407,8 +519,8 @@ render() {
 
   if [[ "$filtered_count" -eq 0 ]]; then
     printf "${CSI}${row};1H"
-    if $search_mode && [[ -n "$search_query" ]]; then
-      printf '    No agents match "%s"' "$search_query"
+    if [[ -n "$filter_query" ]]; then
+      printf '    No agents match "%s"' "$filter_query"
     else
       printf '    No agents detected.'
     fi
@@ -437,18 +549,19 @@ render() {
   fi
 
   # --- Footer (last line) ---
-  if $search_mode; then
-    printf "${CSI}${terms_lines};1H%s / %s" "$FG_WHITE" "$search_query"
-    printf "${FG_DIM} ▌${RESET}"
+  # Show filter query with cursor, or hints if empty
+  if [[ -n "$filter_query" ]]; then
+    printf "${CSI}${terms_lines};1H%s ▌ %s" "$FG_WHITE" "$filter_query"
+    printf "${FG_DIM}▌${RESET}"
     local match_str
-    printf -v match_str "  %d/%d matches" "$filtered_count" "$agent_count"
+    printf -v match_str "  %d/%d" "$filtered_count" "$agent_count"
     printf "${CSI}${terms_lines};$((terms_cols - ${#match_str}))H%s" "$match_str"
     printf '%s' "$RESET"
   else
-    local hints="  ↑↓/jk navigate  enter/→/l focus  / search  r refresh  q quit"
-    printf "${CSI}${terms_lines};1H%s" "$FG_DIM"
-    printf '━%.0s' $(seq 1 $((terms_cols - ${#hints})))
-    printf '%s%s' "$hints" "$RESET"
+    printf "${CSI}${terms_lines};1H%s ▌ type to filter" "$FG_DIM"
+    local hint_right="  ↑↓ nav  enter/→ focus"
+    printf "${CSI}${terms_lines};$((terms_cols - ${#hint_right}))H%s%s" "$FG_DIM" "$hint_right"
+    printf '%s' "$RESET"
   fi
 }
 
@@ -509,76 +622,51 @@ main() {
       fi
     fi
 
-    # ── Search mode input ──
-    if $search_mode; then
-      case "$key" in
-        ESC|/)
-          # Exit search mode
-          search_mode=false
-          search_query=""
-          rebuild_filter
-          render
-          ;;
-        $'\177'|$'\010')  # Backspace (DEL or BS)
-          if [[ -n "$search_query" ]]; then
-            search_query="${search_query:0:${#search_query}-1}"
-            rebuild_filter
-            render
-          fi
-          ;;
-        UP|DOWN|LEFT|RIGHT|"")
-          # Ignore navigation keys in search mode (except Enter/Right to focus)
-          if [[ "$key" == "RIGHT" ]] || [[ "$key" == "" ]]; then
-            focus_agent
-            printf '%s' "$SHOW_CURSOR"
-            exit 0
-          fi
-          ;;
-        [[:print:]])
-          # Printable character: append to query
-          search_query+="$key"
-          rebuild_filter
-          render
-          ;;
-        *)
-          # Unknown key in search mode: ignore
-          ;;
-      esac
-      continue
-    fi
-
-    # ── Normal mode input ──
+    # ── Unified input handling ──
     case "$key" in
-      UP|k)
+      ESC)
+        # First Esc: clear filter if active. Second Esc (filter already empty): quit.
+        if [[ -n "$filter_query" ]]; then
+          filter_query=""
+          rebuild_filter
+          render
+        else
+          printf '%s' "$SHOW_CURSOR"
+          exit 0
+        fi
+        ;;
+      UP)
         if [[ "$filtered_count" -gt 0 ]]; then
           selected=$(( (selected - 1 + filtered_count) % filtered_count ))
           render
         fi
         ;;
-      DOWN|j)
+      DOWN)
         if [[ "$filtered_count" -gt 0 ]]; then
           selected=$(( (selected + 1) % filtered_count ))
           render
         fi
         ;;
-      RIGHT|l|"")  # Enter
+      RIGHT|"")  # Enter
         focus_agent
         printf '%s' "$SHOW_CURSOR"
         exit 0
         ;;
-      "/")
-        search_mode=true
-        search_query=""
+      $'\177'|$'\010')  # Backspace (DEL or BS)
+        if [[ -n "$filter_query" ]]; then
+          filter_query="${filter_query:0:${#filter_query}-1}"
+          rebuild_filter
+          render
+        fi
+        ;;
+      [[:print:]])
+        # Printable character: append to filter query
+        filter_query+="$key"
         rebuild_filter
         render
         ;;
-      r)
-        refresh_data
-        render
-        ;;
-      q|ESC)
-        printf '%s' "$SHOW_CURSOR"
-        exit 0
+      *)
+        # Unknown key: ignore (LEFT arrow, etc.)
         ;;
     esac
   done
