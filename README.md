@@ -143,6 +143,35 @@ Reload: `tmux source-file ~/.tmux.conf`
 
 ---
 
+## Updates
+
+When new versions are pushed to GitHub, updating depends on how you installed.
+
+### TPM
+
+Hit `prefix U` (uppercase `U`) to pull the latest from all your plugins,
+then reload:
+
+```bash
+tmux source-file ~/.tmux.conf
+```
+
+The updated scripts take effect on the next poll cycle — no restart needed.
+
+### Manual (git clone)
+
+```bash
+cd ~/.tmux/plugins/tmon
+git pull origin master
+tmux source-file ~/.tmux.conf
+```
+
+> **Note:** If `tmon.tmux` itself changed (new keybindings, renamed scripts,
+> new config options), a full tmux restart is the safest bet. Otherwise
+> `source-file` is enough.
+
+---
+
 ## Configuration
 
 Set any of these in `~/.tmux.conf` **before** the plugin line. All of them
