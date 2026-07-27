@@ -1,15 +1,20 @@
 #!/usr/bin/env bash
 # tmon dashboard.sh — Interactive agent navigation popup
 # ==============================================================================
-# Launched via tmux display-popup (prefix a a). Shows a scrollable list of
-# running AI coding agents with their status and tmux path.
+# Launched via tmux display-popup (prefix a a). Shows a grouped list of
+# running AI coding agents organized by session → window, with pane index
+# shown on each agent line.
 #
 # Keybindings:
-#   ↑/↓        — move selection up/down
-#   Enter/→    — focus selected agent's pane (switches to its session)
-#   type       — filter the list in real time (matches agent name, session, window)
-#   Backspace  — remove last filter character
-#   Esc        — clear filter; if already clear, close popup
+#   /           — enter search/filter mode
+#   In search mode:
+#     type      — filter the list in real time (matches agent name, session, window)
+#     Backspace — remove last filter character
+#     Esc       — exit search mode (filter stays applied)
+#   In navigation mode:
+#     j/k/↑/↓   — move selection between agent lines
+#     ↩/Space/l — focus selected agent's pane (switches to its session)
+#     Esc/q     — close popup
 #   (auto-refreshes every 1.5s, full reload every 6s)
 
 set -euo pipefail
@@ -60,6 +65,13 @@ declare -a AGENT_SESSION_IDS
 
 agent_count=0
 selected=0
+
+# ─── Display items (grouped by session → window) ──────────────────────────────
+# DISPLAY_ITEMS entries: "S|session_name|session_id" or "W|win_idx|win_name" or "A|agent_idx"
+declare -a DISPLAY_ITEMS
+declare -a SELECTABLE_MAP       # SELECTABLE_MAP[selection_index] = display_item_index
+display_count=0
+selectable_count=0
 
 # ─── Search state ─────────────────────────────────────────────────────────────
 
@@ -368,11 +380,68 @@ rebuild_filter() {
   fi
   filtered_count=${#FILTERED_INDICES[@]}
 
-  # Clamp selection
-  if [[ "$filtered_count" -eq 0 ]]; then
+  build_display_items
+}
+
+# ─── Display item grouping ────────────────────────────────────────────────────
+
+# Build DISPLAY_ITEMS and SELECTABLE_MAP from FILTERED_INDICES.
+# Groups agents by session (non-selectable header), then window (non-selectable
+# sub-header). Only agent lines are selectable.
+build_display_items() {
+  DISPLAY_ITEMS=()
+  SELECTABLE_MAP=()
+  display_count=0
+  selectable_count=0
+
+  local last_sid="__none__"
+  local last_widx="__none__"
+
+  for ((fi = 0; fi < filtered_count; fi++)); do
+    local i="${FILTERED_INDICES[$fi]}"
+    local sid="${AGENT_SESSION_IDS[$i]}"
+    local sname="${AGENT_SESSION_NAMES[$i]}"
+    local widx="${AGENT_WINDOW_INDEXES[$i]}"
+    local wname="${AGENT_WINDOW_NAMES[$i]}"
+
+    # New session → emit session header
+    if [[ "$sid" != "$last_sid" ]]; then
+      DISPLAY_ITEMS+=("S|${sname}|${sid}")
+      display_count=$((display_count + 1))
+      last_sid="$sid"
+      last_widx="__none__"
+    fi
+
+    # New window → emit window sub-header
+    if [[ "$widx" != "$last_widx" ]]; then
+      DISPLAY_ITEMS+=("W|${widx}|${wname}")
+      display_count=$((display_count + 1))
+      last_widx="$widx"
+    fi
+
+    # Emit agent line (selectable)
+    DISPLAY_ITEMS+=("A|${i}")
+    SELECTABLE_MAP+=("$display_count")
+    selectable_count=$((selectable_count + 1))
+    display_count=$((display_count + 1))
+  done
+
+  # Clamp selection to valid range
+  if [[ "$selectable_count" -eq 0 ]]; then
     selected=0
-  elif [[ "$selected" -ge "$filtered_count" ]]; then
-    selected=$((filtered_count - 1))
+  elif [[ "$selected" -ge "$selectable_count" ]]; then
+    selected=$((selectable_count - 1))
+  fi
+}
+
+# Return true (0) if the display item at index $1 is the currently selected one.
+is_selected() {
+  local di="$1"
+  if [[ "$selectable_count" -gt 0 ]]; then
+    local sel_di="${SELECTABLE_MAP[$selected]}"
+    [[ "$sel_di" -eq "$di" ]]
+  else
+    return 1
   fi
 }
 
@@ -478,18 +547,6 @@ status_label() {
   esac
 }
 
-# ─── Formatting ───────────────────────────────────────────────────────────────
-
-tmux_path_display() {
-  local i="$1"
-  local sid="${AGENT_SESSION_IDS[$i]:-?}"
-  local sn="${AGENT_SESSION_NAMES[$i]:-?}"
-  local wi="${AGENT_WINDOW_INDEXES[$i]:-?}"
-  local wn="${AGENT_WINDOW_NAMES[$i]:-?}"
-  local pi="${AGENT_PANE_INDEXES[$i]:-?}"
-  echo "[${sid}]:${sn} / [${wi}]:${wn} / [${pi}]"
-}
-
 # ─── Rendering ────────────────────────────────────────────────────────────────
 
 render() {
@@ -500,7 +557,7 @@ render() {
   printf '%s%s' "$HOME" "$CLEAR"
 
   # --- Header (line 1) ---
-  local esc_hint="[ESC] to quit"
+  local esc_hint="[/] search  [esc/q] quit"
   printf "${CSI}1;1H%s%s [@] TMON%s" "$BOLD" "$FG_CYAN" "$RESET"
   printf "${CSI}1;$((terms_cols - ${#esc_hint}))H%s%s%s" "$FG_DIM" "$esc_hint" "$RESET"
 
@@ -525,41 +582,77 @@ render() {
       printf '    No agents detected.'
     fi
   else
-    for ((fi = 0; fi < filtered_count; fi++)); do
+    for ((di = 0; di < display_count; di++)); do
       [[ "$row" -ge "$max_body_row" ]] && break
 
-      local i="${FILTERED_INDICES[$fi]}"
-      local label name path sc
-      label="${AGENT_LABELS[$i]}"
-      name=$(agent_full_name "$label")
-      path=$(tmux_path_display "$i")
-      sc=$(animated_status_char "${AGENT_STATUSES[$i]}" "$frame")
+      local item="${DISPLAY_ITEMS[$di]}"
+      local type="${item%%|*}"
+      local rest="${item#*|}"
 
-      local line
-      printf -v line ' %s %s: %s' "$sc" "$name" "$path"
+      case "$type" in
+        S)
+          # Session header (non-selectable)
+          local sname="${rest%%|*}"
+          printf "${CSI}${row};1H${FG_CYAN}${BOLD}  ${sname}${RESET}"
+          printf "${CSI}K"  # clear rest of line
+          ;;
+        W)
+          # Window header (non-selectable)
+          local widx="${rest%%|*}"
+          local wname="${rest#*|}"
+          if [[ -n "$wname" && "$wname" != "?" ]]; then
+            printf "${CSI}${row};1H${FG_DIM}    ${widx}:${wname}${RESET}"
+          else
+            printf "${CSI}${row};1H${FG_DIM}    ${widx}${RESET}"
+          fi
+          printf "${CSI}K"
+          ;;
+        A)
+          # Agent line (selectable)
+          local i="$rest"
+          local label name sc pi cwd
+          label="${AGENT_LABELS[$i]}"
+          name=$(agent_full_name "$label")
+          sc=$(animated_status_char "${AGENT_STATUSES[$i]}" "$frame")
+          pi="${AGENT_PANE_INDEXES[$i]:-?}"
+          cwd="${AGENT_CWDS[$i]:-?}"
 
-      if [[ "$fi" -eq "$selected" ]]; then
-        printf "${CSI}${row};1H%s%s%s" "$BG_HL" "$line" "$BG_DEFAULT"
-      else
-        printf "${CSI}${row};1H%s" "$line"
-      fi
+          local line
+          printf -v line '      [%s] %s %s  %s' "$pi" "$sc" "$name" "$cwd"
+
+          if is_selected "$di"; then
+            printf "${CSI}${row};1H%s%s" "$BG_HL" "$line"
+            printf "${CSI}K"  # fill rest of line with highlight
+            printf "${RESET}"
+          else
+            printf "${CSI}${row};1H%s" "$line"
+            printf "${CSI}K"
+          fi
+          ;;
+      esac
 
       row=$((row + 1))
     done
   fi
 
   # --- Footer (last line) ---
-  # Show filter query with cursor, or hints if empty
-  if [[ -n "$filter_query" ]]; then
+  if [[ -n "$search_mode" ]]; then
+    # Search mode: live filter input with cursor
     printf "${CSI}${terms_lines};1H%s ▌ %s" "$FG_WHITE" "$filter_query"
     printf "${FG_DIM}▌${RESET}"
-    local match_str
     printf -v match_str "  %d/%d" "$filtered_count" "$agent_count"
     printf "${CSI}${terms_lines};$((terms_cols - ${#match_str}))H%s" "$match_str"
     printf '%s' "$RESET"
+  elif [[ -n "$filter_query" ]]; then
+    # Active filter, not in search mode — show filter dimmed with count
+    printf "${CSI}${terms_lines};1H%s ▌ %s" "$FG_DIM" "$filter_query"
+    printf -v match_str "%d/%d" "$filtered_count" "$agent_count"
+    printf "${CSI}${terms_lines};$((terms_cols - ${#match_str}))H%s" "$match_str"
+    printf '%s' "$RESET"
   else
-    printf "${CSI}${terms_lines};1H%s ▌ type to filter" "$FG_DIM"
-    local hint_right="  ↑↓ nav  enter/→ focus"
+    # No filter, navigation mode
+    printf "${CSI}${terms_lines};1H%s ▌ / to search" "$FG_DIM"
+    local hint_right="  j/k/↑↓ nav  ↩/spc/l focus  esc/q quit"
     printf "${CSI}${terms_lines};$((terms_cols - ${#hint_right}))H%s%s" "$FG_DIM" "$hint_right"
     printf '%s' "$RESET"
   fi
@@ -568,10 +661,16 @@ render() {
 # ─── Actions ──────────────────────────────────────────────────────────────────
 
 focus_agent() {
-  if [[ "$filtered_count" -eq 0 ]]; then
+  if [[ "$selectable_count" -eq 0 ]]; then
     return
   fi
-  local i="${FILTERED_INDICES[$selected]}"
+  local di="${SELECTABLE_MAP[$selected]}"
+  local item="${DISPLAY_ITEMS[$di]}"
+  local type="${item%%|*}"
+  if [[ "$type" != "A" ]]; then
+    return  # safety: only agent lines are selectable
+  fi
+  local i="${item#*|}"
   local pane_target="${AGENT_PANES[$i]}"
   if [[ "$pane_target" != "?" ]] && [[ -n "${TMUX:-}" ]]; then
     tmux switch-client -t "$pane_target" 2>/dev/null || true
@@ -584,10 +683,11 @@ main() {
   printf '%s' "$HIDE_CURSOR"
   trap 'printf "%s" "$SHOW_CURSOR"' EXIT
 
+  local search_mode=0  # 0 = navigation mode, 1 = search mode
+  local auto_ticks=0
+
   refresh_data
   render
-
-  local auto_ticks=0
 
   while true; do
     local key=""
@@ -604,7 +704,7 @@ main() {
       continue
     fi
 
-    # Handle escape sequences
+    # Handle escape sequences (arrow keys)
     if [[ "$key" == $'\033' ]]; then
       local seq
       IFS= read -r -s -n 1 -t 0.01 seq 2>/dev/null || true
@@ -613,8 +713,6 @@ main() {
         case "$key" in
           A) key="UP" ;;
           B) key="DOWN" ;;
-          C) key="RIGHT" ;;
-          D) key="LEFT" ;;
         esac
       else
         # Standalone Esc
@@ -622,52 +720,60 @@ main() {
       fi
     fi
 
-    # ── Unified input handling ──
-    case "$key" in
-      ESC)
-        # First Esc: clear filter if active. Second Esc (filter already empty): quit.
-        if [[ -n "$filter_query" ]]; then
-          filter_query=""
+    # ── Search mode input handling ──
+    if [[ "$search_mode" -eq 1 ]]; then
+      case "$key" in
+        ESC)
+          search_mode=0
+          render
+          ;;
+        $'\177'|$'\010')  # Backspace (DEL or BS)
+          if [[ -n "$filter_query" ]]; then
+            filter_query="${filter_query:0:${#filter_query}-1}"
+            rebuild_filter
+            render
+          fi
+          ;;
+        [[:print:]])
+          filter_query+="$key"
           rebuild_filter
           render
-        else
-          printf '%s' "$SHOW_CURSOR"
-          exit 0
-        fi
+          ;;
+        *)
+          ;;  # ignore non-printable keys in search mode
+      esac
+      continue
+    fi
+
+    # ── Navigation mode input handling ──
+    case "$key" in
+      "/")
+        search_mode=1
+        render
         ;;
-      UP)
-        if [[ "$filtered_count" -gt 0 ]]; then
-          selected=$(( (selected - 1 + filtered_count) % filtered_count ))
+      ESC|"q")
+        printf '%s' "$SHOW_CURSOR"
+        exit 0
+        ;;
+      UP|"k")
+        if [[ "$selectable_count" -gt 0 ]]; then
+          selected=$(( (selected - 1 + selectable_count) % selectable_count ))
           render
         fi
         ;;
-      DOWN)
-        if [[ "$filtered_count" -gt 0 ]]; then
-          selected=$(( (selected + 1) % filtered_count ))
+      DOWN|"j")
+        if [[ "$selectable_count" -gt 0 ]]; then
+          selected=$(( (selected + 1) % selectable_count ))
           render
         fi
         ;;
-      RIGHT|"")  # Enter
+      ""|$'\n'|$'\r'|" "|"l")  # Enter, Space, l
         focus_agent
         printf '%s' "$SHOW_CURSOR"
         exit 0
         ;;
-      $'\177'|$'\010')  # Backspace (DEL or BS)
-        if [[ -n "$filter_query" ]]; then
-          filter_query="${filter_query:0:${#filter_query}-1}"
-          rebuild_filter
-          render
-        fi
-        ;;
-      [[:print:]])
-        # Printable character: append to filter query
-        filter_query+="$key"
-        rebuild_filter
-        render
-        ;;
       *)
-        # Unknown key: ignore (LEFT arrow, etc.)
-        ;;
+        ;;  # ignore other keys in navigation mode
     esac
   done
 }
