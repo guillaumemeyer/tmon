@@ -1,11 +1,11 @@
 # tmon — Your AI agents, now with a leash
 
-![tmon](https://img.shields.io/badge/tmux-plugin-blue) ![agents](https://img.shields.io/badge/agents-11-green)
+![tmux-plugin](https://img.shields.io/badge/tmux-plugin-blue) ![agents](https://img.shields.io/badge/agents-11-green) ![language](https://img.shields.io/badge/language-Go-blue)
 
 You've got Grok Build crunching through a refactor in one pane, Claude Code
-negotiating a design doc in another, and Hermes Agent off doing… whatever Hermes
-Agent does. Wouldn't it be nice to know who's actually working, who's stuck
-waiting for your approval, and who's just daydreaming?
+negotiating a design doc in another, and Hermes Agent off doing… whatever
+Hermes Agent does. Wouldn't it be nice to know who's actually working, who's
+stuck waiting for your approval, and who's just daydreaming?
 
 **tmon** sits quietly in your tmux status bar and tells you exactly that.
 It sniffs out running AI coding agents from `/proc`, tracks their activity
@@ -14,6 +14,10 @@ indicator with animated status characters. Need details? Hit `prefix a a`
 for an interactive dashboard that shows every agent and lets you jump
 straight to their pane. Or just **click the status bar indicator** — that
 works too.
+
+The engine is a single **Go binary**: typed, unit-tested, and fast. The tmux
+side is a thin loader that downloads the binary on first run (or update) and
+wires up the status bar, keybindings, and popup.
 
 ---
 
@@ -41,50 +45,55 @@ dance around when counts change.
 > shown activity). Both are doing real work. The distinction matters mainly
 > for the dashboard where you can see the exact status label.
 
-### Navigation (`prefix a a`)
+### Dashboard (`prefix a a`)
 
-An 80%×80% popup that lists every running agent with its emoji icon, status,
-and exact tmux location — all on one compact line per agent:
+An 80%×80% popup that lists every running agent grouped by session and
+window, with its emoji icon, status, and exact tmux location:
 
 ```
-┌──────────────────────────────────────────────────┐
-│  [@] TMON                         [ESC] to quit  │
-│ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ │
-│                                                  │
-│  ●   Grok Build: $1:main / 0:code / 0            │
-│  ●   Claude Code: $1:main / 1:chat / 0           │
-│  ‖   Hermes Agent: $0:main / 2:tmon / 3          │
-│                                                  │
-│ ▌ type to filter               ↑↓ nav  enter/→…  │
-└──────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────┐
+│  [@] TMON                             [ESC] to quit  │
+│ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ │
+│                                                      │
+│  main                                                │
+│    0:code                                            │
+│      [0] ● 🧠 Grok Build        ~/code/tmon          │
+│      [1] ● 🏛️ Claude Code       ~/docs/design        │
+│  side                                                │
+│    0:research                                        │
+│      [2] ‖ 🏄 Windsurf           ~/research           │
+│                                                      │
+│ ▌ / to search                    j/k nav  ↩ focus   │
+└──────────────────────────────────────────────────────┘
 ```
 
-Each agent gets **one compact line** with an emoji icon, full display name,
-and its tmux path (`[session_id]:session / [window_index]:window / [pane_index]`).
-The selected row is highlighted with a dim background.
+Each agent gets one line with its emoji icon, display name, animated status
+character, pane index, and working directory. The selected row is highlighted
+with a dim background.
 
-**Status is always accurate** — the dashboard reads from the same state file
-that drives the status bar, so the two never disagree. "Blocked" detection
-runs live against each pane's visible content on every refresh.
+**Status is always accurate** — the dashboard reads the same state file that
+drives the status bar, so the two never disagree. "Blocked" detection runs
+live against each pane's visible content on every refresh.
 
-Hit `Enter` or `→` on any agent and you're teleported directly to its
-pane (session, window, and pane all switch at once).
+Hit `Enter` or `→` on any agent and you're teleported directly to its pane
+(session, window, and pane all switch at once).
 
-**Type to filter** — The popup is always in filter mode. Just start typing
-to narrow the list by agent name, session, or window name. The list updates
-in real time, and a match count appears in the footer. Press `Esc` to clear
-the filter. Press `Esc` again (with no filter) to close the popup.
+**Type to filter** — press `/`, then type to narrow the list by agent name,
+session, or window name. The list updates in real time and a match count
+appears in the footer. `Esc` clears the filter; `Esc` again closes the popup.
 
-**Auto-refresh**: The dashboard refreshes every 1.5 seconds, with a full
+**Auto-refresh**: the dashboard refreshes every 1.5 seconds, with a full
 data reload every ~6 seconds.
 
 | Key | Action |
 |-----|--------|
-| `↑` `↓` | Navigate the list |
-| `Enter` / `→` | Jump to the selected agent's pane |
-| Type | Filter the list (agent name, session, window) |
+| `↑` `↓` / `j` `k` | Navigate the list |
+| `Enter` / `→` / `l` / `Space` | Jump to the selected agent's pane |
+| `/` | Start filtering (agent name, session, window) |
+| Type | Filter the list |
 | `Backspace` | Remove last character from filter |
 | `Esc` | Clear filter; if already clear, close popup |
+| `q` / `Ctrl-c` | Close popup |
 
 ### Who's on the guest list
 
@@ -104,8 +113,20 @@ tmon recognizes **11 agents** out of the box:
 | **Hermes Agent** | `hermes agent`, `hermes run` |
 | **OpenClaw** | `openclaw agent`, `openclaw chat` |
 
-Detection works purely by scanning `/proc/[pid]/cmdline` — no agent APIs,
-no daemons, no external dependencies beyond bash and tmux itself.
+Detection works purely by scanning `/proc/[pid]/cmdline` — no agent APIs, no
+per-agent daemons, no dependencies beyond the tmon binary and tmux itself.
+
+---
+
+## Requirements
+
+- **Linux** (amd64 or arm64) — tmon reads `/proc`
+- **tmux ≥ 3.2** (tested on 3.4) — the dashboard popup needs `display-popup`
+- **curl and sha256sum** — used once by the installer to fetch and verify the binary
+- **Network on first load** — the binary is downloaded from GitHub Releases
+  (see below); afterwards it lives in the plugin directory
+
+A Go toolchain is **not** required for users — only for developing tmon itself.
 
 ---
 
@@ -139,36 +160,46 @@ git clone https://github.com/guillaumemeyer/tmon ~/.tmux/plugins/tmon
 run-shell ~/.tmux/plugins/tmon/tmon.tmux
 ```
 
-Reload: `tmux source-file ~/.tmux.conf`
+Reload: `tmux source-file ~/.tmux.conf`. On first load, tmon downloads its
+binary into `<plugin>/bin/` — you'll see a one-line "tmon: installed v0.3.0
+(amd64)" status-bar message.
 
 ---
 
-## Updates
+## How the binary is distributed
 
-When new versions are pushed to GitHub, updating depends on how you installed.
+tmon is **two parts**: a thin tmux loader (plain bash, committed to the repo)
+and a Go binary (**never** committed — downloaded as a release artifact).
 
-### TPM
+- **First run** — `tmon.tmux` runs `scripts/bootstrap.sh`, which downloads
+  the pinned asset `tmon_<VERSION>_linux_<arch>` plus `checksums.txt` from
+  GitHub Releases, verifies the SHA-256 checksum, and installs it to
+  `<plugin>/bin/tmon`. If the installed binary already matches the repo's
+  `VERSION` file, bootstrap is a no-op (instant).
+- **Updates** — every push to `main` triggers a GitHub Action that reads
+  `VERSION`, tags `v<VERSION>` (skipping if that release already exists), and
+  ships a goreleaser build for linux/amd64 + linux/arm64. Users update the
+  repo (TPM `prefix U` or `git pull`) and reload; bootstrap sees the new
+  `VERSION` and re-downloads the matching artifact. `tmux source-file` is
+  enough — no tmux restart needed.
+- **Offline / failure** — bootstrap fails gracefully: it shows a status-bar
+  message, leaves the plugin loadable, and retries on the next reload. Run
+  `scripts/bootstrap.sh` manually to retry.
+- **Developer builds** — `make build` produces a binary stamped `dev`, which
+  bootstrap never overwrites.
 
-Hit `prefix U` (uppercase `U`) to pull the latest from all your plugins,
-then reload:
+**Nothing is written outside the plugin directory**: the binary, the state
+file, the download lock, and temp download files all live in `<plugin>/bin`
+and `<plugin>/state`. No `~/.cache`, no `/tmp`, no system temp dirs.
 
-```bash
-tmux source-file ~/.tmux.conf
-```
+### Updating
 
-The updated scripts take effect on the next poll cycle — no restart needed.
+TPM: hit `prefix U` (uppercase), then `tmux source-file ~/.tmux.conf`.
+Manual installs: `git pull origin master`, then `tmux source-file ~/.tmux.conf`.
 
-### Manual (git clone)
-
-```bash
-cd ~/.tmux/plugins/tmon
-git pull origin master
-tmux source-file ~/.tmux.conf
-```
-
-> **Note:** If `tmon.tmux` itself changed (new keybindings, renamed scripts,
-> new config options), a full tmux restart is the safest bet. Otherwise
-> `source-file` is enough.
+> **Releasing a new version:** `make bump-patch` (bumps `VERSION`), commit,
+> push to `main`. CI auto-releases `v<VERSION>` if it doesn't already exist —
+> no manual tagging.
 
 ---
 
@@ -257,8 +288,9 @@ set -g @tmon-dashboard-key "b"   # use prefix b b instead
 
 ### Advanced: environment variables
 
-These are set by `tmon.tmux` from the tmux options above but can also be
-overridden directly for custom setups:
+These are exported by `tmon.tmux` from the tmux options above (and pushed
+into tmux's global environment, so the status-bar `#()` command and the popup
+actually see them). They can also be overridden directly for custom setups:
 
 | Variable | From option | Description |
 |----------|-------------|-------------|
@@ -266,7 +298,8 @@ overridden directly for custom setups:
 | `TMON_ACTIVITY_THRESHOLD_MS` | `@tmon-activity-threshold` | CPU threshold in ms/s |
 | `TMON_IO_ACTIVITY_THRESHOLD` | `@tmon-io-threshold` | IO threshold in bytes |
 | `TMON_IDLE_DECAY_POLLS` | *(no tmux option)* | Consecutive idle polls before "idle" (default: 3) |
-| `TMON_STATE_DIR` | *(always `~/.cache/tmon`)* | Directory for state files |
+| `TMON_STATE_DIR` | *(set by tmon.tmux)* | State dir, default `<plugin>/state` |
+| `TMON_BIN_DIR` | *(set by tmon.tmux)* | Binary dir, default `<plugin>/bin` |
 
 ---
 
@@ -274,9 +307,9 @@ overridden directly for custom setups:
 
 ### Agent detection
 
-Every poll, tmon walks `/proc/[0-9]*/cmdline` and greps against a combined
-regex of all 11 agent signatures. It's fast — even with hundreds of processes,
-the scan completes in single-digit milliseconds.
+Every poll, tmon walks `/proc/[0-9]*/cmdline` and matches it against a
+compiled regex of all 11 agent signatures. It's fast — even with hundreds of
+processes, a scan completes in single-digit milliseconds.
 
 ### Activity tracking
 
@@ -315,17 +348,14 @@ for you, it won't call it "active" no matter how much CPU it's burning.
 
 Matching an agent PID to a specific tmux pane uses three strategies, in order:
 
-1. **Direct PID match** — Check if the PID itself is a tmux `pane_pid` (O(1) via
-   pre-built associative array).
+1. **Direct PID match** — Check if the PID itself is a tmux `pane_pid`
+   (O(1) via a pre-built map).
 2. **TTY matching** — Read `/proc/[pid]/stat` field 7 (tty_nr), convert the
    major/minor to `/dev/pts/N`, then match against `tmux list-panes -a -F`
-   (also O(1) via associative array).
+   (also O(1)).
 3. **Process tree fallback** — If both above fail (e.g., the agent is a child
    process), walk up the parent chain looking for a PID that matches a tmux
    `pane_pid`.
-
-All pane maps are built once per poll using pure bash associative arrays,
-so lookups are O(1) with no `grep` or `cut` forks.
 
 This means tmon works even when the agent binary is launched deep inside a
 shell pipeline or subshell.
@@ -334,15 +364,13 @@ shell pipeline or subshell.
 
 ```
 tmon.tmux                  ← Plugin entrypoint (sourced by tmux)
-├── scripts/monitor.sh     ← Process scanner + activity evaluator + blocked detection
-│   ├── --once             ← Called by tmux #() interpolation for status bar
-│   └── --notify           ← Daemon mode with tmux display-message notifications
-├── scripts/pane-map.sh    ← Standalone PID-to-pane resolver
-├── scripts/dashboard.sh   ← Interactive navigation popup (self-contained)
-└── scripts/notify.sh      ← Notification dispatcher (stdin or arg)
+├── scripts/bootstrap.sh   ← Downloads the pinned release binary + verifies sha256
+├── bin/tmon               ← Go binary: status / daemon / dashboard / version
+├── state/state.json       ← Shared state (written by `status`, read by the dashboard)
+└── cmd/tmon, internal/    ← Go source (only needed when developing)
 ```
 
-No npm, no pip, no cargo. Just bash and `/proc`.
+No npm, no pip, no cargo. Just a small Go binary and `/proc`.
 
 ---
 
@@ -362,30 +390,31 @@ No npm, no pip, no cargo. Just bash and `/proc`.
 ## Notifications
 
 tmon can send tmux `display-message` popups on state transitions (agent
-started, agent became active). Run the monitor in notify mode:
+started, agent became active). Run the daemon in notify mode:
 
 ```bash
-bash ~/.tmux/plugins/tmon/scripts/monitor.sh --notify
+~/.tmux/plugins/tmon/bin/tmon daemon --notify
 ```
 
 This runs continuously in the background, emitting transient popups like
 "Grok Build started in code/tmon" or "Claude Code is now active in src/api"
 whenever an agent changes state. Notifications are opt-in and off by default
-to avoid noise.
+to avoid noise. (To have tmux start it on every server, add
+`run-shell -b "~/.tmux/plugins/tmon/bin/tmon daemon --notify"` to your
+`~/.tmux.conf` — the `-b` flag detaches it.)
 
 ## Adding your own agent
 
-Edit `scripts/monitor.sh` and `scripts/dashboard.sh`. Add an entry to the
-`AGENT_SIGNATURES` array in both files:
+Three small edits, then `make build`:
 
-```bash
-"YourAgent:^your-tool( |$)"
-"YourAgent:your-tool( |-)(agent|chat|run)"
-```
+1. **Detection** — add a signature (a label + regex matched against the
+   process command line) to the table in `internal/detect/signatures.go`.
+2. **Display name + icon** — add them to `internal/dashboard/names.go`.
+3. **Tests** — add rows to the signature test matrix in
+   `internal/detect/signatures_test.go` and rebuild.
 
-Then add its full display name in `dashboard.sh`'s `agent_full_name()` function,
-and optionally an emoji icon in the `agent_icon()` function. The regex is
-matched against the process command line (null-separated args joined with
+The blocked-state patterns live in `internal/blocked/blocked.go`. The regex
+is matched against the process command line (null-separated args joined with
 spaces, no trailing newline).
 
 ---
@@ -396,10 +425,10 @@ spaces, no trailing newline).
 Grok Build or Claude Code and it should appear. Still nothing? Run manually:
 
 ```bash
-bash ~/.tmux/plugins/tmon/scripts/monitor.sh --once
+~/.tmux/plugins/tmon/bin/tmon status
 ```
 
-**Navigation won't open** — Check your keybinding: `tmux list-keys -T a-table`.
+**Dashboard won't open** — Check your keybinding: `tmux list-keys -T a-table`.
 If `a` conflicts with another plugin, change `@tmon-dashboard-key`.
 
 **Agent shows as "?" instead of a pane path** — The PID-to-pane mapping
@@ -411,11 +440,16 @@ is already conservative; bumping to 10000ms (10s) makes the scan cost
 essentially invisible.
 
 **Stale agent counts after crash** — tmon persists agent state to
-`~/.cache/tmon/agents.state`. If counts seem wrong after an abnormal tmux
+`<plugin>/state/state.json`. If counts seem wrong after an abnormal tmux
 exit, delete this file and let it rebuild:
+
 ```bash
-rm ~/.cache/tmon/agents.state
+rm ~/.tmux/plugins/tmon/state/state.json
 ```
+
+**Binary won't download** — bootstrap needs network access to GitHub
+Releases. Check connectivity, then run `scripts/bootstrap.sh` manually — it
+prints the reason for the failure.
 
 ---
 

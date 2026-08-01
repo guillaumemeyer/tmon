@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tmon.tmux — Tmux AI Agent Monitor Plugin
+# tmon.tmux — Tmux AI Agent Monitor Plugin (Go rewrite)
 # ==============================================================================
 # Installation (with TPM):
 #   set -g @plugin 'guillaumemeyer/tmon'
@@ -8,25 +8,34 @@
 #   run-shell ~/.tmux/plugins/tmon/tmon.tmux
 #
 # Configuration options (set in tmux.conf):
-#   @tmon-status-position    "right" (default) or "left" — which side of status bar
-#   @tmon-poll-interval      3000 (default) — milliseconds between agent scans
+#   @tmon-status-position    "right" (default) or "left" — which side of the
+#                            status bar carries the agent indicator
+#   @tmon-poll-interval      3000 (default) — ms between agent scans
 #   @tmon-activity-threshold 500 (default) — CPU ms/s to consider "active"
-#   @tmon-io-threshold       1024 (default) — min IO bytes/poll to consider "active"
-#   @tmon-dashboard-key      "a" (default) — chord leader for popup (prefix a a)
+#   @tmon-io-threshold       102400 (default) — min IO bytes/poll for "active"
+#   @tmon-dashboard-key      "a" (default) — chord leader for the popup
+#                            (prefix <key> <key>)
+#
+# Everything else is internal and self-contained: the binary is downloaded on
+# first load into <plugin>/bin (scripts/bootstrap.sh, pinned + checksummed to
+# the VERSION file) and all state lives in <plugin>/state. Nothing is written
+# to ~/.cache or /tmp.
 # ==============================================================================
 
 set -eu
 
 CURRENT_DIR="$(cd "$(dirname "$0")" && pwd)"
-MONITOR_SCRIPT="$CURRENT_DIR/scripts/monitor.sh"
+BIN_DIR="$CURRENT_DIR/bin"
+STATE_DIR="$CURRENT_DIR/state"
+BOOTSTRAP="$CURRENT_DIR/scripts/bootstrap.sh"
+BINARY="$BIN_DIR/tmon"
 
 # ─── Configuration ────────────────────────────────────────────────────────────
 
 get_tmux_option() {
-  _tmo_option="$1"
-  _tmo_default_value="$2"
-  _tmo_value=$(tmux show-option -gqv "$_tmo_option" 2>/dev/null)
-  echo "${_tmo_value:-$_tmo_default_value}"
+  local option="$1" default_value="$2" value
+  value=$(tmux show-option -gqv "$option" 2>/dev/null || true)
+  echo "${value:-$default_value}"
 }
 
 STATUS_POSITION=$(get_tmux_option "@tmon-status-position" "right")
@@ -35,58 +44,74 @@ ACTIVITY_THRESHOLD=$(get_tmux_option "@tmon-activity-threshold" "500")
 IO_THRESHOLD=$(get_tmux_option "@tmon-io-threshold" "102400")
 DASHBOARD_KEY=$(get_tmux_option "@tmon-dashboard-key" "a")
 
-export TMON_POLL_INTERVAL_MS="$POLL_INTERVAL"
-export TMON_ACTIVITY_THRESHOLD_MS="$ACTIVITY_THRESHOLD"
-export TMON_IO_ACTIVITY_THRESHOLD="$IO_THRESHOLD"
-export TMON_STATE_DIR="${HOME}/.cache/tmon"
+# ─── Runtime environment ──────────────────────────────────────────────────────
+
+# Push the configuration into tmux's global environment so the #() status
+# command and the display-popup actually see it. (The bash plugin only
+# exported these in the sourcing shell, which the status bar never inherits —
+# so its @tmon-* options were effectively dead for the #() path.)
+tmux set-environment -g TMON_STATE_DIR "$STATE_DIR"
+tmux set-environment -g TMON_BIN_DIR "$BIN_DIR"
+tmux set-environment -g TMON_POLL_INTERVAL_MS "$POLL_INTERVAL"
+tmux set-environment -g TMON_ACTIVITY_THRESHOLD_MS "$ACTIVITY_THRESHOLD"
+tmux set-environment -g TMON_IO_ACTIVITY_THRESHOLD "$IO_THRESHOLD"
+
+# The bootstrap subprocess reads TMON_BIN_DIR from the environment; the
+# set-environment above only affects tmux's own environment.
+export TMON_BIN_DIR="$BIN_DIR"
 
 # ─── Plugin Entrypoint ────────────────────────────────────────────────────────
 
 main() {
+  # Download/verify the binary on first load or update (a no-op when the
+  # installed version matches VERSION). A failure only shows a message and
+  # leaves the plugin loadable; the next reload retries. The #() status path
+  # below never runs bootstrap logic — `tmon status` stays instant.
+  if [ -f "$BOOTSTRAP" ]; then
+    "$BOOTSTRAP" || true
+  fi
 
-  # Ensure scripts are executable
-  chmod +x "$MONITOR_SCRIPT" 2>/dev/null || true
-  chmod +x "$CURRENT_DIR/scripts/notify.sh" 2>/dev/null || true
+  # Status-bar widget. The binary path is inlined because #() commands run
+  # with tmux's environment, not with this shell's variables.
+  widget="#[range=user|tmon]#($BINARY status 2>/dev/null)#[norange]"
 
-  # Build the monitor interpolation string, wrapped in a clickable range
-  _tmon_widget="#[range=user|tmon]#(bash '$MONITOR_SCRIPT' --once 2>/dev/null)#[norange]"
-
-  # Set the status bar interpolation (skip if already present — guards against double-load)
+  # Wire the widget into the requested status position, skipping if this
+  # plugin's binary path is already present (idempotent reloads).
   if [ "$STATUS_POSITION" = "left" ]; then
-    _tmon_existing=$(tmux show-option -gqv status-left 2>/dev/null || echo "")
-    case "$_tmon_existing" in
-      *"$MONITOR_SCRIPT"*) ;;  # already present, skip
+    existing=$(tmux show-option -gqv status-left 2>/dev/null || echo "")
+    case "$existing" in
+      *"$BINARY"*) ;;
       *)
-        if [ -n "$_tmon_existing" ]; then
-          tmux set -g status-left "$_tmon_widget $_tmon_existing"
+        if [ -n "$existing" ]; then
+          tmux set -g status-left "$widget $existing"
         else
-          tmux set -g status-left "$_tmon_widget"
+          tmux set -g status-left "$widget"
         fi
         ;;
     esac
   else
-    # Append to status-right
-    _tmon_existing=$(tmux show-option -gqv status-right 2>/dev/null || echo "")
-    case "$_tmon_existing" in
-      *"$MONITOR_SCRIPT"*) ;;  # already present, skip
+    existing=$(tmux show-option -gqv status-right 2>/dev/null || echo "")
+    case "$existing" in
+      *"$BINARY"*) ;;
       *)
-        if [ -n "$_tmon_existing" ]; then
-          tmux set -g status-right "$_tmon_existing $_tmon_widget"
+        if [ -n "$existing" ]; then
+          tmux set -g status-right "$existing $widget"
         else
-          tmux set -g status-right "$_tmon_widget"
+          tmux set -g status-right "$widget"
         fi
         ;;
     esac
   fi
 
-  # Setup chord table for agent navigation popup
+  # Chord table for the agent navigation popup: prefix <key> <key>.
   tmux bind-key "$DASHBOARD_KEY" switch-client -T a-table
-  tmux bind-key -T a-table a display-popup -w 80% -h 80% -E "bash '$CURRENT_DIR/scripts/dashboard.sh'"
+  tmux bind-key -T a-table "$DASHBOARD_KEY" \
+    display-popup -w 80% -h 80% -E "$BINARY dashboard"
 
-  # Mouse click on the status bar agent indicator opens the dashboard
+  # Mouse click on the status-bar indicator opens the popup too.
   tmux bind-key -T root MouseDown1Status \
     if -F "#{==:#{mouse_status_range},tmon}" \
-    "display-popup -w 80% -h 80% -E 'bash $CURRENT_DIR/scripts/dashboard.sh'" \
+    "display-popup -w 80% -h 80% -E '$BINARY dashboard'" \
     "select-window -t ="
 }
 
