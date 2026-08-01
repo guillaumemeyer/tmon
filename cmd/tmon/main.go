@@ -35,7 +35,10 @@ func main() {
 	switch os.Args[1] {
 	case "status":
 		os.Exit(cmdStatus(os.Args[2:]))
-	// Subcommands are registered here as they are implemented.
+	case "daemon":
+		os.Exit(cmdDaemon(os.Args[2:]))
+	case "dashboard":
+		os.Exit(cmdDashboard(os.Args[2:]))
 	case "version":
 		fmt.Println(version)
 	case "help", "-h", "--help":
