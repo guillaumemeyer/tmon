@@ -1,0 +1,33 @@
+# goreleaser configuration — see https://goreleaser.com
+# Releases are produced automatically on every push to main by
+# .github/workflows/release.yml. Assets are raw binaries named
+# tmon_<VERSION>_linux_<arch>, which scripts/bootstrap.sh downloads.
+
+version: 2
+
+project_name: tmon
+
+builds:
+  - id: tmon
+    main: ./cmd/tmon
+    binary: tmon
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+
+archives:
+  - id: tmon
+    format: binary
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: "checksums.txt"
+
+release:
+  github:
+    owner: guillaumemeyer
+    name: tmon

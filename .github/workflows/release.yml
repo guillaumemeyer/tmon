@@ -1,0 +1,64 @@
+# Release automation: every push to main ships a new release.
+#
+# Flow:
+#   1. Read VERSION from the repo (developer bumps it via `make bump`).
+#   2. Skip if a release for that version already exists (idempotent).
+#   3. Tag v<VERSION> and push the tag (the tag push does NOT re-trigger
+#      this workflow — it only listens to branch pushes).
+#   4. goreleaser builds linux/amd64 + linux/arm64 and uploads them with
+#      checksums.txt to GitHub Releases.
+#
+# Users update via TPM `prefix U` (git pull) + reload: bootstrap sees a new
+# VERSION and re-downloads the pinned artifact.
+
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    if: "!contains(github.event.head_commit.message, '[skip release]')"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Read VERSION
+        id: version
+        run: echo "version=$(cat VERSION)" >> "$GITHUB_OUTPUT"
+
+      - name: Skip if release already exists
+        id: exists
+        run: |
+          if curl -sf -o /dev/null \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/v${{ steps.version.outputs.version }}"; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Tag v${{ steps.version.outputs.version }}
+        if: steps.exists.outputs.exists == 'false'
+        run: |
+          git tag "v${{ steps.version.outputs.version }}"
+          git push origin "v${{ steps.version.outputs.version }}"
+
+      - name: Goreleaser release
+        if: steps.exists.outputs.exists == 'false'
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: latest
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

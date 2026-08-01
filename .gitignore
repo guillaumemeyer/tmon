@@ -1,0 +1,10 @@
+# Build artifacts
+/bin/
+/dist/
+
+# Runtime state (written inside the plugin dir by tmon itself)
+/state/
+
+# Test/coverage output
+coverage.out
+*.test
