@@ -1,4 +1,4 @@
-# Release automation: every push to main ships a new release.
+# Release automation: every push to master ships a new release.
 #
 # Flow:
 #   1. Read VERSION from the repo (developer bumps it via `make bump`).
@@ -15,7 +15,7 @@ name: Release
 
 on:
   push:
-    branches: [main]
+    branches: [master]
 
 permissions:
   contents: write

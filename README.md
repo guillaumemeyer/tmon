@@ -176,7 +176,7 @@ and a Go binary (**never** committed — downloaded as a release artifact).
   GitHub Releases, verifies the SHA-256 checksum, and installs it to
   `<plugin>/bin/tmon`. If the installed binary already matches the repo's
   `VERSION` file, bootstrap is a no-op (instant).
-- **Updates** — every push to `main` triggers a GitHub Action that reads
+- **Updates** — every push to `master` triggers a GitHub Action that reads
   `VERSION`, tags `v<VERSION>` (skipping if that release already exists), and
   ships a goreleaser build for linux/amd64 + linux/arm64. Users update the
   repo (TPM `prefix U` or `git pull`) and reload; bootstrap sees the new
@@ -198,7 +198,7 @@ TPM: hit `prefix U` (uppercase), then `tmux source-file ~/.tmux.conf`.
 Manual installs: `git pull origin master`, then `tmux source-file ~/.tmux.conf`.
 
 > **Releasing a new version:** `make bump-patch` (bumps `VERSION`), commit,
-> push to `main`. CI auto-releases `v<VERSION>` if it doesn't already exist —
+> push to `master`. CI auto-releases `v<VERSION>` if it doesn't already exist —
 > no manual tagging.
 
 ---
