@@ -49,13 +49,14 @@ var Signatures = []Signature{
 	{"Hermes", re(`/hermes( |$)`)},
 	{"Hermes", re(`hermes (agent|chat|run)`)},
 	{"OpenClaw", re(`^openclaw( |$)`)},
-	{"OpenClaw", re(`openclaw (agent|chat|run)`)},
+	{"OpenClaw", re(`openclaw-gateway`)},
+	{"OpenClaw", re(`openclaw (agent|chat|run|gateway)`)},
 }
 
 func re(p string) *regexp.Regexp { return regexp.MustCompile(p) }
 
 // combined is the precomputed union regex used as a cheap first filter so we
-// don't run 31 individual regexes against every process on the system.
+// don't run every individual signature regex against every process.
 var combined = regexp.MustCompile(strings.Join(allPatterns(), "|"))
 
 func allPatterns() []string {

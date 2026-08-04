@@ -202,9 +202,52 @@ func TestNotifyTransitionsOnChangeOnly(t *testing.T) {
 		{PID: 3, Label: "Hermes", Status: agent.StatusBlocked}, // idle→blocked: announce
 		{PID: 4, Label: "Codex", Status: agent.StatusIdle},     // new agent: silent
 	}
-	notifyTransitions(prev, snap)
+	notifyTransitions(prev, snap, false)
 	if len(got) != 2 {
 		t.Fatalf("announced %v, want 2", got)
+	}
+}
+
+func TestNotifyBellOnBlockedTransition(t *testing.T) {
+	var bells int
+	old := ringBell
+	ringBell = func() { bells++ }
+	t.Cleanup(func() { ringBell = old })
+	oldAnn := announce
+	announce = func(string, agent.Status, agent.Status, string) {}
+	t.Cleanup(func() { announce = oldAnn })
+
+	prev := map[int]agent.Status{1: agent.StatusWorking}
+	snap := []agent.AgentState{{PID: 1, Label: "Grok", Status: agent.StatusBlocked}}
+
+	// working→blocked with the bell enabled: rings once.
+	notifyTransitions(prev, snap, true)
+	if bells != 1 {
+		t.Fatalf("bells = %d, want 1 on working→blocked", bells)
+	}
+
+	// Disabled: no bell.
+	notifyTransitions(prev, snap, false)
+	if bells != 1 {
+		t.Fatalf("bells after disabled = %d, want still 1", bells)
+	}
+
+	// blocked→working with the bell enabled: no bell (only blocked rings).
+	notifyTransitions(map[int]agent.Status{1: agent.StatusBlocked}, []agent.AgentState{{PID: 1, Label: "Grok", Status: agent.StatusWorking}}, true)
+	if bells != 1 {
+		t.Fatalf("bells after blocked→working = %d, want still 1", bells)
+	}
+
+	// Steady state: no transition, no bell.
+	notifyTransitions(map[int]agent.Status{1: agent.StatusBlocked}, snap, true)
+	if bells != 1 {
+		t.Fatalf("bells after steady blocked = %d, want still 1", bells)
+	}
+
+	// A first sighting of a blocked agent is silent (not a transition).
+	notifyTransitions(nil, snap, true)
+	if bells != 1 {
+		t.Fatalf("bells after first sighting = %d, want still 1", bells)
 	}
 }
 

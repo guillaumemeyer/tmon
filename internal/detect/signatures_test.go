@@ -52,9 +52,12 @@ func TestMatchLabel(t *testing.T) {
 		"hermes agent --task plan":  "Hermes",
 		"/usr/local/bin/hermes run": "Hermes",
 		// OpenClaw
-		"openclaw":       "OpenClaw",
-		"openclaw chat":  "OpenClaw",
-		"openclaw agent": "OpenClaw",
+		"openclaw":              "OpenClaw",
+		"openclaw chat":         "OpenClaw",
+		"openclaw agent":        "OpenClaw",
+		"openclaw gateway":      "OpenClaw",
+		"openclaw-gateway":      "OpenClaw",
+		"/usr/bin/openclaw-gateway": "OpenClaw",
 	}
 
 	for cmdline, want := range positives {

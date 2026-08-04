@@ -20,6 +20,6 @@ func cmdStatus(args []string) int {
 		fmt.Fprintln(os.Stderr, "tmon: save state:", err)
 	}
 
-	fmt.Print(statusbar.Render(res.Statuses, cfg.ASCII, cfg.BoldCounts))
+	fmt.Print(statusbar.Render(res.Agents, cfg.BoldCounts, resolveTheme(cfg), cfg.ContextWarn))
 	return 0
 }

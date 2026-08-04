@@ -22,6 +22,8 @@ func cmdDashboard(args []string) int {
 
 	cfg := config.FromEnv()
 	m := dashboard.New(dashboard.DefaultLoader(cfg), cfg.ASCII).
+		WithTheme(resolveTheme(cfg)).
+		WithContextWarn(cfg.ContextWarn).
 		WithSettingsPath(filepath.Join(cfg.StateDir, "dashboard.json")).
 		WithVersion("v" + version)
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())

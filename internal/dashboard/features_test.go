@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/guillaumemeyer/tmon/internal/agent"
+	"github.com/guillaumemeyer/tmon/internal/theme"
 )
 
 func TestStatusFilters(t *testing.T) {
@@ -447,7 +448,7 @@ func TestFooterShowsVersionBottomLeft(t *testing.T) {
 	}
 }
 
-func TestSelectedAgentMarker(t *testing.T) {
+func TestSelectedAgentHighlight(t *testing.T) {
 	old := capturePane
 	capturePane = func(p string) string { return "x" }
 	t.Cleanup(func() { capturePane = old })
@@ -457,40 +458,28 @@ func TestSelectedAgentMarker(t *testing.T) {
 	m = applyMsg(t, m, initMsg{}) // Grok is selected
 	m.width, m.height = 80, 24
 
-	v := ansi.Strip(m.View())
-	lines := strings.Split(v, "\n")
-	var grokLine, claudeLine, windowLine string
-	for _, ln := range lines {
-		switch {
-		case strings.Contains(ln, ">") && strings.Contains(ln, "Popup preview scroll"): // selected name line
-			grokLine = ln
-		case strings.Contains(ln, "Claude Code"): // Claude's name line
-			claudeLine = ln
-		case strings.Contains(ln, "0:shell"):
-			windowLine = ln
-		}
-	}
-
-	// The selected line carries a ">" marker at the window index column (4);
-	// the unselected line keeps plain leading spaces.
-	if !strings.HasPrefix(strings.TrimRight(grokLine, " "), "    > Popup preview scroll") {
-		t.Fatalf("selected line missing marker, got %q", grokLine)
-	}
-	if strings.HasPrefix(strings.TrimRight(claudeLine, " "), "    >") {
-		t.Fatalf("unselected line has marker: %q", claudeLine)
-	}
-	// Marker is vertically aligned with the window index.
-	if runes := []rune(windowLine); len(runes) > 4 && runes[4] != '0' {
-		t.Fatalf("window index not at column 4: %q", windowLine)
-	}
-	if runes := []rune(strings.TrimRight(grokLine, " ")); len(runes) > 4 && runes[4] != '>' {
-		t.Fatalf("marker not at column 4: %q", grokLine)
-	}
-
-	// The marker is still green/bold in the unstripped view.
+	listW, _ := m.panelWidths(80)
 	raw := m.View()
-	if !strings.Contains(raw, styleGreen.Bold(true).Render(">")) {
-		t.Fatal("marker lost its green bold style")
+
+	// The selected name row is highlighted with the full-line selection
+	// style: bold accent on the selection background, padded to the list
+	// width. The old ">" marker is gone.
+	if !strings.Contains(raw, m.st.selText.Render(fit("      Popup preview scroll (Grok Build)", listW))) {
+		t.Fatalf("selected name row missing the selText highlight:\n%q", raw)
+	}
+	// The cwd row gets the dim selection background too.
+	if !strings.Contains(raw, m.st.selDim.Render(fit("      code/tmon", listW))) {
+		t.Fatalf("selected cwd row missing the selection background:\n%q", raw)
+	}
+
+	// Unselected rows keep the plain bold style and no marker.
+	if !strings.Contains(raw, m.st.white.Bold(true).Render("      Claude Code")) {
+		t.Fatalf("unselected name row should use the plain bold style:\n%q", raw)
+	}
+	for _, ln := range strings.Split(ansi.Strip(raw), "\n") {
+		if strings.Contains(ln, "Claude Code") && strings.Contains(ln, ">") {
+			t.Fatalf("unselected row still has a marker: %q", ln)
+		}
 	}
 }
 
@@ -530,16 +519,21 @@ func TestAgentRowsAreTwoLines(t *testing.T) {
 		}
 	}
 
-	// The name line is bold and the cwd line is dimmed in the raw view; the
-	// pause status keeps the orange "blocked" color.
+	// The selected name row uses the selection highlight; unselected rows
+	// keep the plain bold/dim styles, and the pause status keeps the orange
+	// "blocked" color.
 	raw := m.View()
-	if !strings.Contains(raw, styleWhite.Bold(true).Render("Popup preview scroll (Grok Build)")) {
-		t.Fatal("agent name should be bold in the raw view")
+	listW, _ := m.panelWidths(80)
+	if !strings.Contains(raw, m.st.selText.Render(fit("      Popup preview scroll (Grok Build)", listW))) {
+		t.Fatal("selected agent name should be highlighted in the raw view")
 	}
-	if !strings.Contains(raw, styleDim.Render("code/tmon")) {
+	if !strings.Contains(raw, m.st.white.Bold(true).Render("      Claude Code")) {
+		t.Fatal("unselected agent name should stay plain bold in the raw view")
+	}
+	if !strings.Contains(raw, styleDim.Render("site")) {
 		t.Fatal("cwd should be dimmed in the raw view")
 	}
-	if !strings.Contains(raw, styleOrange.Render("paused")) {
+	if !strings.Contains(raw, styleOrange.Render("  paused")) {
 		t.Fatal("blocked agent should show an orange pause status")
 	}
 }
@@ -567,6 +561,7 @@ func TestAgentRowsThreeLinesWithUsage(t *testing.T) {
 	f := &fakeLoader{data: Data{Rows: rows}}
 	m := New(f.load, true)
 	m = applyMsg(t, m, initMsg{})
+	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyDown}) // select Claude so Grok renders unstyled
 	m.width, m.height = 80, 24
 
 	v := ansi.Strip(m.View())
@@ -590,18 +585,19 @@ func TestAgentRowsThreeLinesWithUsage(t *testing.T) {
 			}
 		}
 	}
-	if !strings.Contains(stats, "ctx 52.4k/200k (26%)") {
-		t.Fatalf("stats line = %q, want ctx 52.4k/200k (26%%)", stats)
+	if !strings.Contains(stats, "ctx 52.4k/200k ██░░░░░░░░ 26%") {
+		t.Fatalf("stats line = %q, want ctx 52.4k/200k ██░░░░░░░░ 26%%", stats)
 	}
 
-	// The stats line is dimmed in the raw view like the cwd line.
+	// The stats text is dimmed and the bar is green in the raw view.
 	raw := m.View()
-	if !strings.Contains(raw, styleDim.Render("ctx 52.4k/200k (26%)")) {
-		t.Fatal("stats line should be dimmed in the raw view")
+	if !strings.Contains(raw, m.st.green.Render("██░░░░░░░░")) {
+		t.Fatal("usage bar should be green in the raw view")
 	}
 }
 
 func TestUsageLineFormat(t *testing.T) {
+	m := Model{st: defaultStyles, theme: theme.Default, contextWarn: defaultContextWarn}
 	cases := []struct {
 		name string
 		u    agent.Usage
@@ -609,15 +605,121 @@ func TestUsageLineFormat(t *testing.T) {
 	}{
 		{"empty", agent.Usage{}, ""},
 		{"tokens only", agent.Usage{TokensUsed: 13025}, "ctx 13k"},
-		{"tokens and window", agent.Usage{TokensUsed: 52367, WindowTokens: 200000}, "ctx 52.4k/200k (26%)"},
-		{"million window", agent.Usage{TokensUsed: 123456, WindowTokens: 1000000}, "ctx 123k/1M (12%)"},
+		{"tokens and window", agent.Usage{TokensUsed: 52367, WindowTokens: 200000}, "ctx 52.4k/200k ██░░░░░░░░ 26%"},
+		{"million window", agent.Usage{TokensUsed: 123456, WindowTokens: 1000000}, "ctx 123k/1M █░░░░░░░░░ 12%"},
 		{"quota only", agent.Usage{QuotaPct: 38, QuotaReset: "14:00"}, "62% left · reset 14:00"},
-		{"all", agent.Usage{TokensUsed: 52367, WindowTokens: 200000, QuotaPct: 38, QuotaReset: "14:00"}, "ctx 52.4k/200k (26%) · 62% left · reset 14:00"},
+		{"all", agent.Usage{TokensUsed: 52367, WindowTokens: 200000, QuotaPct: 38, QuotaReset: "14:00"}, "ctx 52.4k/200k ██░░░░░░░░ 26% · 62% left · reset 14:00"},
 		{"over quota clamps", agent.Usage{QuotaPct: 120, QuotaReset: "14:00"}, "0% left · reset 14:00"},
+		{"warn threshold", agent.Usage{TokensUsed: 180000, WindowTokens: 200000}, "ctx 180k/200k █████████░ 90%"},
 	}
 	for _, tc := range cases {
-		if got := usageLine(tc.u); got != tc.want {
+		if got := ansi.Strip(m.usageLine(tc.u, false)); got != tc.want {
 			t.Errorf("%s: usageLine(%+v) = %q, want %q", tc.name, tc.u, got, tc.want)
+		}
+	}
+}
+
+func TestUsageBarColor(t *testing.T) {
+	m := Model{st: defaultStyles, theme: theme.Default, contextWarn: defaultContextWarn}
+	bar := func(pct int) string { return m.contextBar(pct, m.st.green, m.st.warn) }
+	if got := bar(26); got != m.st.green.Render("██░░░░░░░░") {
+		t.Fatalf("26%% bar = %q, want green", got)
+	}
+	// At the warn threshold (85%) and above, the bar switches to warn.
+	if got := bar(85); got != m.st.warn.Render("████████░░") {
+		t.Fatalf("85%% bar = %q, want warn", got)
+	}
+	if got := bar(90); got != m.st.warn.Render("█████████░") {
+		t.Fatalf("90%% bar = %q, want warn", got)
+	}
+	// Over 100% clamps to a full bar.
+	if got := bar(250); got != m.st.warn.Render("██████████") {
+		t.Fatalf("250%% bar = %q, want full warn bar", got)
+	}
+
+	// A custom threshold (@tmon-context-warn) moves the warn switch point.
+	m2 := m.WithContextWarn(70)
+	if got := m2.contextBar(75, m2.st.green, m2.st.warn); got != m2.st.warn.Render("███████░░░") {
+		t.Fatalf("75%% bar with 70%% threshold = %q, want warn", got)
+	}
+	// A threshold of 0 disables the warn color entirely.
+	m3 := m.WithContextWarn(0)
+	if got := m3.contextBar(90, m3.st.green, m3.st.warn); got != m3.st.green.Render("█████████░") {
+		t.Fatalf("90%% bar with 0 threshold = %q, want green", got)
+	}
+}
+
+func TestHeaderFleetCounts(t *testing.T) {
+	old := capturePane
+	capturePane = func(p string) string { return "x" }
+	t.Cleanup(func() { capturePane = old })
+
+	f := &fakeLoader{data: Data{Rows: testRows()}}
+	m := New(f.load, true)
+	m = applyMsg(t, m, initMsg{})
+	m.width, m.height = 80, 24
+
+	// ASCII theme: one of each status — 🛑→B, ⚡️→W, 💤→I.
+	raw := m.View()
+	if !strings.Contains(raw, m.st.cyan.Bold(true).Render(" [@] tmon")) {
+		t.Fatalf("header missing the title:\n%s", raw)
+	}
+	for _, want := range []string{m.st.orange.Render("B1"), m.st.green.Render("W1"), m.st.blue.Render("I1")} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("header missing fleet count %q in:\n%s", want, raw)
+		}
+	}
+
+	// The emoji theme renders the same counts with emoji glyphs.
+	m3 := m.WithTheme(theme.Default)
+	raw3 := ansi.Strip(m3.View())
+	for _, want := range []string{"🛑1", "⚡️1", "💤1"} {
+		if !strings.Contains(raw3, want) {
+			t.Fatalf("emoji header missing %q in:\n%s", want, raw3)
+		}
+	}
+
+	// Only non-zero statuses are shown: a single working agent shows W only.
+	rows := testRows()[:1]
+	m2 := New(func() (Data, error) { return Data{Rows: rows}, nil }, true)
+	m2 = applyMsg(t, m2, initMsg{})
+	m2.width, m2.height = 80, 24
+	header := strings.Split(ansi.Strip(m2.View()), "\n")[0]
+	if !strings.Contains(header, "W1") {
+		t.Fatalf("single-agent header missing W1: %q", header)
+	}
+	if strings.Contains(header, "B") || strings.Contains(header, "I") {
+		t.Fatalf("single-agent header should only show W: %q", header)
+	}
+}
+
+func TestCwdLineShowsStatusAge(t *testing.T) {
+	old := capturePane
+	capturePane = func(p string) string { return "x" }
+	t.Cleanup(func() { capturePane = old })
+
+	rows := testRows()
+	now := time.Now().Unix()
+	rows[1].LastTs = now      // Claude blocked, just now
+	rows[2].LastTs = now - 90 // Codex idle, 90s ago
+	f := &fakeLoader{data: Data{Rows: rows}}
+	m := New(f.load, false) // emoji theme
+	m = applyMsg(t, m, initMsg{})
+	m.width, m.height = 80, 24
+
+	v := ansi.Strip(m.View())
+	lines := strings.Split(v, "\n")
+	for i, ln := range lines {
+		list := strings.SplitN(ln, "│", 2)[0]
+		switch {
+		case strings.Contains(list, "Claude Code"):
+			if !strings.Contains(lines[i+1], "🛑 now") {
+				t.Fatalf("blocked cwd line = %q, want 🛑 now", lines[i+1])
+			}
+		case strings.Contains(list, "Codex CLI"):
+			if !strings.Contains(lines[i+1], "💤 1m") {
+				t.Fatalf("idle cwd line = %q, want 💤 1m", lines[i+1])
+			}
 		}
 	}
 }

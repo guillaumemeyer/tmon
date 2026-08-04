@@ -6,27 +6,29 @@ import (
 	"strings"
 
 	"github.com/guillaumemeyer/tmon/internal/agent"
+	"github.com/guillaumemeyer/tmon/internal/theme"
 )
 
-// tmux style directives (identical to the bash plugin's).
+// tmux style directives.
 const (
-	fgGreen  = "#[fg=green]"
-	fgOrange = "#[fg=colour208]"
-	fgBlue   = "#[fg=blue]"
-	fgCyan   = "#[fg=cyan]"
-	boldOn   = "#[bold]"
-	reset    = "#[default]"
+	boldOn = "#[bold]"
+	reset  = "#[default]"
 )
 
-// Render builds the indicator line: "🤖-🚨1-⚡️2-💤3 " in emoji mode (ascii
-// false) or "[@]-B1-W2-I3 " in ASCII mode. Each status segment (icon + count)
-// is rendered only when that status has at least one agent, so an empty fleet
-// renders as just the app icon. Icons are static — there is no pulse
-// animation. When bold is true, each count digit is wrapped in #[bold].
-func Render(statuses []agent.Status, ascii bool, bold bool) string {
+// Render builds the indicator line — "🤖-🛑1-⚡️2-💤3 " in emoji mode or
+// "[@]-B1-W2-I3 " in ASCII mode — colored by the theme palette. Each status
+// segment (icon + count) appears only when that status has at least one
+// agent, so an empty fleet renders as just the app icon. Icons and colors
+// come from the resolved theme, including any @tmon-icon-* / @tmon-color-*
+// overrides. When bold is true, each count digit is wrapped in #[bold].
+//
+// warnPct is the context-usage percent at which a warning segment (⚠️/! in
+// the theme's warn color) is appended to the indicator — e.g. "🤖-⚡️2-⚠️" —
+// when any agent's context usage reaches it. 0 disables the warning.
+func Render(agents []agent.AgentState, bold bool, t theme.Theme, warnPct int) string {
 	var blocked, working, idle int
-	for _, s := range statuses {
-		switch s {
+	for _, a := range agents {
+		switch a.Status {
 		case agent.StatusBlocked:
 			blocked++
 		case agent.StatusWorking:
@@ -36,12 +38,7 @@ func Render(statuses []agent.Status, ascii bool, bold bool) string {
 		}
 	}
 
-	app := "[@]"
-	bGlyph, wGlyph, iGlyph := "B", "W", "I"
-	if !ascii {
-		app = "🤖"
-		bGlyph, wGlyph, iGlyph = "🚨", "⚡️", "💤"
-	}
+	pal, ic := t.Palette, t.Icons
 
 	var segs []string
 	add := func(glyph, color string, n int) {
@@ -52,13 +49,22 @@ func Render(statuses []agent.Status, ascii bool, bold bool) string {
 		if bold {
 			count = boldOn + count
 		}
-		segs = append(segs, color+glyph+count+reset)
+		segs = append(segs, "#[fg="+color+"]"+glyph+count+reset)
 	}
-	add(bGlyph, fgOrange, blocked)
-	add(wGlyph, fgGreen, working)
-	add(iGlyph, fgBlue, idle)
+	add(ic.Blocked, pal.Blocked, blocked)
+	add(ic.Working, pal.Working, working)
+	add(ic.Idle, pal.Idle, idle)
 
-	line := fgCyan + app + reset
+	if warnPct > 0 {
+		for _, a := range agents {
+			if a.Usage != nil && a.Usage.ContextPct() >= warnPct {
+				segs = append(segs, "#[fg="+pal.Warn+"]"+ic.Warn+reset)
+				break
+			}
+		}
+	}
+
+	line := "#[fg=" + pal.App + "]" + ic.App + reset
 	if len(segs) > 0 {
 		line += "-" + strings.Join(segs, "-")
 	}

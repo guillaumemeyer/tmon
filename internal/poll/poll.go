@@ -116,7 +116,7 @@ func run(cfg config.Config, prevStatus map[int]agent.Status, notify bool, record
 	tracker.EndPoll()
 
 	if notify {
-		notifyTransitions(prevStatus, snapshot)
+		notifyTransitions(prevStatus, snapshot, cfg.BlockedBell)
 	}
 
 	res := Result{Statuses: statuses, Agents: snapshot}
@@ -142,7 +142,10 @@ func resolvePane(paneMap *pane.Map, pid int) string {
 // notifyTransitions compares the fresh snapshot against the previous poll's
 // statuses and announces each change. Agents not present in prev (newly
 // seen, or the daemon's first poll after a fresh state file) are silent.
-func notifyTransitions(prev map[int]agent.Status, snap []agent.AgentState) {
+// When bellOn is set, a transition into blocked also rings the terminal
+// bell — only transitions, never steady state (the daemon path carries
+// prevStatus; `tmon status` is transition-free by design).
+func notifyTransitions(prev map[int]agent.Status, snap []agent.AgentState, bellOn bool) {
 	for _, s := range snap {
 		old, seen := prev[s.PID]
 		if !seen {
@@ -150,12 +153,22 @@ func notifyTransitions(prev map[int]agent.Status, snap []agent.AgentState) {
 		}
 		if s.Status != old {
 			announce(s.Label, old, s.Status, s.CWD)
+			if bellOn && s.Status == agent.StatusBlocked {
+				ringBell()
+			}
 		}
 	}
 }
 
 // announce is the notification sink, overridable in tests.
 var announce = notifyTransition
+
+// ringBell rings the terminal bell via tmux, overridable in tests.
+var ringBell = func() {
+	if tmux.Available() {
+		tmux.Run("run-shell", `printf '\a'`)
+	}
+}
 
 // notifyTransition pops a tmux display-message on notable transitions,
 // mirroring the bash plugin's notify_state_change.

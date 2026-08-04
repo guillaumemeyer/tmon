@@ -139,10 +139,10 @@ and OpenClaw.
 
 How closely tmon can track each one depends on the agent's own state
 surface. Agents that publish live state files (Grok, Hermes, Cline,
-CodeBuddy, Aider) or accept lifecycle hooks (Claude Code, Codex, Cursor,
-Copilot, Windsurf) give tmon authoritative working / blocked / idle signals;
-everyone else falls back to the CPU/IO and pane-content heuristics. The
-matrix below shows which features each agent's connector provides:
+CodeBuddy, Aider, OpenClaw) or accept lifecycle hooks (Claude Code, Codex,
+Cursor, Copilot, Windsurf) give tmon authoritative working / blocked / idle
+signals; everyone else falls back to the CPU/IO and pane-content heuristics.
+The matrix below shows which features each agent's connector provides:
 
 | Agent | Connector | Status | Blocked | Detail | Title | Tokens |
 |-------|-----------|--------|:---:|--------|:---:|:---:|
@@ -156,7 +156,7 @@ matrix below shows which features each agent's connector provides:
 | Cline | native (`~/.cline`) | working | — | session id | — | — |
 | CodeBuddy | native (`~/.codebuddy`) | idle | — | session id | — | — |
 | Aider | native (`.aider.chat.history.md`) | working | — | editing | — | — |
-| OpenClaw | reserved | heuristic | — | — | — | — |
+| OpenClaw | native (`~/.openclaw` + gateway lock) | gateway | — | gateway · N active sessions | — | — |
 
 **Status** is how precisely tmon knows the working / blocked / idle state:
 `exact` from the agent's own signals, a partial signal (`working`, `idle`,
@@ -441,6 +441,38 @@ set -g @tmon-ascii-icons "1"   # [@]-B2-W3-I1 instead of 🤖-🚨2-⚡️3-💤
 
 ```tmux
 set -g @tmon-bold-counts "0"
+```
+
+### Themes
+
+tmon ships with color themes for both the status bar and the dashboard. Set
+`@tmon-theme` to one of the presets:
+
+`default` · `catppuccin` · `nord` · `dracula` · `tokyonight` · `gruvbox` · `solarized` · `onedark`
+
+```tmux
+set -g @tmon-theme "nord"
+```
+
+Preview a theme's colors straight from the terminal (swatches plus a sample
+status line):
+
+```bash
+~/.tmux/plugins/tmon/bin/tmon theme preview nord
+```
+
+`tmon theme` (no arguments) lists all presets.
+
+Fine-tune any theme with per-slot overrides. `@tmon-color-<slot>` accepts a
+tmux color — a name (`red`), an indexed color (`colour208`), or hex
+(`#ff5555`) — for the slots `app`, `blocked`, `working`, `idle`, `dim`,
+`accent`, `warn`, `selbg`. `@tmon-icon-<slot>` swaps a status glyph for
+`app`, `blocked`, `working`, `idle`:
+
+```tmux
+set -g @tmon-color-blocked "#ff5555"
+set -g @tmon-icon-working "⚙️"
+set -g @tmon-icon-app "@"    # ASCII-only crowd
 ```
 
 ---

@@ -173,3 +173,74 @@ func TestBoldCountsIgnoresGarbage(t *testing.T) {
 		t.Error("garbage BoldCounts env should fall back to the default (true)")
 	}
 }
+
+func TestThemeDefaultsToDefault(t *testing.T) {
+	t.Setenv("TMON_THEME", "")
+	c := FromEnv()
+	if c.Theme != "default" {
+		t.Errorf("Theme = %q, want default", c.Theme)
+	}
+	if c.ColorOverrides != nil || c.IconOverrides != nil {
+		t.Errorf("overrides = %v / %v, want nil with no env", c.ColorOverrides, c.IconOverrides)
+	}
+}
+
+func TestContextWarnDefault(t *testing.T) {
+	if c := Defaults(); c.ContextWarn != 85 {
+		t.Fatalf("default ContextWarn = %d, want 85", c.ContextWarn)
+	}
+}
+
+func TestContextWarnFromEnv(t *testing.T) {
+	t.Setenv("TMON_CONTEXT_WARN", "70")
+	if c := FromEnv(); c.ContextWarn != 70 {
+		t.Fatalf("ContextWarn = %d, want 70", c.ContextWarn)
+	}
+	t.Setenv("TMON_CONTEXT_WARN", "0") // 0 disables the warning
+	if c := FromEnv(); c.ContextWarn != 0 {
+		t.Fatalf("ContextWarn = %d, want 0", c.ContextWarn)
+	}
+	t.Setenv("TMON_CONTEXT_WARN", "junk") // unparsable falls back to default
+	if c := FromEnv(); c.ContextWarn != 85 {
+		t.Fatalf("ContextWarn = %d, want 85 fallback", c.ContextWarn)
+	}
+}
+
+func TestBlockedBellFromEnv(t *testing.T) {
+	if c := Defaults(); c.BlockedBell {
+		t.Fatal("default BlockedBell should be off")
+	}
+	t.Setenv("TMON_BLOCKED_BELL", "on")
+	if c := FromEnv(); !c.BlockedBell {
+		t.Fatal("BlockedBell should be on with TMON_BLOCKED_BELL=on")
+	}
+	t.Setenv("TMON_BLOCKED_BELL", "off")
+	if c := FromEnv(); c.BlockedBell {
+		t.Fatal("BlockedBell should be off with TMON_BLOCKED_BELL=off")
+	}
+}
+
+func TestThemeOverrides(t *testing.T) {
+	t.Setenv("TMON_THEME", "nord")
+	t.Setenv("TMON_COLOR_BLOCKED", "#ff0000")
+	t.Setenv("TMON_COLOR_SELBG", "colour237")
+	t.Setenv("TMON_ICON_WORKING", "⚙️")
+	t.Setenv("TMON_ICON_APP", "")
+	c := FromEnv()
+	if c.Theme != "nord" {
+		t.Errorf("Theme = %q, want nord", c.Theme)
+	}
+	wantColors := map[string]string{"blocked": "#ff0000", "selbg": "colour237"}
+	if len(c.ColorOverrides) != len(wantColors) {
+		t.Fatalf("ColorOverrides = %v, want %v", c.ColorOverrides, wantColors)
+	}
+	for k, v := range wantColors {
+		if c.ColorOverrides[k] != v {
+			t.Errorf("ColorOverrides[%q] = %q, want %q", k, c.ColorOverrides[k], v)
+		}
+	}
+	// Empty values are ignored, so the icon-app override is dropped.
+	if len(c.IconOverrides) != 1 || c.IconOverrides["working"] != "⚙️" {
+		t.Errorf("IconOverrides = %v, want {working: ⚙️} only", c.IconOverrides)
+	}
+}

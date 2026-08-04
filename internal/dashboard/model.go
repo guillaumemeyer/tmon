@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/guillaumemeyer/tmon/internal/agent"
+	"github.com/guillaumemeyer/tmon/internal/theme"
 	"github.com/guillaumemeyer/tmon/internal/tmux"
 )
 
@@ -85,7 +86,15 @@ type Model struct {
 	query     string
 	searching bool
 
-	ascii bool // render status icons as ASCII (B/W/I) instead of emoji
+	// theme carries the resolved palette and icons (preset + overrides);
+	// st are the lipgloss styles built from it. Both are set by New and
+	// replaced by WithTheme.
+	theme theme.Theme
+	st    styles
+
+	// contextWarn is the context-usage percent at which the usage bar and
+	// the status bar switch to the warn color; 0 disables the warning.
+	contextWarn int
 
 	// version is the tmon release string shown bottom-left in the footer
 	// (e.g. "0.4.2"). Empty hides it (tests and direct construction).
@@ -100,14 +109,34 @@ type Model struct {
 
 // New returns the dashboard model. loader supplies data snapshots; if nil
 // the dashboard stays empty (safe zero value for direct construction).
-// ascii renders the status icons as ASCII (B/W/I) instead of emoji.
+// ascii renders the status icons as ASCII (B/W/I) instead of emoji, using
+// the default theme; call WithTheme to apply a resolved theme (preset +
+// overrides), which supersedes the ascii flag for icons.
 func New(loader Loader, ascii bool) Model {
-	return Model{
-		loader:     loader,
-		ascii:      ascii,
-		focusCmd:   defaultFocusCmd,
-		previewPct: defaultPreviewPct,
+	m := Model{
+		loader:      loader,
+		focusCmd:    defaultFocusCmd,
+		previewPct:  defaultPreviewPct,
+		contextWarn: defaultContextWarn,
 	}
+	m.theme = theme.Resolve(theme.Options{ASCII: ascii})
+	m.st = buildStyles(m.theme.Palette)
+	return m
+}
+
+// WithTheme replaces the model's resolved theme (palette + icons) and
+// rebuilds the lipgloss styles from it.
+func (m Model) WithTheme(t theme.Theme) Model {
+	m.theme = t
+	m.st = buildStyles(t.Palette)
+	return m
+}
+
+// WithContextWarn sets the context-usage percent at which the usage bar
+// switches to the warn color; 0 disables the warning.
+func (m Model) WithContextWarn(n int) Model {
+	m.contextWarn = n
+	return m
 }
 
 // WithSettingsPath sets the JSON file used to persist UI preferences

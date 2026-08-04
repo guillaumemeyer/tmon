@@ -15,6 +15,8 @@ Usage:
   tmon status            Print the status-bar indicator (used by tmux #())
   tmon daemon [--notify] Run the polling loop (optionally with notifications)
   tmon dashboard         Open the interactive agent navigation popup
+  tmon theme             List theme presets
+  tmon theme preview [n] Show a color preview of a theme
   tmon hooks <cmd>       Install/remove agent lifecycle hooks:
                            tmon hooks install <agent>   (claude|codex|cursor|copilot|windsurf)
                            tmon hooks remove  <agent>
@@ -36,6 +38,12 @@ Environment (set by tmon.tmux from the @tmon-* tmux options):
   TMON_CONNECTOR_FRESHNESS    Seconds a connector signal stays valid (default 30)
   TMON_HOOK_STATE_DIR         Dir where installed hooks write session state
                               (default <state>/hooks)
+  TMON_THEME                  Theme preset: default, catppuccin, nord,
+                              dracula, tokyonight, gruvbox, solarized, onedark
+                              (default default)
+  TMON_COLOR_<SLOT>           Override a theme color slot (app|blocked|working|
+                              idle|dim|accent|warn|selbg); name, colourNNN, or hex
+  TMON_ICON_<SLOT>            Override a status glyph (app|blocked|working|idle)
 `
 
 func main() {
@@ -51,6 +59,8 @@ func main() {
 		os.Exit(cmdDaemon(os.Args[2:]))
 	case "dashboard":
 		os.Exit(cmdDashboard(os.Args[2:]))
+	case "theme":
+		os.Exit(cmdTheme(os.Args[2:]))
 	case "hooks":
 		os.Exit(cmdHooks(os.Args[2:]))
 	case "version":

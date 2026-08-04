@@ -26,6 +26,20 @@
 #                            ([@] B W I)
 #   @tmon-bold-counts       "1" (default) — render the per-status counts
 #                            (the 2 in 🚨2) in bold; "0" turns it off
+#   @tmon-context-warn      85 (default) — context-usage % at which a ⚠️
+#                            warning appears in the status bar (and the
+#                            dashboard's usage bar turns yellow); "0" disables
+#   @tmon-blocked-bell      "off" (default) — ring the terminal bell when an
+#                            agent transitions to blocked; "on" enables
+#   @tmon-theme             "default" (default) — color theme preset for the
+#                            status bar and dashboard: default, catppuccin,
+#                            nord, dracula, tokyonight, gruvbox, solarized,
+#                            onedark (list/preview with `tmon theme`)
+#   @tmon-color-<slot>      override one theme color slot; slot is one of
+#                            app|blocked|working|idle|dim|accent|warn|selbg
+#                            and the value a tmux color (name, colourNNN, hex)
+#   @tmon-icon-<slot>       override one status glyph; slot is one of
+#                            app|blocked|working|idle|warn (e.g. @tmon-icon-working "⚙️")
 #   @tmon-auto-hooks        "on" (default) — auto-install lifecycle hooks at
 #                            plugin load for every supported agent found on
 #                            this machine (set "off" to disable)
@@ -61,6 +75,9 @@ CONNECTORS=$(get_tmux_option "@tmon-connectors" "auto")
 CONNECTOR_FRESHNESS=$(get_tmux_option "@tmon-connector-freshness" "30")
 ASCII_ICONS=$(get_tmux_option "@tmon-ascii-icons" "0")
 BOLD_COUNTS=$(get_tmux_option "@tmon-bold-counts" "1")
+CONTEXT_WARN=$(get_tmux_option "@tmon-context-warn" "85")
+BLOCKED_BELL=$(get_tmux_option "@tmon-blocked-bell" "off")
+THEME=$(get_tmux_option "@tmon-theme" "default")
 AUTO_HOOKS=$(get_tmux_option "@tmon-auto-hooks" "on")
 
 # ─── Runtime environment ──────────────────────────────────────────────────────
@@ -78,7 +95,32 @@ tmux set-environment -g TMON_CONNECTORS "$CONNECTORS"
 tmux set-environment -g TMON_CONNECTOR_FRESHNESS "$CONNECTOR_FRESHNESS"
 tmux set-environment -g TMON_ASCII_ICONS "$ASCII_ICONS"
 tmux set-environment -g TMON_BOLD_COUNTS "$BOLD_COUNTS"
+tmux set-environment -g TMON_CONTEXT_WARN "$CONTEXT_WARN"
+tmux set-environment -g TMON_BLOCKED_BELL "$BLOCKED_BELL"
+tmux set-environment -g TMON_THEME "$THEME"
 tmux set-environment -g TMON_HOOK_STATE_DIR "$STATE_DIR/hooks"
+
+# Per-slot theme overrides. Set values are exported to the binary via
+# TMON_COLOR_*/TMON_ICON_*; cleared ones are unset so removing the tmux
+# option also removes the override.
+for slot in app blocked working idle dim accent warn selbg; do
+  val=$(get_tmux_option "@tmon-color-$slot" "")
+  upper=$(echo "$slot" | tr '[:lower:]' '[:upper:]')
+  if [ -n "$val" ]; then
+    tmux set-environment -g "TMON_COLOR_$upper" "$val"
+  else
+    tmux set-environment -gu "TMON_COLOR_$upper"
+  fi
+done
+for slot in app blocked working idle warn; do
+  val=$(get_tmux_option "@tmon-icon-$slot" "")
+  upper=$(echo "$slot" | tr '[:lower:]' '[:upper:]')
+  if [ -n "$val" ]; then
+    tmux set-environment -g "TMON_ICON_$upper" "$val"
+  else
+    tmux set-environment -gu "TMON_ICON_$upper"
+  fi
+done
 
 # Subprocesses spawned from this sourcing shell (bootstrap, hooks auto) read
 # the TMON_* variables from the environment; set-environment above only

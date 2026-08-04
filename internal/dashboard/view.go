@@ -10,16 +10,53 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/guillaumemeyer/tmon/internal/agent"
+	"github.com/guillaumemeyer/tmon/internal/theme"
 )
 
-// Palette — the same 256-color choices as the bash popup.
+// styles bundles the lipgloss styles built from a theme palette. The
+// dashboard renders through these so the popup always matches the theme.
+type styles struct {
+	dim, green, orange, blue, cyan, white, warn lipgloss.Style
+	selBg                                        lipgloss.Style // background-only, for padding + wraps
+	// selBgColor is the raw selection background color; the per-line styles
+	// below are the selection variants for the agent rows.
+	selBgColor lipgloss.Color
+	selText    lipgloss.Style // selected name row: accent bold on selBg
+	selDim     lipgloss.Style // selected cwd/stats rows: dim on selBg
+}
+
+// buildStyles converts a theme palette into lipgloss styles. tmux-style
+// "colourNNN" values are translated for lipgloss; names and hex pass through.
+func buildStyles(pal theme.Palette) styles {
+	col := func(c string) lipgloss.Color { return lipgloss.Color(theme.Lipgloss(c)) }
+	bg := col(pal.SelBg)
+	return styles{
+		dim:    lipgloss.NewStyle().Foreground(col(pal.Dim)),
+		green:  lipgloss.NewStyle().Foreground(col(pal.Working)),
+		orange: lipgloss.NewStyle().Foreground(col(pal.Blocked)),
+		blue:   lipgloss.NewStyle().Foreground(col(pal.Idle)),
+		cyan:   lipgloss.NewStyle().Foreground(col(pal.App)),
+		white:  lipgloss.NewStyle().Foreground(col(pal.Accent)),
+		warn:   lipgloss.NewStyle().Foreground(col(pal.Warn)),
+		selBg:  lipgloss.NewStyle().Background(bg),
+
+		selBgColor: bg,
+		selText:    lipgloss.NewStyle().Foreground(col(pal.Accent)).Bold(true).Background(bg),
+		selDim:     lipgloss.NewStyle().Foreground(col(pal.Dim)).Background(bg),
+	}
+}
+
+// defaultStyles is the built-in theme's styles; the package-level style*
+// aliases keep the classic names for the view tests.
+var defaultStyles = buildStyles(theme.Default.Palette)
+
 var (
-	styleDim    = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
-	styleGreen  = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	styleOrange = lipgloss.NewStyle().Foreground(lipgloss.Color("208"))
-	styleBlue   = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
-	styleCyan   = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
-	styleWhite  = lipgloss.NewStyle().Foreground(lipgloss.Color("15"))
+	styleDim    = defaultStyles.dim
+	styleGreen  = defaultStyles.green
+	styleOrange = defaultStyles.orange
+	styleBlue   = defaultStyles.blue
+	styleCyan   = defaultStyles.cyan
+	styleWhite  = defaultStyles.white
 )
 
 // View renders the popup: header, divider, agent list with a always-on
@@ -38,7 +75,7 @@ func (m Model) View() string {
 
 	lines := make([]string, 0, h)
 	lines = append(lines, m.headerLine(w))
-	lines = append(lines, fit(styleDim.Render(strings.Repeat("━", w)), w))
+	lines = append(lines, fit(m.st.dim.Render(strings.Repeat("━", w)), w))
 
 	bodyLines := h - 3
 	if bodyLines < 1 {
@@ -135,9 +172,9 @@ func (m Model) previewLines(w, n int) []string {
 			}
 		}
 	}
-	out = append(out, fit(styleDim.Render(header), w))
+	out = append(out, fit(m.st.dim.Render(header), w))
 	if m.previewText == "" && m.previewPane != "" && m.previewPane != "?" {
-		out = append(out, fit(styleDim.Render("  (empty pane)"), w))
+		out = append(out, fit(m.st.dim.Render("  (empty pane)"), w))
 	}
 
 	content := trimTrailingEmpty(strings.Split(m.previewText, "\n"))
@@ -194,84 +231,173 @@ func trimTrailingEmpty(lines []string) []string {
 	return lines[:i]
 }
 
-// headerLine is the title with the key-hint aligned right.
+// headerLine is the title with the key-hint aligned right and, when any
+// agents are detected, the per-status fleet counts (blocked/working/idle)
+// shown after the title — same visibility rule as the status bar.
 func (m Model) headerLine(w int) string {
-	app := "[@]"
-	if !m.ascii {
-		app = "🤖"
-	}
-	title := styleCyan.Bold(true).Render(" " + app + " tmon")
-	hint := styleDim.Render("[/] search  [esc/q] quit ")
-	pad := w - ansi.StringWidth(title) - ansi.StringWidth(hint)
+	app := m.theme.Icons.App
+	title := m.st.cyan.Bold(true).Render(" " + app + " tmon")
+	counts := m.fleetCounts()
+	hint := m.st.dim.Render("[/] search  [esc/q] quit ")
+	pad := w - ansi.StringWidth(title) - ansi.StringWidth(counts) - ansi.StringWidth(hint)
 	if pad < 1 {
-		return ansi.Truncate(title, w, "")
+		return ansi.Truncate(title+counts, w, "")
 	}
-	return title + strings.Repeat(" ", pad) + hint
+	return title + counts + strings.Repeat(" ", pad) + hint
+}
+
+// fleetCounts renders the per-status agent counts for the header — e.g.
+// " 🛑1 ⚡️2 💤1" — showing only non-zero statuses in their status colors.
+// Empty when no agents have a known status.
+func (m Model) fleetCounts() string {
+	var blocked, working, idle int
+	for _, r := range m.rows {
+		switch r.Status {
+		case agent.StatusBlocked:
+			blocked++
+		case agent.StatusWorking:
+			working++
+		case agent.StatusIdle:
+			idle++
+		}
+	}
+	var parts []string
+	if blocked > 0 {
+		parts = append(parts, m.st.orange.Render(m.theme.Icons.Blocked+strconv.Itoa(blocked)))
+	}
+	if working > 0 {
+		parts = append(parts, m.st.green.Render(m.theme.Icons.Working+strconv.Itoa(working)))
+	}
+	if idle > 0 {
+		parts = append(parts, m.st.blue.Render(m.theme.Icons.Idle+strconv.Itoa(idle)))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " " + strings.Join(parts, " ")
 }
 
 // renderItem renders one display item into one or more lines, each exactly
 // w cells wide. Session and window headers take one line; an agent takes
-// two — a bold "Title (Name)" line and a dimmed cwd + pause-status line —
+// two — a bold "Title (Name)" line and a dimmed cwd + status-age line —
 // plus a third dim stats line when the connector reported token usage. The
-// selected agent line gets a green bold ">" marker aligned with the window
-// index column instead of a full-line background highlight.
+// selected agent's rows get a full-line background (pal.SelBg): bold accent
+// text on the name row, dimmed on the cwd/stats rows.
 func (m Model) renderItem(di int, it item, w int) []string {
 	switch it.kind {
 	case itemSession:
-		return []string{fit(styleCyan.Bold(true).Render("  "+it.sessionName), w)}
+		return []string{fit(m.st.cyan.Bold(true).Render("  "+it.sessionName), w)}
 	case itemWindow:
 		name := it.windowIdx
 		if it.windowName != "" && it.windowName != "?" {
 			name = it.windowIdx + ":" + it.windowName
 		}
-		return []string{fit(styleDim.Render("    "+name), w)}
+		return []string{fit(m.st.dim.Render("    "+name), w)}
 	case itemAgent:
 		r := m.rows[it.rowIdx]
 		selected := len(m.selMap) > 0 && m.selMap[m.selected] == di
-		// Both branches are 6 cells wide before the name: the marker keeps
-		// the name aligned with unselected rows.
-		marker := "      "
+
+		// Line 1: the session title (or plain name) in bold. The selected
+		// row is fitted first, then wrapped in the full-line selection
+		// style so the padding cells carry the background too.
+		name := "      " + agentDisplayName(r)
+		var line1 string
 		if selected {
-			marker = "    " + styleGreen.Bold(true).Render(">") + " "
+			line1 = m.st.selText.Render(fit(name, w))
+		} else {
+			line1 = fit(m.st.white.Bold(true).Render(name), w)
 		}
-		// Line 1: the session title (or plain name) in bold.
-		line1 := marker + styleWhite.Bold(true).Render(agentDisplayName(r))
-		// Line 2: the working directory, plus the pause status when the
-		// agent is blocked — the prompt it is waiting on, or "paused".
-		line2 := "      " + styleDim.Render(displayCWD(r.CWD))
+
+		// Line 2: the working directory, the status age when known, plus
+		// the pause status when the agent is blocked — the prompt it is
+		// waiting on, or "paused". The blocked reason keeps its orange
+		// accent; on the selected row the whole line is dimmed on the
+		// selection background (the pause label loses its accent).
+		cwd := displayCWD(r.CWD)
+		age := ""
+		if a := ageString(r.LastTs); a != "" {
+			age = "  " + m.theme.Icons.ForStatus(r.Status) + " " + a
+		}
+		pause := ""
 		if r.Status == agent.StatusBlocked {
-			pause := r.BlockedReason
+			pause = r.BlockedReason
 			if pause == "" {
 				pause = "paused"
 			}
-			line2 += "  " + styleOrange.Render(pause)
 		}
-		lines := []string{fit(line1, w), fit(line2, w)}
+		var line2 string
+		if selected {
+			text := "      " + cwd + age
+			if pause != "" {
+				text += "  " + pause
+			}
+			line2 = m.st.selDim.Render(fit(text, w))
+		} else {
+			line2 = "      " + m.st.dim.Render(cwd)
+			if age != "" {
+				line2 += m.st.dim.Render(age)
+			}
+			if pause != "" {
+				line2 += m.st.orange.Render("  " + pause)
+			}
+			line2 = fit(line2, w)
+		}
+
+		lines := []string{line1, line2}
 		// Line 3 (when the connector reported usage): the token stats line.
-		// It is indented to the marker column like line 2 and stays dim.
-		if l := usageLine(r.Usage); l != "" {
-			lines = append(lines, fit("      "+styleDim.Render(l), w))
+		// The context bar keeps its green/warn color on the selected row,
+		// so the pieces carry the background and selFit pads the remainder.
+		if l := m.usageLine(r.Usage, selected); l != "" {
+			if selected {
+				lines = append(lines, m.selFit(m.st.selDim.Render("      ")+l, w))
+			} else {
+				lines = append(lines, fit("      "+l, w))
+			}
 		}
 		return lines
 	}
 	return []string{fit("", w)}
 }
 
+// selFit truncates s to at most w cells and pads the remainder with the
+// selection background, so a selected row's highlight spans the full fitted
+// width. The content pieces must already carry the background themselves.
+func (m Model) selFit(s string, w int) string {
+	s = ansi.Truncate(s, w, "")
+	if pad := w - ansi.StringWidth(s); pad > 0 {
+		s += m.st.selBg.Render(strings.Repeat(" ", pad))
+	}
+	return s
+}
+
+// defaultContextWarn is the context-usage percent at which the usage bar
+// switches to the warn color when no @tmon-context-warn is configured.
+const defaultContextWarn = 85
+
 // usageLine renders the per-agent stats line: context tokens used over the
-// model's context window with the used percentage, then the account-quota
-// remaining percentage and next reset time when known. Returns "" when no
-// stat is available, so the agent stays at two lines.
-func usageLine(u agent.Usage) string {
+// model's context window with a 10-cell usage bar and the used percentage,
+// then the account-quota remaining percentage and next reset time when
+// known. Returns "" when no stat is available, so the agent stays at two
+// lines. When sel is true every piece carries the selection background so
+// the highlight covers the whole line.
+func (m Model) usageLine(u agent.Usage, sel bool) string {
 	if u.Empty() {
 		return ""
 	}
-	parts := make([]string, 0, 2)
+	dim, green, warn := m.st.dim, m.st.green, m.st.warn
+	if sel {
+		bg := m.st.selBgColor
+		dim, green, warn = dim.Background(bg), green.Background(bg), warn.Background(bg)
+	}
+	var b strings.Builder
 	if u.TokensUsed > 0 || u.WindowTokens > 0 {
-		ctx := "ctx " + humanTokens(u.TokensUsed)
+		b.WriteString(dim.Render("ctx " + humanTokens(u.TokensUsed)))
 		if u.WindowTokens > 0 {
-			ctx += "/" + humanTokens(u.WindowTokens) + " (" + strconv.Itoa(u.ContextPct()) + "%)"
+			pct := u.ContextPct()
+			b.WriteString(dim.Render("/" + humanTokens(u.WindowTokens) + " "))
+			b.WriteString(m.contextBar(pct, green, warn))
+			b.WriteString(dim.Render(" " + strconv.Itoa(pct) + "%"))
 		}
-		parts = append(parts, ctx)
 	}
 	if u.QuotaPct > 0 {
 		left := 100 - u.QuotaPct
@@ -282,9 +408,30 @@ func usageLine(u agent.Usage) string {
 		if u.QuotaReset != "" {
 			q += " · reset " + u.QuotaReset
 		}
-		parts = append(parts, q)
+		if u.TokensUsed > 0 || u.WindowTokens > 0 {
+			q = " · " + q
+		}
+		b.WriteString(dim.Render(q))
 	}
-	return strings.Join(parts, " · ")
+	return b.String()
+}
+
+// contextBar renders the 10-cell context-usage bar: filled █ cells up to
+// the used percent, empty ░ cells after. Green below the configured warn
+// threshold, warn color at or above it (a threshold of 0 keeps it green).
+func (m Model) contextBar(pct int, green, warn lipgloss.Style) string {
+	filled := pct * 10 / 100
+	if filled > 10 {
+		filled = 10
+	}
+	if filled < 0 {
+		filled = 0
+	}
+	st := green
+	if m.contextWarn > 0 && pct >= m.contextWarn {
+		st = warn
+	}
+	return st.Render(strings.Repeat("█", filled) + strings.Repeat("░", 10-filled))
 }
 
 // humanTokens formats a token count compactly: "2.5M", "262k", "51.7k",
@@ -346,21 +493,21 @@ func (m Model) footerLine(w int) string {
 	// Version pinned bottom-left, one cell in from the border.
 	left := ""
 	if m.version != "" {
-		left = " " + styleDim.Render(m.version) + "  "
+		left = " " + m.st.dim.Render(m.version) + "  "
 	}
 	switch {
 	case m.searching:
-		left += styleWhite.Render("▌ "+m.query) + styleDim.Render("▌")
+		left += m.st.white.Render("▌ "+m.query) + m.st.dim.Render("▌")
 		return m.twoSided(left, right, w)
 	case m.query != "":
-		left += styleDim.Render("▌ " + m.query)
+		left += m.st.dim.Render("▌ " + m.query)
 		if m.filterStatus != "" {
-			left += styleDim.Render(" · " + m.filterLabel())
+			left += m.st.dim.Render(" · " + m.filterLabel())
 		}
 		return m.twoSided(left, right, w)
 	default:
 		if m.filterStatus != "" {
-			left += styleDim.Render("▌ " + m.filterLabel() + " (press again to clear)")
+			left += m.st.dim.Render("▌ " + m.filterLabel() + " (press again to clear)")
 		}
 		return m.twoSided(left, right, w)
 	}
@@ -379,7 +526,7 @@ func (m Model) footerRight() string {
 		parts = append(parts, "[C-u/C-d] scroll preview")
 	}
 	parts = append(parts, "[1-9] jump ")
-	return styleDim.Render(strings.Join(parts, "  "))
+	return m.st.dim.Render(strings.Join(parts, "  "))
 }
 
 // previewNavTipVisible is true when an agent with a resolvable pane is
