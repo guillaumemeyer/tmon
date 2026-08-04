@@ -1,18 +1,46 @@
-# tmon — zero-config agents fleet manager for tmux
+# tmon — your AI coding agents, now with a leash
 
-**tmon is a zero-config agents fleet manager for tmux** — not another coding agent.
+```
+   ┌─────┐     ┌─────┐     ┌─────┐
+   │ ◉ ◉ │     │ ◉ ◉ │     │ ◉ ◉ │
+   │  ⌣  │     │  ⌣  │     │  ◠  │
+   └─────┘     └─────┘     └─────┘
+   ⚡ working   🛑 blocked   💤 idle
+```
 
 You've got Grok Build crunching through a refactor in one pane, Claude Code
 negotiating a design doc in another, and Hermes Agent off doing… whatever
 Hermes Agent does. Wouldn't it be nice to know who's actually working, who's
 stuck waiting for your approval, and who's just daydreaming?
 
-tmon sits quietly in your status bar and tells you exactly that. It finds
-running AI coding agents across your panes, tracks whether they're working,
-idle, or waiting on you, and shows a compact count indicator with color-coded
-status icons. Need details? Hit `prefix a a` for an interactive dashboard that
-lists every agent and lets you jump straight to their pane. Or just **click
-the status bar indicator** — that works too.
+tmon sits quietly in your tmux status bar and tells you exactly that. It
+finds every running AI coding agent across your panes, tracks whether it's
+**working**, **idle**, or **blocked** on you, and shows a compact
+color-coded count. Need details? Hit `prefix a a` for an interactive
+dashboard — or just **click the status bar indicator**.
+
+[![stars](https://img.shields.io/github/stars/guillaumemeyer/tmon?style=flat-square&label=stars)](https://github.com/guillaumemeyer/tmon)
+[![license](https://img.shields.io/github/license/guillaumemeyer/tmon?style=flat-square)](LICENSE.md)
+![tmux](https://img.shields.io/badge/tmux-%E2%89%A5%203.2-1B93DB?style=flat-square)
+![agents](https://img.shields.io/badge/monitors-11%20agents-4FC08D?style=flat-square)
+
+<img src="docs/demo.gif" width="720" alt="tmon demo: an agent blocks, gets approved, springs back to work, dashboard tour" />
+
+> **The demo GIF** is recorded from a live session — the shot list lives in
+> [`docs/demo.md`](docs/demo.md).
+
+---
+
+## The Zoo
+
+Every agent in your fleet has a personality, and tmon tells you which one is
+currently on stage:
+
+| Status | Icon | What it means | Personality |
+|--------|------|---------------|-------------|
+| **blocked** | 🛑 | Waiting for a user action: a permission prompt, a plan approval, a y/n question. Overrides everything — a waiting agent is waiting even if it's burning CPU. | *"Waiting for you. It has opinions."* |
+| **working** | ⚡️ | Actively thinking, writing, or running tools. | *"In flow. Do not disturb (unless it's been 40 minutes)."* |
+| **idle** | 💤 | Session alive, but not thinking and not waiting on you. | *"Napping between thoughts. Wakes at the first hint of an API call."* |
 
 ---
 
@@ -27,9 +55,9 @@ icon blocked working idle
 ```
 
 - **🤖 cyan** — your personal fleet of AI agents
-- **🚨 orange** — agent is blocked, waiting for you (permission prompt, plan approval, y/n question)
+- **🚨 orange** — agent is blocked, waiting for you
 - **⚡️ green** — agent is working
-- **💤 blue** — agent is idle: the session is alive but the agent is not actively thinking or writing, and it isn't waiting on you
+- **💤 blue** — agent is idle
 - **🤖** alone — no agents detected (peace and quiet)
 
 Each status segment (icon + count) only appears when at least one agent is
@@ -45,46 +73,6 @@ app B  W  I
 
 > **Note:** A brand-new agent shows as **💤 idle** until its first activity
 > sample.
-
-### Scripting with JSON (`tmon status --json`)
-
-For status bars that aren't tmux (polybar, i3blocks, a shell prompt),
-`tmon status --json` prints the full poll result: every agent with its
-status, pane, working directory, phase detail and token usage.
-
-```bash
-tmon status --json
-```
-
-```json
-{
-  "statuses": ["working", "idle"],
-  "agents": [
-    {
-      "pid": 12345,
-      "label": "Grok",
-      "status": "working",
-      "pane": "main:0.2",
-      "cwd": "code/tmon",
-      "detail": "tool:Bash",
-      "usage": { "tokensUsed": 52397, "windowTokens": 200000 }
-    }
-  ]
-}
-```
-
-Pipe it through `jq` for exactly what you need:
-
-```bash
-# All agents currently blocked on you:
-tmon status --json | jq '.agents[] | select(.status=="blocked")'
-
-# Total blocked count for a polybar module:
-tmon status --json | jq '[.agents[] | select(.status=="blocked")] | length'
-
-# Working directories of everything in flow:
-tmon status --json | jq -r '.agents[] | select(.status=="working") | .cwd'
-```
 
 ### Dashboard (`prefix a a`)
 
@@ -138,15 +126,6 @@ stays at two lines. What gets populated today:
 | Hermes Agent | tokens + window % (from CLI/TUI `state.db` session) |
 | Others | no stats line — no local usage source |
 
-Account-quota fields are plumbed through but no agent currently exposes
-them locally, so the quota segment stays blank until a source exists.
-The two-line layout keeps the list readable even when the left column is
-narrow. The version is pinned to the bottom-left.
-The footer shows `[↑/↓ j/k] navigate` to move the selection,
-`[←/→ h/l] resize preview` for the preview split (persisted across opens)
-and, when an agent with a pane is selected, `[C-u/C-d] scroll preview` for
-the preview.
-
 Filter by status with `b` (blocked), `w` (working), `i` (idle); press the
 key again to clear. `1`–`9` jumps to the Nth agent. Hit `Enter` or **click
 an agent line** to jump to that agent's pane.
@@ -175,9 +154,9 @@ are ranked by match quality. `Esc` leaves search mode (the filter stays);
 
 ### Supported agents
 
-tmon recognizes **11 agents** out of the box: Grok Build, Claude Code, Codex
-CLI, Cursor, Cline, Aider, GitHub Copilot, CodeBuddy, Windsurf, Hermes Agent,
-and OpenClaw.
+tmon watches the whole zoo out of the box — **11 agents**:
+
+🤖 Grok Build · ✳️ Claude Code · 🧩 Codex CLI · 🖱️ Cursor · 🧶 Cline · 🦆 Aider · ✨ GitHub Copilot · 🐾 CodeBuddy · 🌊 Windsurf · 👟 Hermes Agent · 🦀 OpenClaw
 
 How closely tmon can track each one depends on the agent's own state
 surface. Agents that publish live state files (Grok, Hermes, Cline,
@@ -222,6 +201,46 @@ Hooks install automatically at plugin load unless `@tmon-auto-hooks` is
 requires the hooks to be trusted in-session via `/hooks`. Without hooks, the
 Cursor/Copilot native fallback only reports the agent as idle.
 
+### Scripting with JSON (`tmon status --json`)
+
+For status bars that aren't tmux (polybar, i3blocks, a shell prompt),
+`tmon status --json` prints the full poll result: every agent with its
+status, pane, working directory, phase detail and token usage.
+
+```bash
+tmon status --json
+```
+
+```json
+{
+  "statuses": ["working", "idle"],
+  "agents": [
+    {
+      "pid": 12345,
+      "label": "Grok",
+      "status": "working",
+      "pane": "main:0.2",
+      "cwd": "code/tmon",
+      "detail": "tool:Bash",
+      "usage": { "tokensUsed": 52397, "windowTokens": 200000 }
+    }
+  ]
+}
+```
+
+Pipe it through `jq` for exactly what you need:
+
+```bash
+# All agents currently blocked on you:
+tmon status --json | jq '.agents[] | select(.status=="blocked")'
+
+# Total blocked count for a polybar module:
+tmon status --json | jq '[.agents[] | select(.status=="blocked")] | length'
+
+# Working directories of everything in flow:
+tmon status --json | jq -r '.agents[] | select(.status=="working") | .cwd'
+```
+
 ---
 
 ## Requirements
@@ -246,6 +265,16 @@ detection to see them.
 ---
 
 ## Installation
+
+### One-liner
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/guillaumemeyer/tmon/main/install.sh | sh
+```
+
+Detects whether TPM manages your tmux config or not, clones the plugin
+(updating an existing checkout), wires `~/.tmux.conf`, and reloads tmux if
+you're inside it. Safe to re-run.
 
 ### 1. Agent install (recommended)
 
@@ -278,7 +307,7 @@ Install the tmux plugin guillaumemeyer/tmon for me.
 ```
 
 On first load, tmon downloads its binary into `<plugin>/bin/` — you'll see a
-one-line status-bar message such as `tmon: installed v0.3.0 (linux/amd64)`.
+one-line status-bar message such as `tmon: installed v0.4.2 (linux/amd64)`.
 
 ### 2. Manual install
 
@@ -319,7 +348,7 @@ run-shell ~/.tmux/plugins/tmon/tmon.tmux
 
 Reload: `tmux source-file ~/.tmux.conf`. On first load, tmon downloads its
 binary into `<plugin>/bin/` — you'll see a one-line
-`tmon: installed v0.3.0 (linux/amd64)` (or `darwin/arm64`, etc.) status-bar
+`tmon: installed v0.4.2 (linux/amd64)` (or `darwin/arm64`, etc.) status-bar
 message.
 
 ### Updating
@@ -338,6 +367,25 @@ Manual installs: `git pull origin main` (the same hook applies).
 
 Set any of these in `~/.tmux.conf` **before** the plugin line. All of them
 are optional — the defaults are sensible for most people.
+
+| Option | Default | What it does |
+|--------|---------|--------------|
+| `@tmon-status-position` | `right` | Which side of the status bar carries the indicator |
+| `@tmon-poll-interval` | `3000` | ms between agent scans |
+| `@tmon-activity-threshold` | `500` | CPU ms/s to call an agent "working" |
+| `@tmon-io-threshold` | `102400` | min IO bytes/poll to call an agent "working" |
+| `@tmon-dashboard-key` | `a` | chord leader for the popup (`prefix <key> <key>`) |
+| `@tmon-connectors` | `auto` | which connectors to enable (`auto` or a comma list) |
+| `@tmon-connector-freshness` | `30` | seconds a connector signal stays authoritative |
+| `@tmon-auto-hooks` | `on` | auto-install lifecycle hooks at plugin load |
+| `@tmon-ascii-icons` | `0` | `1` renders icons as ASCII (`[@] B W I`) |
+| `@tmon-bold-counts` | `1` | bold the per-status counts |
+| `@tmon-context-warn` | `85` | context % at which a ⚠️ warning appears (`0` disables) |
+| `@tmon-blocked-bell` | `off` | ring the bell when an agent transitions to blocked |
+| `@tmon-pane-tint` | `off` | tint agent panes by status (blocked/working glow) |
+| `@tmon-theme` | `default` | color theme preset (see [Themes](#themes)) |
+| `@tmon-color-<slot>` | — | override one theme color slot |
+| `@tmon-icon-<slot>` | — | override one status glyph |
 
 ### `@tmon-poll-interval`
 
@@ -545,7 +593,9 @@ set -g @tmon-blocked-bell "on"
 set -g @tmon-pane-tint "on"
 ```
 
-### Themes
+---
+
+## Themes
 
 tmon ships with color themes for both the status bar and the dashboard. Set
 `@tmon-theme` to one of the presets:
@@ -579,15 +629,6 @@ set -g @tmon-icon-app "@"    # ASCII-only crowd
 
 ---
 
-## Keybindings
-
-| Binding | Action |
-|---------|--------|
-| `prefix a a` | Open the agent navigation popup |
-| Click status bar indicator | Open the agent navigation popup |
-
----
-
 ## Notifications
 
 tmon can send tmux popups when an agent becomes blocked, working, or idle.
@@ -603,6 +644,15 @@ to `~/.tmux.conf`:
 ```tmux
 run-shell -b "~/.tmux/plugins/tmon/bin/tmon daemon --notify"
 ```
+
+---
+
+## Keybindings
+
+| Binding | Action |
+|---------|--------|
+| `prefix a a` | Open the agent navigation popup |
+| Click status bar indicator | Open the agent navigation popup |
 
 ---
 
@@ -643,6 +693,36 @@ rm ~/.tmux/plugins/tmon/state/state.json
 **Binary won't download** — needs network access to GitHub Releases. Check
 connectivity, then from the plugin directory run `scripts/bootstrap.sh`
 manually — it prints the failure reason.
+
+---
+
+## FAQ
+
+**Will tmon write my code for me?**
+No. It just watches the robots that do. It's a leash, not a robot arm.
+
+**Does tmon phone home?**
+No. Everything runs locally; the only network call is the one-time binary
+download on first load.
+
+**Why is there an emoji in my status bar?**
+Because your agents are watching too. Set `@tmon-ascii-icons "1"` if you
+need dignity.
+
+**My agent is blocked but tmon doesn't know it.**
+If its prompt is an unusual permission flow, the pane-pattern heuristic may
+miss it — a connector for that agent fixes it (`tmon hooks install <agent>`
+or check the [connector matrix](#supported-agents)). When in doubt,
+`tmon doctor`.
+
+**Why do my robots keep asking for approval?**
+Because they respect you. Cherish it.
+
+**Does it work with Claude Code? Codex? Cursor?**
+Eleven agents and counting — see [Supported agents](#supported-agents).
+
+**Can I use it without tmux?**
+No — but `tmon status --json` feeds any status bar that can run a command.
 
 ---
 
