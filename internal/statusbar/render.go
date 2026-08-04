@@ -18,7 +18,7 @@ const (
 	reset    = "#[default]"
 )
 
-// Render builds the indicator line: "🤖-🛑1-⚡️2-💤3 " in emoji mode (ascii
+// Render builds the indicator line: "🤖-🚨1-⚡️2-💤3 " in emoji mode (ascii
 // false) or "[@]-B1-W2-I3 " in ASCII mode. Each status segment (icon + count)
 // is rendered only when that status has at least one agent, so an empty fleet
 // renders as just the app icon. Icons are static — there is no pulse
@@ -40,7 +40,7 @@ func Render(statuses []agent.Status, ascii bool, bold bool) string {
 	bGlyph, wGlyph, iGlyph := "B", "W", "I"
 	if !ascii {
 		app = "🤖"
-		bGlyph, wGlyph, iGlyph = "🛑", "⚡️", "💤"
+		bGlyph, wGlyph, iGlyph = "🚨", "⚡️", "💤"
 	}
 
 	var segs []string

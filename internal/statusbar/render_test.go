@@ -49,7 +49,7 @@ func TestRenderCountsEmoji(t *testing.T) {
 	}
 	// 2 blocked, 2 working, 1 idle.
 	got := Render(statuses, false, false)
-	want := "#[fg=cyan]🤖#[default]-#[fg=colour208]🛑2#[default]-#[fg=green]⚡️2#[default]-#[fg=blue]💤1#[default] "
+	want := "#[fg=cyan]🤖#[default]-#[fg=colour208]🚨2#[default]-#[fg=green]⚡️2#[default]-#[fg=blue]💤1#[default] "
 	if got != want {
 		t.Errorf("Render(emoji) =\n  %q\nwant:\n  %q", got, want)
 	}

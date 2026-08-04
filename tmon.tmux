@@ -22,10 +22,10 @@
 #                            signal stays authoritative before the /proc
 #                            heuristic takes over again
 #   @tmon-ascii-icons       "0" (default) — render the status icons as
-#                            emoji (🤖 🛑 ⚡️ 💤); "1" switches to ASCII
+#                            emoji (🤖 🚨 ⚡️ 💤); "1" switches to ASCII
 #                            ([@] B W I)
 #   @tmon-bold-counts       "1" (default) — render the per-status counts
-#                            (the 2 in 🛑2) in bold; "0" turns it off
+#                            (the 2 in 🚨2) in bold; "0" turns it off
 #   @tmon-auto-hooks        "on" (default) — auto-install lifecycle hooks at
 #                            plugin load for every supported agent found on
 #                            this machine (set "off" to disable)

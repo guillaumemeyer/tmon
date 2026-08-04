@@ -19,13 +19,13 @@ status bar indicator** — that works too.
 ### Status bar
 
 ```
-🤖-🛑2-⚡️3-💤1
+🤖-🚨2-⚡️3-💤1
 ↑  ↑   ↑   ↑
 icon blocked working idle
 ```
 
 - **🤖 cyan** — your personal fleet of AI agents
-- **🛑 orange** — agent is blocked, waiting for you (permission prompt, plan approval, y/n question)
+- **🚨 orange** — agent is blocked, waiting for you (permission prompt, plan approval, y/n question)
 - **⚡️ green** — agent is working
 - **💤 blue** — agent is idle: the session is alive but the agent is not actively thinking or writing, and it isn't waiting on you
 - **🤖** alone — no agents detected (peace and quiet)
@@ -427,12 +427,12 @@ activity detection.
 | **Options** | `0` (emoji) or `1` (ASCII) |
 
 ```tmux
-set -g @tmon-ascii-icons "1"   # [@]-B2-W3-I1 instead of 🤖-🛑2-⚡️3-💤1
+set -g @tmon-ascii-icons "1"   # [@]-B2-W3-I1 instead of 🤖-🚨2-⚡️3-💤1
 ```
 
 ### `@tmon-bold-counts`
 
-> Render the per-status counts (the `2` in `🛑2`) in bold.
+> Render the per-status counts (the `2` in `🚨2`) in bold.
 
 | | |
 |---|---|
