@@ -15,6 +15,12 @@
 #   @tmon-io-threshold       102400 (default) — min IO bytes/poll for "active"
 #   @tmon-dashboard-key      "a" (default) — chord leader for the popup
 #                            (prefix <key> <key>)
+#   @tmon-connectors         "auto" (default) — comma list of connectors, or
+#                            "auto" to enable every connector whose agent
+#                            state files exist on this machine
+#   @tmon-connector-freshness 30 (default) — seconds a connector's status
+#                            signal stays authoritative before the /proc
+#                            heuristic takes over again
 #
 # Everything else is internal and self-contained: the binary is downloaded on
 # first load into <plugin>/bin (scripts/bootstrap.sh, pinned + checksummed to
@@ -43,6 +49,8 @@ POLL_INTERVAL=$(get_tmux_option "@tmon-poll-interval" "3000")
 ACTIVITY_THRESHOLD=$(get_tmux_option "@tmon-activity-threshold" "500")
 IO_THRESHOLD=$(get_tmux_option "@tmon-io-threshold" "102400")
 DASHBOARD_KEY=$(get_tmux_option "@tmon-dashboard-key" "a")
+CONNECTORS=$(get_tmux_option "@tmon-connectors" "auto")
+CONNECTOR_FRESHNESS=$(get_tmux_option "@tmon-connector-freshness" "30")
 
 # ─── Runtime environment ──────────────────────────────────────────────────────
 
@@ -55,6 +63,9 @@ tmux set-environment -g TMON_BIN_DIR "$BIN_DIR"
 tmux set-environment -g TMON_POLL_INTERVAL_MS "$POLL_INTERVAL"
 tmux set-environment -g TMON_ACTIVITY_THRESHOLD_MS "$ACTIVITY_THRESHOLD"
 tmux set-environment -g TMON_IO_ACTIVITY_THRESHOLD "$IO_THRESHOLD"
+tmux set-environment -g TMON_CONNECTORS "$CONNECTORS"
+tmux set-environment -g TMON_CONNECTOR_FRESHNESS "$CONNECTOR_FRESHNESS"
+tmux set-environment -g TMON_HOOK_STATE_DIR "$STATE_DIR/hooks"
 
 # The bootstrap subprocess reads TMON_BIN_DIR from the environment; the
 # set-environment above only affects tmux's own environment.

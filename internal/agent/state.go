@@ -6,6 +6,7 @@ package agent
 
 import (
 	"sort"
+	"time"
 
 	"github.com/guillaumemeyer/tmon/internal/config"
 )
@@ -30,6 +31,8 @@ type AgentState struct {
 	IdleStreak int    `json:"idleStreak"`
 	Pane       string `json:"pane,omitempty"`
 	CWD        string `json:"cwd,omitempty"`
+	Detail     string `json:"detail,omitempty"` // connector detail, e.g. "tool:Bash"
+	LastTs     int64  `json:"lastTs,omitempty"` // unix seconds of last status change
 }
 
 // Options configures the tracker.
@@ -74,10 +77,12 @@ func (t *Tracker) BeginPoll() {
 func (t *Tracker) Evaluate(pid int, label, cwd, pane string, cpuNow, ioNow int64, blocked bool) Status {
 	oldStatus := StatusRunning
 	oldStreak := 0
+	oldLastTs := int64(0)
 	prev := t.prev[pid]
 	if prev != nil {
 		oldStatus = prev.Status
 		oldStreak = prev.IdleStreak
+		oldLastTs = prev.LastTs
 	}
 
 	next := &AgentState{PID: pid, Label: label, CPU: cpuNow, IO: ioNow, Pane: pane, CWD: cwd}
@@ -86,6 +91,7 @@ func (t *Tracker) Evaluate(pid int, label, cwd, pane string, cpuNow, ioNow int64
 	// burning CPU.
 	if blocked {
 		next.Status, next.IdleStreak = StatusBlocked, 0
+		next.LastTs = stamp(oldStatus, StatusBlocked, oldLastTs)
 		t.curr[pid] = next
 		return StatusBlocked
 	}
@@ -95,6 +101,7 @@ func (t *Tracker) Evaluate(pid int, label, cwd, pane string, cpuNow, ioNow int64
 	// local CPU, and the delta math needs a baseline poll anyway.
 	if prev == nil || prev.CPU == 0 {
 		next.Status, next.IdleStreak = StatusRunning, 0
+		next.LastTs = stamp(oldStatus, StatusRunning, oldLastTs)
 		t.curr[pid] = next
 		return StatusRunning
 	}
@@ -110,6 +117,7 @@ func (t *Tracker) Evaluate(pid int, label, cwd, pane string, cpuNow, ioNow int64
 	ioDelta := ioNow - prev.IO
 	if cpuDelta >= int64(threshold) || ioDelta >= t.opts.IOThreshold {
 		next.Status, next.IdleStreak = StatusActive, 0
+		next.LastTs = stamp(oldStatus, StatusActive, oldLastTs)
 		t.curr[pid] = next
 		return StatusActive
 	}
@@ -120,12 +128,53 @@ func (t *Tracker) Evaluate(pid int, label, cwd, pane string, cpuNow, ioNow int64
 	next.IdleStreak = streak
 	if streak < t.opts.IdleDecayPolls {
 		next.Status = oldStatus
+		next.LastTs = oldLastTs
 		t.curr[pid] = next
 		return oldStatus
 	}
 	next.Status = StatusIdle
+	next.LastTs = stamp(oldStatus, StatusIdle, oldLastTs)
 	t.curr[pid] = next
 	return StatusIdle
+}
+
+// EvaluateAuthoritative records a status supplied by a connector — the
+// agent's own state surface (native phase files or installed hooks) — instead
+// of the CPU/IO heuristic. Detail is carried into the snapshot for the
+// dashboard. The idle streak resets and LastTs is stamped on status changes;
+// otherwise previous CPU/IO values are preserved so a later fallback to the
+// heuristic path has a baseline.
+func (t *Tracker) EvaluateAuthoritative(pid int, label, cwd, pane string, st Status, detail string) Status {
+	oldStatus := StatusRunning
+	oldLastTs := int64(0)
+	prev := t.prev[pid]
+	if prev != nil {
+		oldStatus = prev.Status
+		oldLastTs = prev.LastTs
+	}
+
+	next := &AgentState{PID: pid, Label: label, Status: st, Pane: pane, CWD: cwd, Detail: detail}
+	if prev != nil {
+		next.CPU = prev.CPU
+		next.IO = prev.IO
+		next.IdleStreak = prev.IdleStreak
+	}
+	if st != oldStatus {
+		next.IdleStreak = 0
+		next.LastTs = time.Now().Unix()
+	} else {
+		next.LastTs = oldLastTs
+	}
+	t.curr[pid] = next
+	return st
+}
+
+// stamp returns now when the status changed, otherwise the previous stamp.
+func stamp(old, new Status, oldLastTs int64) int64 {
+	if old != new {
+		return time.Now().Unix()
+	}
+	return oldLastTs
 }
 
 // EndPoll commits the current poll as the previous one, dropping any agents

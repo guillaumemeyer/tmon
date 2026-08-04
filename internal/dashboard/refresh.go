@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/guillaumemeyer/tmon/internal/agent"
 	"github.com/guillaumemeyer/tmon/internal/blocked"
 	"github.com/guillaumemeyer/tmon/internal/config"
@@ -34,36 +35,42 @@ func DefaultLoader(cfg config.Config) Loader {
 // loadFull performs the complete dashboard refresh: fresh /proc detection,
 // fresh pane mapping, a live blocked check per agent (via the shared package
 // — the bash dashboard had its own stale copy of the pattern list), and the
-// state file for the delta-based statuses and animation frame.
+// state file for the delta-based statuses, connector detail, and animation
+// frame. Agents present in the state file but missed by the /proc signature
+// table (connector-only PIDs like the Hermes gateway) are merged in so the
+// dashboard never shows fewer agents than the status bar.
 func loadFull(cfg config.Config) (Data, error) {
 	sf, err := agent.LoadState(cfg.StateFilePath())
 	if err != nil {
 		sf = agent.NewState() // corrupt state: keep the popup usable
 	}
 
-	statusByPID := make(map[int]agent.Status, len(sf.Agents))
+	stateByPID := make(map[int]agent.AgentState, len(sf.Agents))
 	for _, s := range sf.Agents {
-		statusByPID[s.PID] = s.Status
+		stateByPID[s.PID] = s
 	}
 
 	var paneMap *pane.Map
-	if tmux.Available() {
-		paneMap, _ = pane.BuildMap()
+	if m, err := refreshPaneMap(); err == nil {
+		paneMap = m
 	}
 
-	agents, err := detect.All()
+	agents, err := refreshDetect()
 	if err != nil {
 		return Data{}, err
 	}
 
-	rows := make([]Row, 0, len(agents))
+	rows := make([]Row, 0, len(agents)+len(sf.Agents))
 	for _, a := range agents {
+		st := stateByPID[a.PID]
 		r := Row{
 			PID:         a.PID,
 			Label:       a.Label,
 			Cmdline:     a.Cmdline,
 			CWD:         a.CWD,
-			Status:      statusByPID[a.PID],
+			Status:      st.Status,
+			Detail:      st.Detail,
+			LastTs:      st.LastTs,
 			Pane:        "?",
 			SessionID:   "?",
 			SessionName: "?",
@@ -86,17 +93,133 @@ func loadFull(cfg config.Config) (Data, error) {
 			}
 		}
 
-		// Blocked is re-checked live so the popup never shows a stale status.
-		if r.Pane != "?" && tmux.Available() && blocked.DetectPane(r.Pane) {
-			r.Status = agent.StatusBlocked
-		}
+		applyBlockedCheck(&r)
+		rows = append(rows, r)
+	}
 
+	// Merge agents known only from the state file (connector-only PIDs).
+	seen := make(map[int]bool, len(rows))
+	for _, r := range rows {
+		seen[r.PID] = true
+	}
+	sessionIDByName := sessionIDsByName(rows)
+	for _, st := range sf.Agents {
+		if seen[st.PID] {
+			continue
+		}
+		r := rowFromAgentState(st)
+		// Reuse the session id of detected agents in the same session so the
+		// connector-only agent groups under the same header, not a duplicate.
+		if r.SessionName != "" && r.SessionName != "?" {
+			if id, ok := sessionIDByName[r.SessionName]; ok {
+				r.SessionID = id
+			}
+		}
+		applyBlockedCheck(&r)
 		rows = append(rows, r)
 	}
 
 	sortRows(rows)
 	return Data{Rows: rows, Frame: sf.Frame}, nil
 }
+
+// applyBlockedCheck re-checks the pane live so the popup never shows a stale
+// status, and records the matched pattern as the blocked reason.
+func applyBlockedCheck(r *Row) {
+	if r.Pane == "" || r.Pane == "?" {
+		return
+	}
+	if reason, ok := refreshBlocked(r.Pane); ok {
+		r.Status = agent.StatusBlocked
+		r.BlockedReason = reason
+	}
+}
+
+// rowFromAgentState builds a Row for an agent known only from the state
+// file: the poll loop already resolved its pane, so the components are
+// parsed back out of the stored target.
+func rowFromAgentState(s agent.AgentState) Row {
+	r := Row{
+		PID:       s.PID,
+		Label:     s.Label,
+		CWD:       s.CWD,
+		Status:    s.Status,
+		Detail:    s.Detail,
+		LastTs:    s.LastTs,
+		Pane:      s.Pane,
+		SessionID: "?",
+	}
+	if r.Status == "" {
+		r.Status = agent.StatusRunning
+	}
+	if s.Pane != "" && s.Pane != "?" {
+		session, win, paneIdx, ok := parsePaneTarget(s.Pane)
+		if ok {
+			r.SessionName = session
+			r.WindowIndex = win
+			r.PaneIndex = paneIdx
+			r.SessionID = session // reconciled with detected rows later
+		}
+	}
+	return r
+}
+
+// parsePaneTarget splits a "session:window.pane" target into its parts.
+func parsePaneTarget(target string) (session, window, pane string, ok bool) {
+	sw, p, found := strings.Cut(target, ":")
+	if !found {
+		return "?", "?", "?", false
+	}
+	w, pi, found := strings.Cut(p, ".")
+	if !found {
+		return sw, p, "?", true
+	}
+	return sw, w, pi, true
+}
+
+// sessionIDsByName maps session names to their numeric id for the detected
+// rows, so connector-only agents can group under the same header.
+func sessionIDsByName(rows []Row) map[string]string {
+	out := make(map[string]string)
+	for _, r := range rows {
+		if r.SessionName != "" && r.SessionName != "?" && r.SessionID != "" && r.SessionID != "?" {
+			out[r.SessionName] = r.SessionID
+		}
+	}
+	return out
+}
+
+// capturePane grabs the pane's visible content, ANSI-stripped, for the
+// preview panel. A seam so tests can inject deterministic captures.
+var capturePane = func(paneTarget string) string {
+	if paneTarget == "" || paneTarget == "?" || !tmux.Available() {
+		return ""
+	}
+	out, err := tmux.Run("capture-pane", "-t", paneTarget, "-p")
+	if err != nil {
+		return ""
+	}
+	return ansi.Strip(out)
+}
+
+// Test seams: the full reload touches live system state (process table,
+// tmux, pane capture). These package-level vars let tests substitute
+// deterministic fakes without a tmux session or real agents.
+var (
+	refreshDetect  = detect.All
+	refreshPaneMap = func() (*pane.Map, error) {
+		if !tmux.Available() {
+			return nil, nil
+		}
+		return pane.BuildMap()
+	}
+	refreshBlocked = func(paneTarget string) (string, bool) {
+		if paneTarget == "" || paneTarget == "?" || !tmux.Available() {
+			return "", false
+		}
+		return blocked.DetectPanePattern(paneTarget)
+	}
+)
 
 // sortRows orders agents the way the bash popup did: by session id, window
 // index, then pane index — numerically, so windows sort 0,1,2,… not 0,10,2.

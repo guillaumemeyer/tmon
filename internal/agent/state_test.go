@@ -160,3 +160,80 @@ func TestSnapshotSortedByPID(t *testing.T) {
 		}
 	}
 }
+
+// ─── Authoritative (connector) path ──────────────────────────────────────────
+
+func TestEvaluateAuthoritativeRecordsStatusAndDetail(t *testing.T) {
+	tr := NewTracker(testOptions())
+	tr.BeginPoll()
+	if got := tr.EvaluateAuthoritative(1, "Grok", "code/tmon", "?", StatusActive, "phase:reasoning"); got != StatusActive {
+		t.Fatalf("status = %q, want active", got)
+	}
+	snap := tr.Snapshot()
+	if len(snap) != 1 {
+		t.Fatalf("snapshot len = %d, want 1", len(snap))
+	}
+	if snap[0].Detail != "phase:reasoning" {
+		t.Errorf("Detail = %q, want phase:reasoning", snap[0].Detail)
+	}
+	if snap[0].CWD != "code/tmon" {
+		t.Errorf("CWD = %q, want code/tmon", snap[0].CWD)
+	}
+	if snap[0].LastTs == 0 {
+		t.Error("LastTs not stamped on first authoritative sighting")
+	}
+}
+
+func TestEvaluateAuthoritativeResetsStreakOnChange(t *testing.T) {
+	tr := NewTracker(testOptions())
+	tr.BeginPoll()
+	tr.EvaluateAuthoritative(1, "Grok", "c", "?", StatusActive, "tool:Bash")
+	tr.EndPoll()
+
+	// Same status: streak must not reset (no flicker).
+	tr.BeginPoll()
+	tr.EvaluateAuthoritative(1, "Grok", "c", "?", StatusActive, "tool:Read")
+	snap := tr.Snapshot()
+	if snap[0].IdleStreak != 0 {
+		t.Errorf("same-status poll: IdleStreak = %d, want 0", snap[0].IdleStreak)
+	}
+	tr.EndPoll()
+
+	// Blocked: streak resets and LastTs moves on.
+	tr.BeginPoll()
+	tr.EvaluateAuthoritative(1, "Grok", "c", "?", StatusBlocked, "permission:Bash")
+	snap = tr.Snapshot()
+	if snap[0].IdleStreak != 0 {
+		t.Errorf("blocked poll: IdleStreak = %d, want 0", snap[0].IdleStreak)
+	}
+	if snap[0].LastTs == 0 {
+		t.Error("LastTs not stamped on transition")
+	}
+}
+
+func TestEvaluateAuthoritativePreservesBaseline(t *testing.T) {
+	// A connector agent that goes quiet must leave CPU/IO intact so the
+	// heuristic path has a baseline when it takes over.
+	tr := NewTracker(testOptions())
+	tr.BeginPoll()
+	tr.EvaluateAuthoritative(1, "Grok", "c", "?", StatusActive, "tool:Bash")
+	tr.EndPoll()
+
+	// Heuristic takeover: the authoritative record left CPU at 0, so this
+	// poll is a fresh baseline (running), then three quiet polls decay to
+	// idle (grace of 3).
+	tr.BeginPoll()
+	tr.Evaluate(1, "Grok", "c", "?", 1000, 0, false)
+	tr.EndPoll()
+
+	for i := 0; i < 3; i++ {
+		tr.BeginPoll()
+		tr.Evaluate(1, "Grok", "c", "?", 1000, 0, false)
+		tr.EndPoll()
+	}
+
+	tr.BeginPoll()
+	if got := tr.Evaluate(1, "Grok", "c", "?", 1000, 0, false); got != StatusIdle {
+		t.Errorf("quiet polls after connector = %q, want idle", got)
+	}
+}

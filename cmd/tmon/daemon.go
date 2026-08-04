@@ -6,17 +6,13 @@ import (
 	"time"
 
 	"github.com/guillaumemeyer/tmon/internal/agent"
-	"github.com/guillaumemeyer/tmon/internal/blocked"
 	"github.com/guillaumemeyer/tmon/internal/config"
-	"github.com/guillaumemeyer/tmon/internal/detect"
-	"github.com/guillaumemeyer/tmon/internal/pane"
-	"github.com/guillaumemeyer/tmon/internal/proc"
-	"github.com/guillaumemeyer/tmon/internal/tmux"
+	"github.com/guillaumemeyer/tmon/internal/poll"
 )
 
-// cmdDaemon runs the continuous polling loop that keeps state.json fresh and,
-// with --notify, pops tmux messages on state transitions. It is the direct
-// replacement for `monitor.sh --notify`.
+// cmdDaemon runs the continuous polling loop that keeps state.json fresh
+// and, with --notify, pops tmux messages on state transitions. It is the
+// direct replacement for `monitor.sh --notify`.
 func cmdDaemon(args []string) int {
 	cfg := config.FromEnv()
 	notifyOn := false
@@ -39,77 +35,15 @@ func cmdDaemon(args []string) int {
 		}
 	}
 
-	tracker := agent.NewTracker(agent.NewOptions(cfg))
-
 	for {
-		sf, err := agent.LoadState(cfg.StateFilePath())
+		res, err := poll.Run(cfg, prevStatus, notifyOn)
 		if err != nil {
-			sf = agent.NewState() // corrupt state: start fresh
-		}
-		frame := sf.Frame + 1
-
-		var paneMap *pane.Map
-		if tmux.Available() {
-			paneMap, _ = pane.BuildMap()
-		}
-
-		tracker.BeginPoll()
-		agents, _ := detect.All()
-		statuses := make([]agent.Status, 0, len(agents))
-		for _, a := range agents {
-			paneTarget := "?"
-			if paneMap != nil {
-				if e, ok := paneMap.Resolve(a.PID); ok {
-					paneTarget = e.Target
-				}
-			}
-			isBlocked := paneTarget != "?" && tmux.Available() && blocked.DetectPane(paneTarget)
-
-			cpu, _ := proc.ReadCPUTicks(a.PID)
-			io, _ := proc.ReadIOBytes(a.PID)
-			st := tracker.Evaluate(a.PID, a.Label, a.CWD, paneTarget, cpu, io, isBlocked)
-
-			if notifyOn {
-				// The bash daemon compared each transition against the status
-				// it had just written during evaluation, so its notifications
-				// could never fire. Compare against the previous poll instead.
-				if old, seen := prevStatus[a.PID]; seen && st != old {
-					notifyTransition(a.Label, old, st, a.CWD)
-				}
-				prevStatus[a.PID] = st
-			}
-			statuses = append(statuses, st)
-		}
-		snapshot := tracker.Snapshot()
-		tracker.EndPoll()
-
-		sf.Frame = frame % 100
-		sf.Agents = snapshot
-		if err := sf.Save(cfg.StateFilePath()); err != nil {
 			fmt.Fprintln(os.Stderr, "tmon: save state:", err)
 		}
-
+		prevStatus = make(map[int]agent.Status, len(res.Agents))
+		for _, s := range res.Agents {
+			prevStatus[s.PID] = s.Status
+		}
 		time.Sleep(time.Duration(cfg.PollIntervalMs) * time.Millisecond)
-	}
-}
-
-// notifyTransition pops a tmux display-message on notable transitions,
-// mirroring the bash plugin's notify_state_change. Only "started" (running)
-// and "active" transitions are announced; idling is silent.
-func notifyTransition(label string, old, new agent.Status, cwd string) {
-	var msg string
-	switch new {
-	case agent.StatusActive:
-		msg = label + " is now active"
-	case agent.StatusRunning:
-		msg = label + " started"
-	default:
-		return
-	}
-	if cwd != "" {
-		msg += " in " + cwd
-	}
-	if tmux.Available() {
-		tmux.Run("display-message", msg)
 	}
 }

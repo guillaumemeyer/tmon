@@ -18,17 +18,20 @@ const (
 
 // Row is one detected agent and the pane data the popup shows about it.
 type Row struct {
-	PID         int
-	Label       string
-	Cmdline     string
-	CWD         string
-	Status      agent.Status
-	Pane        string // tmux target "session:window.pane"; "?" if unresolvable
-	SessionID   string // "$"-stripped session id; "?" if unpaned
-	SessionName string
-	WindowIndex string
-	WindowName  string
-	PaneIndex   string
+	PID           int
+	Label         string
+	Cmdline       string
+	CWD           string
+	Status        agent.Status
+	Detail        string // connector detail, e.g. "tool:Bash" or "phase:reasoning"
+	LastTs        int64  // unix seconds of last status change (0 = unknown)
+	BlockedReason string // matched blocked-pattern text, "" if not blocked
+	Pane          string // tmux target "session:window.pane"; "?" if unresolvable
+	SessionID     string // "$"-stripped session id; "?" if unpaned
+	SessionName   string
+	WindowIndex   string
+	WindowName    string
+	PaneIndex     string
 }
 
 // Data is one dashboard snapshot. A light refresh returns only Frame (Rows
@@ -57,15 +60,35 @@ const (
 	itemSession itemKind = iota // non-selectable session header
 	itemWindow                  // non-selectable window sub-header
 	itemAgent                   // selectable agent line
+	itemStatus                  // non-selectable status header (group-by-status)
 )
 
 // item is one line of the grouped list.
 type item struct {
 	kind        itemKind
-	sessionName string // itemSession
-	windowIdx   string // itemWindow
-	windowName  string // itemWindow
-	rowIdx      int    // itemAgent: index into Model.rows
+	sessionName string       // itemSession
+	windowIdx   string       // itemWindow
+	windowName  string       // itemWindow
+	status      agent.Status // itemStatus
+	rowIdx      int          // itemAgent: index into Model.rows
+}
+
+// groupMode selects how filtered agents are grouped into the list.
+type groupMode int
+
+const (
+	groupSession groupMode = iota // session → window → agent (default)
+	groupStatus                   // status header → agents
+	groupAgent                    // flat agent list, no headers
+)
+
+// statusOrder is the fixed header order for group-by-status and the filter
+// toggle order: most urgent first.
+var statusOrder = []agent.Status{
+	agent.StatusBlocked,
+	agent.StatusActive,
+	agent.StatusRunning,
+	agent.StatusIdle,
 }
 
 // Model is the bubbletea state for the dashboard popup.
@@ -73,10 +96,17 @@ type Model struct {
 	loader Loader
 
 	rows     []Row  // full sorted agent list
-	filtered []int  // indices into rows after the query filter
+	filtered []int  // indices into rows after the query + status filter
 	items    []item // grouped display items
 	selMap   []int  // item index per selectable position
 	selected int    // index into selMap
+
+	groupMode    groupMode
+	filterStatus agent.Status // "" = no status filter
+
+	preview     bool   // right-side pane preview panel
+	previewText string // ANSI-stripped capture of the selected pane
+	previewPane string // pane target the preview currently shows
 
 	query     string
 	searching bool

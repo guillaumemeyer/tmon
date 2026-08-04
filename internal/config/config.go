@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"time"
 )
 
 // Config holds all runtime settings for a single tmon invocation.
@@ -19,6 +20,9 @@ type Config struct {
 	IOThreshold         int64  // min IO bytes/poll to consider "active"
 	IdleDecayPolls      int    // consecutive idle polls before "idle"
 	CLKTicks            int    // kernel clock ticks per second (default 100)
+	Connectors          string // comma list or "auto" (enable every connector whose paths exist)
+	ConnectorFreshness  time.Duration
+	HookStateDir        string // where installed agent hooks write session state
 }
 
 // Defaults returns the configuration used when no TMON_* variables are set.
@@ -26,14 +30,18 @@ type Config struct {
 // these defaults only apply to standalone/debug invocations and deliberately
 // avoid the system cache and temp dirs.
 func Defaults() Config {
+	stateDir := filepath.Join(os.Getenv("HOME"), ".tmon", "state")
 	return Config{
-		StateDir:            filepath.Join(os.Getenv("HOME"), ".tmon", "state"),
+		StateDir:            stateDir,
 		BinDir:              filepath.Join(os.Getenv("HOME"), ".tmon", "bin"),
 		PollIntervalMs:      3000,
 		ActivityThresholdMs: 500,
 		IOThreshold:         102400,
 		IdleDecayPolls:      3,
 		CLKTicks:            100,
+		Connectors:          "auto",
+		ConnectorFreshness:  30 * time.Second,
+		HookStateDir:        filepath.Join(stateDir, "hooks"),
 	}
 }
 
@@ -70,6 +78,17 @@ func FromEnv() Config {
 	c.IOThreshold = envInt64("TMON_IO_ACTIVITY_THRESHOLD", c.IOThreshold)
 	c.IdleDecayPolls = envInt("TMON_IDLE_DECAY_POLLS", c.IdleDecayPolls)
 	c.CLKTicks = envInt("TMON_CLK_TCK", c.CLKTicks)
+	if v := os.Getenv("TMON_CONNECTORS"); v != "" {
+		c.Connectors = v
+	}
+	if v := os.Getenv("TMON_CONNECTOR_FRESHNESS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			c.ConnectorFreshness = time.Duration(n) * time.Second
+		}
+	}
+	if v := os.Getenv("TMON_HOOK_STATE_DIR"); v != "" {
+		c.HookStateDir = v
+	}
 	return c
 }
 

@@ -60,12 +60,28 @@ func Matches(content string) bool {
 	return combined.MatchString(content)
 }
 
+// MatchedPattern returns the first blocked-pattern text found in content
+// (empty string, false when nothing matches). The matched text is what the
+// dashboard shows as the "blocked reason", e.g. "[y/N]" or "Press any key".
+func MatchedPattern(content string) (string, bool) {
+	m := combined.FindString(content)
+	return m, m != ""
+}
+
 // DetectPane reports whether the pane's visible content matches any blocked
 // pattern. A failed capture (pane gone, not inside tmux) is never "blocked".
 func DetectPane(paneTarget string) bool {
+	_, ok := DetectPanePattern(paneTarget)
+	return ok
+}
+
+// DetectPanePattern reports whether the pane's visible content matches any
+// blocked pattern, returning the matched text (the "blocked reason" the
+// dashboard shows, e.g. "[y/N]" or "Press any key").
+func DetectPanePattern(paneTarget string) (string, bool) {
 	out, err := tmux.Run("capture-pane", "-t", paneTarget, "-p")
 	if err != nil || out == "" {
-		return false
+		return "", false
 	}
-	return Matches(out)
+	return MatchedPattern(out)
 }

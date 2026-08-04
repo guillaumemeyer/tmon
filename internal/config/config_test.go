@@ -3,6 +3,7 @@ package config
 import (
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestFromEnvDefaults(t *testing.T) {
@@ -73,5 +74,46 @@ func TestStateFilePath(t *testing.T) {
 	c := Config{StateDir: "/x/y"}
 	if got := c.StateFilePath(); got != "/x/y/state.json" {
 		t.Errorf("StateFilePath = %q, want /x/y/state.json", got)
+	}
+}
+
+func TestConnectorDefaults(t *testing.T) {
+	t.Setenv("HOME", "/home/tester")
+	for _, k := range []string{"TMON_CONNECTORS", "TMON_CONNECTOR_FRESHNESS", "TMON_HOOK_STATE_DIR"} {
+		t.Setenv(k, "")
+	}
+	c := FromEnv()
+	if c.Connectors != "auto" {
+		t.Errorf("Connectors = %q, want auto", c.Connectors)
+	}
+	if c.ConnectorFreshness != 30*time.Second {
+		t.Errorf("ConnectorFreshness = %v, want 30s", c.ConnectorFreshness)
+	}
+	if c.HookStateDir != "/home/tester/.tmon/state/hooks" {
+		t.Errorf("HookStateDir = %q, want state/hooks", c.HookStateDir)
+	}
+}
+
+func TestConnectorOverrides(t *testing.T) {
+	t.Setenv("TMON_CONNECTORS", "grok,hermes")
+	t.Setenv("TMON_CONNECTOR_FRESHNESS", "45")
+	t.Setenv("TMON_HOOK_STATE_DIR", "/tmp/hooks")
+	c := FromEnv()
+	if c.Connectors != "grok,hermes" {
+		t.Errorf("Connectors = %q, want grok,hermes", c.Connectors)
+	}
+	if c.ConnectorFreshness != 45*time.Second {
+		t.Errorf("ConnectorFreshness = %v, want 45s", c.ConnectorFreshness)
+	}
+	if c.HookStateDir != "/tmp/hooks" {
+		t.Errorf("HookStateDir = %q, want /tmp/hooks", c.HookStateDir)
+	}
+}
+
+func TestConnectorFreshnessIgnoresGarbage(t *testing.T) {
+	t.Setenv("TMON_CONNECTOR_FRESHNESS", "soon")
+	c := FromEnv()
+	if c.ConnectorFreshness != 30*time.Second {
+		t.Errorf("garbage freshness should fall back, got %v", c.ConnectorFreshness)
 	}
 }

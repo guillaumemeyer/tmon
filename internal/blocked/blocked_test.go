@@ -67,3 +67,18 @@ func TestMatchesCaseInsensitive(t *testing.T) {
 		t.Error("blocked detection should be case-insensitive (bash used grep -Ei)")
 	}
 }
+
+func TestMatchedPattern(t *testing.T) {
+	content := "Overwrite file? [y/N]"
+	m, ok := MatchedPattern(content)
+	if !ok {
+		t.Fatalf("MatchedPattern(%q) = _, false, want a match", content)
+	}
+	if m != "[y/N]" {
+		t.Errorf("MatchedPattern(%q) = %q, want %q", content, m, "[y/N]")
+	}
+
+	if _, ok := MatchedPattern("just compiling stuff"); ok {
+		t.Error("MatchedPattern matched noise")
+	}
+}

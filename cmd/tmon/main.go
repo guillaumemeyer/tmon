@@ -15,6 +15,10 @@ Usage:
   tmon status            Print the status-bar indicator (used by tmux #())
   tmon daemon [--notify] Run the polling loop (optionally with notifications)
   tmon dashboard         Open the interactive agent navigation popup
+  tmon hooks <cmd>       Install/remove agent lifecycle hooks:
+                           tmon hooks install <agent>   (claude|codex|cursor|copilot|windsurf)
+                           tmon hooks remove  <agent>
+                           tmon hooks status
   tmon version           Print the installed version
 
 Environment (set by tmon.tmux from the @tmon-* tmux options):
@@ -24,6 +28,11 @@ Environment (set by tmon.tmux from the @tmon-* tmux options):
   TMON_ACTIVITY_THRESHOLD_MS  CPU floor for "active" in ms/s (default 500)
   TMON_IO_ACTIVITY_THRESHOLD  Min IO bytes/poll for "active" (default 102400)
   TMON_IDLE_DECAY_POLLS       Idle grace period in polls (default 3)
+  TMON_CONNECTORS             Connector selection: "auto" or a comma list
+                              (default auto; agents' own state sources)
+  TMON_CONNECTOR_FRESHNESS    Seconds a connector signal stays valid (default 30)
+  TMON_HOOK_STATE_DIR         Dir where installed hooks write session state
+                              (default <state>/hooks)
 `
 
 func main() {
@@ -39,6 +48,8 @@ func main() {
 		os.Exit(cmdDaemon(os.Args[2:]))
 	case "dashboard":
 		os.Exit(cmdDashboard(os.Args[2:]))
+	case "hooks":
+		os.Exit(cmdHooks(os.Args[2:]))
 	case "version":
 		fmt.Println(version)
 	case "help", "-h", "--help":

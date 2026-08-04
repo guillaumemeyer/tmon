@@ -3,6 +3,7 @@ package dashboard
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -20,8 +21,12 @@ var (
 	styleHL     = lipgloss.NewStyle().Background(lipgloss.Color("236"))
 )
 
-// View renders the popup: header, divider, grouped list, footer. It always
-// emits exactly height lines so the footer lands on the last row.
+// previewMaxWidth caps the right-side preview panel at 48 cells.
+const previewMaxWidth = 48
+
+// View renders the popup: header, divider, grouped list (plus the optional
+// preview panel), footer. It always emits exactly height lines so the footer
+// lands on the last row.
 func (m Model) View() string {
 	w, h := m.width, m.height
 	if w < 1 {
@@ -31,27 +36,35 @@ func (m Model) View() string {
 		h = 24
 	}
 
+	panelW, listW := 0, w
+	if m.preview {
+		panelW = min(previewMaxWidth, w/3)
+		if panelW < 1 {
+			panelW = 1
+		}
+		listW = w - panelW - 1 // 1 cell for the │ separator
+		if listW < 1 {
+			listW = 1
+		}
+	}
+
 	lines := make([]string, 0, h)
 	lines = append(lines, m.headerLine(w))
 	lines = append(lines, fit(styleDim.Render(strings.Repeat("━", w)), w))
 
-	if len(m.filtered) == 0 {
-		msg := "    No agents detected."
-		if m.query != "" {
-			msg = `    No agents match "` + m.query + `"`
+	bodyLines := h - 3
+	if bodyLines < 1 {
+		bodyLines = 1
+	}
+
+	listLines := m.listLines(listW, bodyLines)
+	if m.preview {
+		prev := m.previewLines(panelW, bodyLines)
+		for i := range listLines {
+			lines = append(lines, listLines[i]+"│"+prev[i])
 		}
-		lines = append(lines, fit(msg, w))
 	} else {
-		bodyLines := h - 3
-		if bodyLines < 1 {
-			bodyLines = 1
-		}
-		for di, it := range m.items {
-			if di >= bodyLines {
-				break // no scrolling, like the bash popup
-			}
-			lines = append(lines, m.renderItem(di, it, w))
-		}
+		lines = append(lines, listLines...)
 	}
 
 	for len(lines) < h-1 {
@@ -62,10 +75,69 @@ func (m Model) View() string {
 	return strings.Join(lines, "\n")
 }
 
+// listLines renders the filtered list into at most bodyLines lines.
+func (m Model) listLines(w, bodyLines int) []string {
+	lines := make([]string, 0, bodyLines)
+	if len(m.filtered) == 0 {
+		msg := "    No agents detected."
+		if m.query != "" {
+			msg = `    No agents match "` + m.query + `"`
+		}
+		lines = append(lines, fit(msg, w))
+	} else {
+		for di, it := range m.items {
+			if di >= bodyLines {
+				break // no scrolling, like the bash popup
+			}
+			lines = append(lines, m.renderItem(di, it, w))
+		}
+	}
+	for len(lines) < bodyLines {
+		lines = append(lines, "")
+	}
+	return lines
+}
+
+// previewLines renders the right-side preview panel: a header line naming
+// the selected agent, then the ANSI-stripped pane capture.
+func (m Model) previewLines(w, n int) []string {
+	out := make([]string, 0, n)
+	header := ""
+	switch {
+	case len(m.selMap) == 0:
+		header = "no agents"
+	case m.previewPane == "" || m.previewPane == "?":
+		header = "no pane (headless)"
+	default:
+		it := m.items[m.selMap[m.selected]]
+		if it.kind == itemAgent {
+			r := m.rows[it.rowIdx]
+			header = agentFullName(r.Label)
+			if r.Detail != "" {
+				header += " — " + r.Detail
+			}
+		}
+	}
+	out = append(out, fit(styleDim.Render(header), w))
+	if m.previewText == "" && m.previewPane != "" && m.previewPane != "?" {
+		out = append(out, fit(styleDim.Render("  (empty pane)"), w))
+	}
+	for _, tl := range strings.Split(m.previewText, "\n") {
+		if len(out) >= n {
+			break
+		}
+		out = append(out, fit(tl, w))
+	}
+	for len(out) < n {
+		out = append(out, "")
+	}
+	return out
+}
+
 // headerLine is the title with the key-hint aligned right.
 func (m Model) headerLine(w int) string {
 	title := styleCyan.Bold(true).Render("[@] TMON")
-	hint := styleDim.Render("[/] search  [esc/q] quit")
+	hint := styleDim.Render("[/] search  [g] group  [d] preview  [esc/q] quit")
 	pad := w - ansi.StringWidth(title) - ansi.StringWidth(hint)
 	if pad < 1 {
 		return ansi.Truncate(title, w, "")
@@ -86,10 +158,21 @@ func (m Model) renderItem(di int, it item, w int) string {
 			name = it.windowIdx + ":" + it.windowName
 		}
 		return styleDim.Render("    " + name)
+	case itemStatus:
+		return "  " + statusHeader(it.status)
 	case itemAgent:
 		r := m.rows[it.rowIdx]
 		line := fmt.Sprintf("      [%s] %s %s %s  %s",
 			r.PaneIndex, animatedStatusChar(r.Status, m.frame), agentIcon(r.Label), agentFullName(r.Label), r.CWD)
+		if r.BlockedReason != "" {
+			line += "  " + styleOrange.Render(r.BlockedReason)
+		}
+		if r.Detail != "" {
+			line += "  " + styleDim.Render(r.Detail)
+		}
+		if age := ageString(r.LastTs); age != "" {
+			line += "  " + styleDim.Render(age)
+		}
 		if len(m.selMap) > 0 && m.selMap[m.selected] == di {
 			line = fit(line, w)
 			return styleHL.Render(line + strings.Repeat(" ", w-ansi.StringWidth(line)))
@@ -99,8 +182,24 @@ func (m Model) renderItem(di int, it item, w int) string {
 	return ""
 }
 
+// statusHeader renders a group-by-status header with its status character
+// and name, colored like the status bar.
+func statusHeader(st agent.Status) string {
+	switch st {
+	case agent.StatusBlocked:
+		return styleOrange.Bold(true).Render("? Blocked")
+	case agent.StatusActive:
+		return styleGreen.Bold(true).Render("● Active")
+	case agent.StatusRunning:
+		return styleGreen.Bold(true).Render("● Running")
+	case agent.StatusIdle:
+		return styleBlue.Bold(true).Render("‖ Idle")
+	}
+	return string(st)
+}
+
 // footerLine varies with the mode: search input, active filter, or the
-// navigation hint, with the match count aligned right.
+// navigation hint, with the match count or status counts aligned right.
 func (m Model) footerLine(w int) string {
 	switch {
 	case m.searching:
@@ -109,13 +208,63 @@ func (m Model) footerLine(w int) string {
 		return m.twoSided(left, right, w)
 	case m.query != "":
 		left := styleDim.Render(" ▌ " + m.query)
+		if m.filterStatus != "" {
+			left += styleDim.Render(" · " + m.filterLabel())
+		}
 		right := styleDim.Render(fmt.Sprintf("%d/%d", len(m.filtered), len(m.rows)))
 		return m.twoSided(left, right, w)
 	default:
 		left := styleDim.Render(" ▌ / to search")
-		right := styleDim.Render("  j/k/↑↓ nav  ↩/spc/l focus  esc/q quit")
+		if m.filterStatus != "" {
+			left += styleDim.Render(" · " + m.filterLabel() + " (press again to clear)")
+		}
+		right := m.countString() + styleDim.Render("  [1-9] jump")
 		return m.twoSided(left, right, w)
 	}
+}
+
+// filterLabel names the active status filter for the footer.
+func (m Model) filterLabel() string {
+	switch m.filterStatus {
+	case agent.StatusBlocked:
+		return "b:blocked"
+	case agent.StatusActive:
+		return "a:active"
+	case agent.StatusRunning:
+		return "w:running"
+	case agent.StatusIdle:
+		return "i:idle"
+	}
+	return ""
+}
+
+// statusCounts tallies the filtered agents by status (index order: blocked,
+// active, running, idle).
+func (m Model) statusCounts() [4]int {
+	var c [4]int
+	for _, fi := range m.filtered {
+		switch m.rows[fi].Status {
+		case agent.StatusBlocked:
+			c[0]++
+		case agent.StatusActive:
+			c[1]++
+		case agent.StatusRunning:
+			c[2]++
+		case agent.StatusIdle:
+			c[3]++
+		}
+	}
+	return c
+}
+
+// countString renders the status-bar-style counts: ? blocked, ● active
+// (including running), ‖ idle — over the filtered set.
+func (m Model) countString() string {
+	c := m.statusCounts()
+	return fmt.Sprintf("%s %d  %s %d  %s %d",
+		styleOrange.Render("?"), c[0],
+		styleGreen.Render("●"), c[1]+c[2],
+		styleBlue.Render("‖"), c[3])
 }
 
 // twoSided lays out left and right strings on one line, right-aligned.
@@ -146,6 +295,27 @@ func animatedStatusChar(status agent.Status, frame int) string {
 		return styleBlue.Render("‖")
 	default:
 		return styleDim.Render("·")
+	}
+}
+
+// ageString renders how long ago the status last changed: "now", "1m",
+// "45m", "3h", "2d". Empty when the timestamp is unknown.
+func ageString(lastTs int64) string {
+	if lastTs <= 0 {
+		return ""
+	}
+	d := time.Since(time.Unix(lastTs, 0))
+	switch {
+	case d < time.Minute:
+		return "now"
+	case d < 2*time.Minute:
+		return "1m"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd", int(d.Hours()/24))
 	}
 }
 

@@ -395,8 +395,8 @@ func TestViewRendersGroupedList(t *testing.T) {
 	v := m.View()
 	for _, want := range []string{
 		"[@] TMON",
-		"main",      // session header
-		"0:shell",   // window sub-header
+		"main",    // session header
+		"0:shell", // window sub-header
 		"Grok Build", "Claude Code", "Codex CLI",
 		"side", "3:code",
 		"code/tmon", // cwd

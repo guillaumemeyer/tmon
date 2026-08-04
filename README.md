@@ -58,22 +58,33 @@ window, with its emoji icon, status, and exact tmux location:
 │  main                                                │
 │    0:code                                            │
 │      [0] ● 🧠 Grok Build        ~/code/tmon          │
-│      [1] ● 🏛️ Claude Code       ~/docs/design        │
+│      [1] ? 🏛️ Claude Code       ~/docs/design   [y/N]│
 │  side                                                │
 │    0:research                                        │
-│      [2] ‖ 🏄 Windsurf           ~/research           │
+│      [2] ‖ 🏄 Windsurf           ~/research          │
 │                                                      │
-│ ▌ / to search                    j/k nav  ↩ focus   │
+│ ▌ / to search        ? 1  ● 1  ‖ 1      [1-9] jump  │
 └──────────────────────────────────────────────────────┘
 ```
 
 Each agent gets one line with its emoji icon, display name, animated status
-character, pane index, and working directory. The selected row is highlighted
-with a dim background.
+character, pane index, and working directory — plus, when available, the
+reason it's blocked (e.g. `[y/N]`), the connector detail (e.g. `tool:Bash`),
+and how long ago its status last changed. The selected row is highlighted
+with a dim background. The footer always shows the live status counts
+(`? blocked · ● active · ‖ idle`) for the current filter.
+
+Press `d` for a **preview panel** on the right: the selected agent's pane,
+captured live and ANSI-stripped, re-captured whenever the selection changes
+or the data reloads. Press `g` to cycle the grouping: by session, by status
+(blocked → active → running → idle), or as a flat list. Filter by status
+with `b` (blocked), `w` (running), `a` (active), `i` (idle); press the key
+again to clear. `1`–`9` jumps straight to the Nth agent.
 
 **Status is always accurate** — the dashboard reads the same state file that
 drives the status bar, so the two never disagree. "Blocked" detection runs
-live against each pane's visible content on every refresh.
+live against each pane's visible content on every refresh, and agents known
+only through connectors (e.g. the Hermes gateway) appear here too.
 
 Hit `Enter` or `→` on any agent and you're teleported directly to its pane
 (session, window, and pane all switch at once).
@@ -88,6 +99,10 @@ data reload every ~6 seconds.
 | Key | Action |
 |-----|--------|
 | `↑` `↓` / `j` `k` | Navigate the list |
+| `1`–`9` | Jump to the Nth agent in the list |
+| `g` | Cycle grouping: session → status → flat list |
+| `b` / `w` / `a` / `i` | Filter by status: blocked / running / active / idle (press again to clear) |
+| `d` | Toggle the right-side pane preview panel |
 | `Enter` / `→` / `l` / `Space` | Jump to the selected agent's pane |
 | `/` | Start filtering (agent name, session, window) |
 | Type | Filter the list |
@@ -286,6 +301,37 @@ set -g @tmon-status-position "left"
 set -g @tmon-dashboard-key "b"   # use prefix b b instead
 ```
 
+### `@tmon-connectors`
+
+> Which connectors to probe for authoritative agent state. Connectors read
+> the agents' own state surfaces (native phase files, gateway JSON, installed
+> lifecycle hooks) and layer on top of the CPU/IO heuristic.
+
+| | |
+|---|---|
+| **Default** | `auto` |
+| **Options** | `auto` (enable every connector whose agent is installed) or a comma list, e.g. `grok,claude` |
+
+```tmux
+set -g @tmon-connectors "grok,hermes"   # only these two connectors
+```
+
+### `@tmon-connector-freshness`
+
+> How long a connector's status signal stays authoritative before tmon falls
+> back to the CPU/IO heuristic. Agents that stop writing signals (finished a
+> turn, crashed, or the connector's paths moved) decay instead of sticking
+> "active".
+
+| | |
+|---|---|
+| **Default** | `30` |
+| **Unit** | seconds |
+
+```tmux
+set -g @tmon-connector-freshness "60"   # keep connector state longer
+```
+
 ### Advanced: environment variables
 
 These are exported by `tmon.tmux` from the tmux options above (and pushed
@@ -298,6 +344,9 @@ actually see them). They can also be overridden directly for custom setups:
 | `TMON_ACTIVITY_THRESHOLD_MS` | `@tmon-activity-threshold` | CPU threshold in ms/s |
 | `TMON_IO_ACTIVITY_THRESHOLD` | `@tmon-io-threshold` | IO threshold in bytes |
 | `TMON_IDLE_DECAY_POLLS` | *(no tmux option)* | Consecutive idle polls before "idle" (default: 3) |
+| `TMON_CONNECTORS` | `@tmon-connectors` | Connector selection: `auto` or a comma list |
+| `TMON_CONNECTOR_FRESHNESS` | `@tmon-connector-freshness` | Seconds a connector signal stays valid (default: 30) |
+| `TMON_HOOK_STATE_DIR` | *(set by tmon.tmux)* | Where installed hooks write session state, default `<state>/hooks` |
 | `TMON_STATE_DIR` | *(set by tmon.tmux)* | State dir, default `<plugin>/state` |
 | `TMON_BIN_DIR` | *(set by tmon.tmux)* | Binary dir, default `<plugin>/bin` |
 
@@ -365,12 +414,75 @@ shell pipeline or subshell.
 ```
 tmon.tmux                  ← Plugin entrypoint (sourced by tmux)
 ├── scripts/bootstrap.sh   ← Downloads the pinned release binary + verifies sha256
-├── bin/tmon               ← Go binary: status / daemon / dashboard / version
+├── bin/tmon               ← Go binary: status / daemon / dashboard / hooks / version
 ├── state/state.json       ← Shared state (written by `status`, read by the dashboard)
+├── state/hooks/<agent>/   ← Session state written by installed agent hooks
 └── cmd/tmon, internal/    ← Go source (only needed when developing)
 ```
 
 No npm, no pip, no cargo. Just a small Go binary and `/proc`.
+
+---
+
+## Connectors — where the status really comes from
+
+CPU/IO heuristics tell tmon an agent is *doing something*, but the agents
+themselves know *what*. Each supported agent gets a **connector**: a small
+reader for the agent's own state surface that reports an authoritative
+status plus a detail string (e.g. `tool:Bash`, `phase:reasoning`,
+`permission:Write`). Connectors are layered on top of the heuristic — they
+only make state more accurate, never less:
+
+- **Freshness gate** — every connector record carries a timestamp (the
+  agent's phase-change time, hook-event time, or file mtime). Signals older
+  than `TMON_CONNECTOR_FRESHNESS` (default 30s) are dropped, so a signal
+  that goes quiet decays back to the heuristic path instead of leaving the
+  agent "stuck active". An agent whose connector is silent is tracked
+  exactly as it was before connectors existed.
+- **Liveness gate** — records for exited processes are dropped immediately.
+- **Dormant by default** — a connector only runs when its agent's state
+  paths exist (`TMON_CONNECTORS` = `auto`); uninstalled agents cost nothing.
+  Set `TMON_CONNECTORS` to a comma list to opt in or out per agent.
+
+| Agent | Source of authoritative state | Status granularity |
+|-------|------------------------------|--------------------|
+| **Grok Build** | `~/.grok/active_sessions.json` + `events.jsonl` phases | blocked (permission prompt, names the tool), active (reasoning / responding / tool / waiting on model), running |
+| **Hermes Agent** | `~/.hermes/gateway_state.json` (heartbeat) | blocked n/a — active (n agents), running (gateway), idle |
+| **Claude Code** | lifecycle hooks (`tmon hooks install claude`) | blocked (permission prompt), active (tool running / compacting / subagent), idle (turn complete) |
+| **Codex CLI** | lifecycle hooks (`tmon hooks install codex`) | same event set as Claude |
+| **Cursor** | lifecycle hooks (`tmon hooks install cursor`), else `~/.cursor` session files | hook events, else running |
+| **Copilot** | lifecycle hooks (`tmon hooks install copilot`), else `~/.copilot` session files | hook events, else running |
+| **Windsurf** | lifecycle hooks (`tmon hooks install windsurf`) | hook events |
+| **Cline** | newest `~/.cline/data/sessions/` activity | active (session written) |
+| **Aider** | `.aider.chat.history.md` mtime per project | active (editing) |
+| **CodeBuddy** | `~/.codebuddy/sessions/<pid>.json` | running (session live) |
+| **OpenClaw** | *(stretch: SQLite/WS API not read yet)* | — (heuristic only) |
+
+### Hooks (`tmon hooks install`)
+
+Claude Code, Codex, Cursor, Copilot and Windsurf have no readable live state
+file, so tmon installs **lifecycle hooks** for them — the agent's own
+extension point. Run once per agent:
+
+```bash
+~/.tmux/plugins/tmon/bin/tmon hooks install claude
+~/.tmux/plugins/tmon/bin/tmon hooks install codex     # also run /hooks once inside Codex to trust them
+~/.tmux/plugins/tmon/bin/tmon hooks install cursor
+~/.tmux/plugins/tmon/bin/tmon hooks install copilot
+~/.tmux/plugins/tmon/bin/tmon hooks install windsurf
+```
+
+Each install writes the agent's hook configuration (e.g. `~/.claude/settings.json`,
+`~/.codex/hooks.json`, `~/.cursor/hooks.json`, `~/.copilot/settings.json`,
+`~/.codeium/windsurf/hooks.json`) pointing at one shared hook script bundled
+with the binary. Every event the agent fires (permission prompts, tool use,
+turn completion, …) is written as JSON under `<state>/hooks/<agent>/`, and
+the connector reads it back. Existing hook groups in those config files are
+preserved. `tmon hooks remove <agent>` undoes the install; `tmon hooks
+status` lists what's installed.
+
+Hooks are optional — without them the agent keeps the heuristic path, so
+removing hooks never loses you anything you had before.
 
 ---
 
