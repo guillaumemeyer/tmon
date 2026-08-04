@@ -55,24 +55,55 @@ window, with a live pane preview on the right:
 │ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━│───────────────────│
 │  main                            │ $ tmon dashboard  │
 │    0:code                        │ … pane content …  │
-│      [0] ⚡️ Extract Agent Sessions (Grok Build) ~/code │
-│      [1] 🛑 Claude Code ~/docs   │                   │
+│    > Extract Agent Sessions (Grok…│                   │
+│      ~/code                      │                   │
+│      ctx 52.4k/200k (26%)        │                   │
+│      Claude Code                 │                   │
+│      ~/docs  [y/N]               │                   │
 │  side                            │                   │
 │    0:research                    │                   │
-│      [2] 💤 Windsurf    ~/res    │                   │
-│             [↑/↓ j/k] navigate … │                   │
+│      Windsurf                    │                   │
+│      ~/res                       │                   │
+│  v0.4.2        [↑/↓ j/k] navig… │                   │
 └──────────────────────────────────┴───────────────────┘
 ```
 
-Each agent line shows its status, pane index, and working directory —
-plus, when available, the agent's **session title** (Grok's generated
-conversation title, Claude's session name) as `Title (Name)`, why it's
-blocked (e.g. `[y/N]`), what it's doing (e.g. `tool:Bash`), and how long
-ago its status last changed. Agents without a title (or a brand-new session
-that has not earned one yet) show just the name. The footer shows
-`[↑/↓ j/k] navigate` to move the selection, `[←/→] resize` for the preview
-split (persisted across opens) and, when an agent with a pane is selected,
-`[C-u/C-d] scroll` for the preview.
+Each agent takes two compact lines: a bold **session title and agent name**
+(`Title (Name)`, or just the name when the session has not earned a title
+yet) and, beneath it, a dimmed **working directory** plus — when the agent
+is blocked — the prompt it is waiting on (e.g. `[y/N]`, or `paused` when
+the prompt is unknown). When the connector can read token usage, a third
+dim **stats line** appears:
+
+```
+    > Extract Agent Sessions (Grok Build)
+      ~/code
+      ctx 52.4k/200k (26%)
+```
+
+The stats line shows the **context window** — tokens used over the model's
+window size with the used percentage (`ctx 13k/200k (5%)`; the `%` is shown
+only when the window size is known) — and, when a connector reports it, the
+**account quota** as remaining percentage plus next reset time
+(`62% left · reset 14:00`). Both are blank when unknown, and the agent then
+stays at two lines. What gets populated today:
+
+| Agent | Stats line |
+|-------|------------|
+| Grok Build | tokens + window % (from `signals.json`) |
+| Claude Code | tokens + window % when the model's window is known (from the transcript) |
+| Codex CLI | tokens (from the session history) |
+| Hermes Agent | tokens (from `hermes insights`) |
+| Others | no stats line — no local usage source |
+
+Account-quota fields are plumbed through but no agent currently exposes
+them locally, so the quota segment stays blank until a source exists.
+The two-line layout keeps the list readable even when the left column is
+narrow. The version is pinned to the bottom-left.
+The footer shows `[↑/↓ j/k] navigate` to move the selection,
+`[←/→ h/l] resize preview` for the preview split (persisted across opens)
+and, when an agent with a pane is selected, `[C-u/C-d] scroll preview` for
+the preview.
 
 Filter by status with `b` (blocked), `w` (working), `i` (idle); press the
 key again to clear. `1`–`9` jumps to the Nth agent. Hit `Enter` or **click
@@ -88,7 +119,7 @@ are ranked by match quality. `Esc` leaves search mode (the filter stays);
 | Key / Mouse | Action |
 |-----|--------|
 | `↑` `↓` / `j` `k` | Navigate the list |
-| `←` / `→` | Grow / shrink the preview pane (persisted) |
+| `←` / `→` / `h` / `l` | Grow / shrink the preview pane (persisted) |
 | `Ctrl-u` / `Ctrl-d` | Scroll the preview up / down |
 | `1`–`9` | Jump to the Nth agent in the list |
 | `b` / `w` / `i` | Filter by status: blocked / working / idle (press again to clear) |
@@ -106,6 +137,40 @@ tmon recognizes **11 agents** out of the box: Grok Build, Claude Code, Codex
 CLI, Cursor, Cline, Aider, GitHub Copilot, CodeBuddy, Windsurf, Hermes Agent,
 and OpenClaw.
 
+How closely tmon can track each one depends on the agent's own state
+surface. Agents that publish live state files (Grok, Hermes, Cline,
+CodeBuddy, Aider) or accept lifecycle hooks (Claude Code, Codex, Cursor,
+Copilot, Windsurf) give tmon authoritative working / blocked / idle signals;
+everyone else falls back to the CPU/IO and pane-content heuristics. The
+matrix below shows which features each agent's connector provides:
+
+| Agent | Connector | Status | Blocked | Detail | Title | Tokens |
+|-------|-----------|--------|:---:|--------|:---:|:---:|
+| Grok Build | native (`~/.grok`) | exact | ✓ | phase · tool · permission · model | ✓ | ✓ + window % |
+| Claude Code | hooks | exact | ✓ | tool · permission | ✓ | ✓ + window % |
+| Codex CLI | hooks (+ `/hooks` trust) | exact | ✓ | tool · permission | — | ✓ |
+| Hermes Agent | native (`~/.hermes`) | gateway | — | gateway · N active agents | — | ✓ |
+| GitHub Copilot | hooks, else native fallback | exact | ✓ | tool · permission | — | — |
+| Cursor | hooks, else native fallback | exact | — | tool | — | — |
+| Windsurf | hooks | exact | — | tool | — | — |
+| Cline | native (`~/.cline`) | working | — | session id | — | — |
+| CodeBuddy | native (`~/.codebuddy`) | idle | — | session id | — | — |
+| Aider | native (`.aider.chat.history.md`) | working | — | editing | — | — |
+| OpenClaw | reserved | heuristic | — | — | — | — |
+
+**Status** is how precisely tmon knows the working / blocked / idle state:
+`exact` from the agent's own signals, a partial signal (`working`, `idle`,
+`gateway`), or `heuristic` (CPU/IO inference). **Blocked** marks connectors
+that detect a permission wait themselves; a — falls back to the pane-pattern
+heuristic (`[y/N]`, permission prompts, …). **Detail** is what the dashboard
+shows under the agent's name, **Title** the session name ("Title (Agent)"),
+and **Tokens** the stats line (tokens + context-window % when known).
+
+Hooks install automatically at plugin load unless `@tmon-auto-hooks` is
+`off` — or by hand with `tmon hooks install <agent>`. Codex additionally
+requires the hooks to be trusted in-session via `/hooks`. Without hooks, the
+Cursor/Copilot native fallback only reports the agent as idle.
+
 ---
 
 ## Requirements
@@ -120,7 +185,8 @@ and OpenClaw.
 
 ### Windows
 
-Native Windows is not supported. Use **WSL2** with tmux and install tmon
+Native Windows is not supported, and the Windows build has not been tested.
+Use **WSL2** with tmux and install tmon
 *inside* the Linux environment (plugin under the Linux home, e.g.
 `~/.tmux/plugins/tmon` — avoid `/mnt/c/...` when you can). Bootstrap fetches
 the Linux binary; agents must also run as Linux processes in WSL for
@@ -207,8 +273,13 @@ message.
 
 ### Updating
 
-TPM: hit `prefix U` (uppercase), then `tmux source-file ~/.tmux.conf`.
-Manual installs: `git pull origin main`, then `tmux source-file ~/.tmux.conf`.
+TPM: hit `prefix U` (uppercase). tmon installs a git `post-merge` hook in the
+plugin repo, so the pull itself re-downloads the binary matching the new
+`VERSION` and re-applies the tmux wiring — no reload needed. If the hook
+cannot run (e.g. the plugin is not a git clone), fall back to
+`prefix U`, then `tmux source-file ~/.tmux.conf`.
+
+Manual installs: `git pull origin main` (the same hook applies).
 
 ---
 

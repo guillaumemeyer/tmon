@@ -22,7 +22,8 @@ func cmdDashboard(args []string) int {
 
 	cfg := config.FromEnv()
 	m := dashboard.New(dashboard.DefaultLoader(cfg), cfg.ASCII).
-		WithSettingsPath(filepath.Join(cfg.StateDir, "dashboard.json"))
+		WithSettingsPath(filepath.Join(cfg.StateDir, "dashboard.json")).
+		WithVersion("v" + version)
 	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "tmon: dashboard:", err)

@@ -133,6 +133,10 @@ func TestGrokSignalsEnrichment(t *testing.T) {
 	if !strings.Contains(d, "model:grok-4.5") || !strings.Contains(d, "ctx:26%") {
 		t.Errorf("Detail = %q, want model + ctx enrichment", d)
 	}
+	u := recs[0].Usage
+	if u.TokensUsed != 52367 || u.WindowTokens != 200000 {
+		t.Errorf("Usage = %+v, want tokens 52367 window 200000", u)
+	}
 }
 
 func TestGrokSessionTitle(t *testing.T) {

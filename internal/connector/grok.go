@@ -167,8 +167,12 @@ func enrichGrok(rec *Record, dir string) {
 	}
 
 	// Enrichment from signals.json: model + context usage.
-	if sig := readGrokSignals(dir); sig.PrimaryModel != "" {
+	sig := readGrokSignals(dir)
+	if sig.PrimaryModel != "" {
 		rec.Detail += fmt.Sprintf(" · model:%s · ctx:%d%%", sig.PrimaryModel, sig.ContextUsage)
+	}
+	if sig.ContextTokens > 0 || sig.ContextWindow > 0 {
+		rec.Usage = agent.Usage{TokensUsed: sig.ContextTokens, WindowTokens: sig.ContextWindow}
 	}
 
 	// Session title: summary.json carries the generated conversation title

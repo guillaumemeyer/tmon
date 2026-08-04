@@ -70,6 +70,9 @@ func loadFull(cfg config.Config) (Data, error) {
 			WindowName:  "?",
 			PaneIndex:   "?",
 		}
+		if st.Usage != nil {
+			r.Usage = *st.Usage
+		}
 		if r.Status == "" {
 			r.Status = agent.StatusIdle // first detection: show it immediately
 		}
@@ -158,6 +161,9 @@ func rowFromAgentState(s agent.AgentState) Row {
 		LastTs:    s.LastTs,
 		Pane:      s.Pane,
 		SessionID: "?",
+	}
+	if s.Usage != nil {
+		r.Usage = *s.Usage
 	}
 	if r.Status == "" {
 		r.Status = agent.StatusIdle

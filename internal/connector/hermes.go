@@ -13,10 +13,15 @@
 package connector
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/guillaumemeyer/tmon/internal/agent"
@@ -60,18 +65,25 @@ func (Hermes) Enabled(cfg config.Config) bool {
 }
 
 // Probe returns one record for the gateway process, or none when the
-// gateway is not installed.
+// gateway is not installed. Token usage comes from `hermes insights`,
+// TTL-cached so the analysis runs at most once a minute.
 func (Hermes) Probe(cfg config.Config) ([]Record, error) {
 	home := hermesHome()
 	statePath := filepath.Join(home, "gateway_state.json")
 
 	rec, ok, err := probeGatewayState(statePath)
 	if err == nil && ok {
+		rec.Usage = hermesUsage(cfg)
 		return []Record{rec}, nil
 	}
 	// Unreadable or unparseable state file: gateway.pid still carries the
 	// PID. If that fails too, surface the original error.
 	if recs, perr := probeGatewayPID(filepath.Join(home, "gateway.pid")); perr == nil {
+		if u := hermesUsage(cfg); !u.Empty() {
+			for i := range recs {
+				recs[i].Usage = u
+			}
+		}
 		return recs, nil
 	} else if err != nil {
 		return nil, err
@@ -146,4 +158,58 @@ func fileModTime(path string) time.Time {
 		return fi.ModTime()
 	}
 	return time.Now()
+}
+
+// hermesInsightsTTL bounds how often the (≈0.5s) insights analysis runs.
+const hermesInsightsTTL = 60 * time.Second
+
+// hermesInsightsOutput runs `hermes insights --days 1` and returns its
+// stdout. A seam so tests can inject a fixture instead of spawning hermes.
+var hermesInsightsOutput = func(cfg config.Config) (string, error) {
+	bin, err := exec.LookPath("hermes")
+	if err != nil {
+		return "", err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, bin, "insights", "--days", "1").Output()
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+var (
+	insightsInputRe  = regexp.MustCompile(`Input tokens:\s+([\d,]+)`)
+	insightsOutputRe = regexp.MustCompile(`Output tokens:\s+([\d,]+)`)
+)
+
+// hermesUsage returns gateway-level token usage from `hermes insights`
+// (input + output tokens), TTL-cached on disk so every fresh `tmon status`
+// process reuses the last analysis. Zero usage when insights fails or
+// reports nothing.
+func hermesUsage(cfg config.Config) agent.Usage {
+	out, err := runCachedTTL(cfg.StateDir, "hermes-insights-1d", hermesInsightsTTL, func() (string, error) {
+		return hermesInsightsOutput(cfg)
+	})
+	if err != nil {
+		return agent.Usage{}
+	}
+	in, outT := parseInsightsTokens(out)
+	if in+outT <= 0 {
+		return agent.Usage{}
+	}
+	return agent.Usage{TokensUsed: in + outT}
+}
+
+// parseInsightsTokens extracts the input/output token counts from the
+// insights box table ("Input tokens: 79,757"). Unparseable output yields 0.
+func parseInsightsTokens(out string) (inTokens, outTokens int64) {
+	if m := insightsInputRe.FindStringSubmatch(out); len(m) == 2 {
+		inTokens, _ = strconv.ParseInt(strings.ReplaceAll(m[1], ",", ""), 10, 64)
+	}
+	if m := insightsOutputRe.FindStringSubmatch(out); len(m) == 2 {
+		outTokens, _ = strconv.ParseInt(strings.ReplaceAll(m[1], ",", ""), 10, 64)
+	}
+	return inTokens, outTokens
 }

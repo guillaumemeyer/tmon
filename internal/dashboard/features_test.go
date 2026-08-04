@@ -411,10 +411,39 @@ func TestFooterOmitsStatusCountsShowsPreviewTip(t *testing.T) {
 			t.Fatalf("footer should not show status count %q in:\n%s", bad, v)
 		}
 	}
-	for _, want := range []string{"[↑/↓ j/k] navigate", "[←/→] resize", "[C-u/C-d] scroll", "[1-9] jump"} {
+	for _, want := range []string{"[↑/↓ j/k] navigate", "[←/→ h/l] resize preview", "[C-u/C-d] scroll preview", "[1-9] jump"} {
 		if !strings.Contains(v, want) {
 			t.Fatalf("footer missing %q in:\n%s", want, v)
 		}
+	}
+}
+
+func TestFooterShowsVersionBottomLeft(t *testing.T) {
+	old := capturePane
+	capturePane = func(p string) string { return "x" }
+	t.Cleanup(func() { capturePane = old })
+
+	f := &fakeLoader{data: Data{Rows: testRows()}}
+	m := New(f.load, true).WithVersion("0.4.2")
+	m = applyMsg(t, m, initMsg{})
+	m.width, m.height = 100, 24
+
+	v := ansi.Strip(m.View())
+	rows := strings.Split(v, "\n")
+	footer := rows[len(rows)-1]
+	// One space from the border, then the version.
+	if !strings.HasPrefix(footer, " 0.4.2") {
+		t.Fatalf("footer should start with the version, got %q", footer)
+	}
+
+	// Without a version, the footer does not start with a bare " v…".
+	m2 := New(f.load, true)
+	m2 = applyMsg(t, m2, initMsg{})
+	m2.width, m2.height = 100, 24
+	v2 := ansi.Strip(m2.View())
+	footer2 := strings.Split(v2, "\n")[len(rows)-1]
+	if strings.Contains(footer2, "0.4.2") {
+		t.Fatalf("footer without version should not contain 0.4.2, got %q", footer2)
 	}
 }
 
@@ -433,9 +462,9 @@ func TestSelectedAgentMarker(t *testing.T) {
 	var grokLine, claudeLine, windowLine string
 	for _, ln := range lines {
 		switch {
-		case strings.Contains(ln, ">") && strings.Contains(ln, "["): // selected list line
+		case strings.Contains(ln, ">") && strings.Contains(ln, "Popup preview scroll"): // selected name line
 			grokLine = ln
-		case strings.Contains(ln, "[1]"): // Claude's list line (pane 1)
+		case strings.Contains(ln, "Claude Code"): // Claude's name line
 			claudeLine = ln
 		case strings.Contains(ln, "0:shell"):
 			windowLine = ln
@@ -444,7 +473,7 @@ func TestSelectedAgentMarker(t *testing.T) {
 
 	// The selected line carries a ">" marker at the window index column (4);
 	// the unselected line keeps plain leading spaces.
-	if !strings.HasPrefix(strings.TrimRight(grokLine, " "), "    > [0]") {
+	if !strings.HasPrefix(strings.TrimRight(grokLine, " "), "    > Popup preview scroll") {
 		t.Fatalf("selected line missing marker, got %q", grokLine)
 	}
 	if strings.HasPrefix(strings.TrimRight(claudeLine, " "), "    >") {
@@ -465,6 +494,56 @@ func TestSelectedAgentMarker(t *testing.T) {
 	}
 }
 
+func TestAgentRowsAreTwoLines(t *testing.T) {
+	old := capturePane
+	capturePane = func(p string) string { return "x" }
+	t.Cleanup(func() { capturePane = old })
+
+	f := &fakeLoader{data: Data{Rows: testRows()}}
+	m := New(f.load, true)
+	m = applyMsg(t, m, initMsg{}) // Grok selected first
+	m.width, m.height = 80, 24
+
+	v := ansi.Strip(m.View())
+	lines := strings.Split(v, "\n")
+
+	// Split each full row at the │ separator and match against the list
+	// column only — the preview header repeats the selected agent's name.
+	for i, ln := range lines {
+		list := strings.SplitN(ln, "│", 2)[0]
+		switch {
+		case strings.Contains(list, "Popup preview scroll (Grok Build)"):
+			if !strings.Contains(lines[i+1], "code/tmon") {
+				t.Fatalf("Grok cwd line = %q, want code/tmon", lines[i+1])
+			}
+			if strings.Contains(lines[i+1], "paused") {
+				t.Fatalf("working agent should not show pause status: %q", lines[i+1])
+			}
+		case strings.Contains(ln, "Claude Code"):
+			if !strings.Contains(lines[i+1], "site") || !strings.Contains(lines[i+1], "paused") {
+				t.Fatalf("blocked agent cwd line = %q, want site + paused", lines[i+1])
+			}
+		case strings.Contains(ln, "Codex CLI"):
+			if !strings.Contains(lines[i+1], "blog") || strings.Contains(lines[i+1], "paused") {
+				t.Fatalf("idle agent cwd line = %q, want blog only", lines[i+1])
+			}
+		}
+	}
+
+	// The name line is bold and the cwd line is dimmed in the raw view; the
+	// pause status keeps the orange "blocked" color.
+	raw := m.View()
+	if !strings.Contains(raw, styleWhite.Bold(true).Render("Popup preview scroll (Grok Build)")) {
+		t.Fatal("agent name should be bold in the raw view")
+	}
+	if !strings.Contains(raw, styleDim.Render("code/tmon")) {
+		t.Fatal("cwd should be dimmed in the raw view")
+	}
+	if !strings.Contains(raw, styleOrange.Render("paused")) {
+		t.Fatal("blocked agent should show an orange pause status")
+	}
+}
+
 func TestFooterShowsActiveFilter(t *testing.T) {
 	f := &fakeLoader{data: Data{Rows: testRows()}}
 	m := New(f.load, true)
@@ -475,6 +554,92 @@ func TestFooterShowsActiveFilter(t *testing.T) {
 	v := ansi.Strip(m.View())
 	if !strings.Contains(v, "b:blocked") {
 		t.Fatalf("footer missing the filter label in:\n%s", v)
+	}
+}
+
+func TestAgentRowsThreeLinesWithUsage(t *testing.T) {
+	old := capturePane
+	capturePane = func(p string) string { return "x" }
+	t.Cleanup(func() { capturePane = old })
+
+	rows := testRows()
+	rows[0].Usage = agent.Usage{TokensUsed: 52367, WindowTokens: 200000} // Grok
+	f := &fakeLoader{data: Data{Rows: rows}}
+	m := New(f.load, true)
+	m = applyMsg(t, m, initMsg{})
+	m.width, m.height = 80, 24
+
+	v := ansi.Strip(m.View())
+	lines := strings.Split(v, "\n")
+
+	var stats string
+	for i, ln := range lines {
+		list := strings.SplitN(ln, "│", 2)[0]
+		switch {
+		case strings.Contains(list, "Popup preview scroll (Grok Build)"):
+			// The agent with usage spans three list rows: name, cwd, stats.
+			if !strings.Contains(lines[i+1], "code/tmon") {
+				t.Fatalf("Grok cwd line = %q, want code/tmon", lines[i+1])
+			}
+			stats = lines[i+2]
+		case strings.Contains(list, "Claude Code"):
+			// The agent without usage stays at two rows: the line after its
+			// cwd is the next session header, not a stats line.
+			if strings.Contains(lines[i+2], "ctx ") {
+				t.Fatalf("Claude has no usage but rendered a stats line: %q", lines[i+2])
+			}
+		}
+	}
+	if !strings.Contains(stats, "ctx 52.4k/200k (26%)") {
+		t.Fatalf("stats line = %q, want ctx 52.4k/200k (26%%)", stats)
+	}
+
+	// The stats line is dimmed in the raw view like the cwd line.
+	raw := m.View()
+	if !strings.Contains(raw, styleDim.Render("ctx 52.4k/200k (26%)")) {
+		t.Fatal("stats line should be dimmed in the raw view")
+	}
+}
+
+func TestUsageLineFormat(t *testing.T) {
+	cases := []struct {
+		name string
+		u    agent.Usage
+		want string
+	}{
+		{"empty", agent.Usage{}, ""},
+		{"tokens only", agent.Usage{TokensUsed: 13025}, "ctx 13k"},
+		{"tokens and window", agent.Usage{TokensUsed: 52367, WindowTokens: 200000}, "ctx 52.4k/200k (26%)"},
+		{"million window", agent.Usage{TokensUsed: 123456, WindowTokens: 1000000}, "ctx 123k/1M (12%)"},
+		{"quota only", agent.Usage{QuotaPct: 38, QuotaReset: "14:00"}, "62% left · reset 14:00"},
+		{"all", agent.Usage{TokensUsed: 52367, WindowTokens: 200000, QuotaPct: 38, QuotaReset: "14:00"}, "ctx 52.4k/200k (26%) · 62% left · reset 14:00"},
+		{"over quota clamps", agent.Usage{QuotaPct: 120, QuotaReset: "14:00"}, "0% left · reset 14:00"},
+	}
+	for _, tc := range cases {
+		if got := usageLine(tc.u); got != tc.want {
+			t.Errorf("%s: usageLine(%+v) = %q, want %q", tc.name, tc.u, got, tc.want)
+		}
+	}
+}
+
+func TestHumanTokens(t *testing.T) {
+	cases := []struct {
+		n    int64
+		want string
+	}{
+		{0, "0"},
+		{999, "999"},
+		{13025, "13k"},
+		{51660, "51.7k"},
+		{100000, "100k"},
+		{262144, "262k"},
+		{1000000, "1M"},
+		{2500000, "2.5M"},
+	}
+	for _, tc := range cases {
+		if got := humanTokens(tc.n); got != tc.want {
+			t.Errorf("humanTokens(%d) = %q, want %q", tc.n, got, tc.want)
+		}
 	}
 }
 

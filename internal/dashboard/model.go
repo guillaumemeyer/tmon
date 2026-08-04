@@ -30,6 +30,7 @@ type Row struct {
 	WindowIndex   string
 	WindowName    string
 	PaneIndex     string
+	Usage         agent.Usage // token usage stats; zero = unknown (no stats line)
 }
 
 // Data is one dashboard snapshot: the full agent list after a reload.
@@ -86,6 +87,10 @@ type Model struct {
 
 	ascii bool // render status icons as ASCII (B/W/I) instead of emoji
 
+	// version is the tmon release string shown bottom-left in the footer
+	// (e.g. "0.4.2"). Empty hides it (tests and direct construction).
+	version string
+
 	width, height int
 
 	// focusCmd switches the tmux client to the selected agent's pane, then
@@ -110,6 +115,12 @@ func New(loader Loader, ascii bool) Model {
 func (m Model) WithSettingsPath(path string) Model {
 	m.settingsPath = path
 	m.loadSettings()
+	return m
+}
+
+// WithVersion sets the version string shown bottom-left in the footer.
+func (m Model) WithVersion(v string) Model {
+	m.version = v
 	return m
 }
 

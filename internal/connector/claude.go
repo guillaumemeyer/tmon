@@ -20,7 +20,9 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/guillaumemeyer/tmon/internal/agent"
 	"github.com/guillaumemeyer/tmon/internal/config"
+	"github.com/guillaumemeyer/tmon/internal/proc"
 )
 
 // Claude reads Claude Code hook state written by the installed hook script
@@ -52,7 +54,8 @@ func (Claude) Enabled(cfg config.Config) bool {
 }
 
 // Probe returns one record per live Claude session with fresh hook state,
-// enriched with the session title from Claude's own session registry.
+// enriched with the session title from Claude's own session registry and
+// token usage summed from the session transcript.
 func (Claude) Probe(cfg config.Config) ([]Record, error) {
 	recs, err := pairHookSessions(cfg, "claude", "Claude")
 	if err != nil {
@@ -63,6 +66,7 @@ func (Claude) Probe(cfg config.Config) ([]Record, error) {
 		if n := names[recs[i].PID]; n != "" {
 			recs[i].Title = n
 		}
+		recs[i].Usage = claudeUsage(cfg.StateDir, recs[i].PID, recs[i].CWD)
 	}
 	return recs, nil
 }
@@ -96,4 +100,170 @@ func claudeSessionNames() map[int]string {
 		out[pid] = s.Name
 	}
 	return out
+}
+
+// claudeUsage reads the token usage for one Claude session: the newest
+// transcript under the project dir for the process's working directory,
+// summed incrementally (cheap per poll), plus the context window for the
+// model named in the transcript tail. Returns zero usage when no transcript
+// exists yet (brand-new session) or nothing parses.
+func claudeUsage(stateDir string, pid int, cwd string) agent.Usage {
+	dir := claudeProjectDir(cwd, pid)
+	if dir == "" {
+		return agent.Usage{}
+	}
+	path := newestJSONL(dir)
+	if path == "" {
+		return agent.Usage{}
+	}
+	tokens, err := incrementalTokens(stateDir, path, claudeParseUsage)
+	if err != nil || tokens <= 0 {
+		return agent.Usage{}
+	}
+	u := agent.Usage{TokensUsed: tokens}
+	if w := claudeContextWindow(claudeTranscriptModel(path)); w > 0 {
+		u.WindowTokens = w
+	}
+	return u
+}
+
+// claudeAbsCWD resolves the absolute working directory of a Claude process,
+// falling back to the short form from the hook state. A seam for tests.
+var claudeAbsCWD = func(pid int, short string) string {
+	if c, err := proc.ReadCWD(pid); err == nil && c != "" {
+		return c
+	}
+	return short
+}
+
+// claudeProjectDir returns the ~/.claude/projects/<encoded-cwd> directory
+// for a Claude process, or "" when it cannot be located. Claude names the
+// dir by encoding the working directory (leading "/" dropped, "/" → "-");
+// a reverse-decode scan of the projects dir catches paths the simple
+// encoder misses.
+func claudeProjectDir(cwd string, pid int) string {
+	projects := filepath.Join(claudeHome(), "projects")
+	abs := claudeAbsCWD(pid, cwd)
+	if abs == "" {
+		return ""
+	}
+	enc := encodeClaudeProject(abs)
+	if dir := filepath.Join(projects, enc); dirExists(dir) {
+		return dir
+	}
+	return claudeProjectDirByDecode(projects, abs)
+}
+
+// encodeClaudeProject encodes an absolute path the way Claude Code names
+// project dirs: leading "/" dropped, each remaining "/" replaced by "-".
+func encodeClaudeProject(cwd string) string {
+	return "-" + strings.ReplaceAll(strings.TrimPrefix(cwd, "/"), "/", "-")
+}
+
+// claudeProjectDirByDecode scans the projects dir for a directory whose
+// name decodes back to cwd (the "/"→"-" scheme in reverse).
+func claudeProjectDirByDecode(projectsDir, cwd string) string {
+	want := strings.TrimPrefix(cwd, "/")
+	entries, err := os.ReadDir(projectsDir)
+	if err != nil {
+		return ""
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		decoded := strings.ReplaceAll(strings.TrimPrefix(e.Name(), "-"), "-", "/")
+		if decoded == want {
+			return filepath.Join(projectsDir, e.Name())
+		}
+	}
+	return ""
+}
+
+// newestJSONL returns the most recently modified *.jsonl in dir, or "".
+func newestJSONL(dir string) string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return ""
+	}
+	var best string
+	var bestMod int64 = -1
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		fi, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if fi.ModTime().UnixNano() > bestMod {
+			bestMod = fi.ModTime().UnixNano()
+			best = filepath.Join(dir, e.Name())
+		}
+	}
+	return best
+}
+
+// claudeParseUsage returns the tokens counted for one transcript line:
+// input + cache creation + cache read + output from the message's usage
+// block. Lines without usage (user messages, system events, partial lines)
+// yield 0.
+func claudeParseUsage(line []byte) int64 {
+	var ev struct {
+		Usage *struct {
+			InputTokens        int64 `json:"input_tokens"`
+			CacheCreationInput int64 `json:"cache_creation_input_tokens"`
+			CacheReadInput     int64 `json:"cache_read_input_tokens"`
+			OutputTokens       int64 `json:"output_tokens"`
+		} `json:"usage"`
+	}
+	if json.Unmarshal(line, &ev) != nil || ev.Usage == nil {
+		return 0
+	}
+	return ev.Usage.InputTokens + ev.Usage.CacheCreationInput + ev.Usage.CacheReadInput + ev.Usage.OutputTokens
+}
+
+// claudeTranscriptModel returns the last model name mentioned in the
+// transcript tail (assistant events carry it as message.model, e.g.
+// "claude-sonnet-5"), or "".
+func claudeTranscriptModel(path string) string {
+	model := ""
+	for _, l := range tailEvents(path) {
+		var ev struct {
+			Message struct {
+				Model string `json:"model"`
+			} `json:"message"`
+		}
+		if json.Unmarshal([]byte(l), &ev) == nil && ev.Message.Model != "" {
+			model = ev.Message.Model
+		}
+	}
+	return model
+}
+
+// claudeContextWindows maps known Claude model families to their context
+// window size. Best-effort and deliberately small: unknown models yield 0
+// (no percentage), and the dashboard falls back to tokens-only.
+var claudeContextWindows = []struct {
+	prefix string
+	window int64
+}{
+	{"claude-sonnet-5", 1000000},
+	{"claude-opus-4", 200000},
+	{"claude-sonnet-4", 1000000},
+	{"claude-sonnet", 200000},
+	{"claude-haiku", 200000},
+	{"claude-opus", 200000},
+	{"claude-3", 200000},
+}
+
+// claudeContextWindow looks up a model's context window by longest known
+// prefix; 0 when unknown.
+func claudeContextWindow(model string) int64 {
+	for _, e := range claudeContextWindows {
+		if strings.HasPrefix(model, e.prefix) {
+			return e.window
+		}
+	}
+	return 0
 }

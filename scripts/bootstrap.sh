@@ -9,7 +9,9 @@
 # time, never from the #() status path.
 #
 # Environment:
-#   TMON_BIN_DIR        binary dir (default <plugin>/bin)
+#   TMON_BIN_DIR        informational; never trusted for the install/version
+#                       check path (see below — it can leak from another tmux
+#                       server or checkout)
 #   TMON_DOWNLOAD_BASE  release base URL override (for testing)
 
 set -eu
@@ -20,7 +22,17 @@ set -eu
 SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 # shellcheck disable=SC1007
 PLUGIN_DIR=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
-BIN_DIR=${TMON_BIN_DIR:-"$PLUGIN_DIR/bin"}
+# The binary always lives in <plugin>/bin, derived from this script's own
+# location. TMON_BIN_DIR can leak into the environment from another tmux
+# server or checkout (tmon.tmux pins it in tmux's global environment with
+# `set-environment -g`, and a pane started on one machine can carry it over
+# SSH to another). A stale value would silently redirect the version check —
+# and the download — to the wrong directory, so it is only honored when it
+# matches this plugin's own bin dir.
+BIN_DIR="$PLUGIN_DIR/bin"
+if [ -n "${TMON_BIN_DIR:-}" ] && [ "$TMON_BIN_DIR" != "$BIN_DIR" ]; then
+  echo "tmon: ignoring TMON_BIN_DIR=$TMON_BIN_DIR (not this plugin's bin dir); using $BIN_DIR" >&2
+fi
 BINARY="$BIN_DIR/tmon"
 LOCK_DIR="$BIN_DIR/.bootstrap.lock"
 DOWNLOAD_BASE=${TMON_DOWNLOAD_BASE:-"https://github.com/guillaumemeyer/tmon/releases/download"}
@@ -34,10 +46,17 @@ VERSION=$(tr -d '[:space:]' < "$VERSION_FILE")
 
 # up_to_date: the installed binary matches VERSION — or it is a local "dev"
 # build, which we never overwrite (that is the `make build` developer path).
+# The dev skip is reported instead of being silent so a stale dev build on
+# some other machine cannot quietly block updates forever.
 up_to_date() {
   [ -x "$BINARY" ] || return 1
   INSTALLED=$("$BINARY" version 2>/dev/null || true)
-  [ "$INSTALLED" = "$VERSION" ] || [ "$INSTALLED" = "dev" ]
+  [ "$INSTALLED" = "$VERSION" ] && return 0
+  if [ "$INSTALLED" = "dev" ]; then
+    echo "tmon: installed binary is a dev build (make build); release updates are skipped" >&2
+    return 0
+  fi
+  return 1
 }
 
 up_to_date && exit 0

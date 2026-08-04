@@ -29,6 +29,7 @@ type Record struct {
 	CWD    string       // optional; empty keeps detect's value
 	At     time.Time    // when the signal was observed (freshness check)
 	Title  string       // optional session/conversation title, e.g. a Grok generated_title
+	Usage  agent.Usage  // token usage stats for the dashboard; zero = unknown
 }
 
 // Connector is one agent's authoritative state source.

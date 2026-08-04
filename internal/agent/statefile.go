@@ -7,9 +7,10 @@ import (
 )
 
 // StateFileVersion is the schema version of state.json. Version 2 adds the
-// per-agent `detail` and `lastTs` fields; files written by version 1 load
-// unchanged (missing fields zero-value).
-const StateFileVersion = 2
+// per-agent `detail` and `lastTs` fields; version 3 adds the per-agent
+// `usage` stats. Files written by older versions load unchanged (missing
+// fields zero-value).
+const StateFileVersion = 3
 
 // StateFile is the on-disk snapshot shared between `tmon status` (writer)
 // and `tmon dashboard` (reader).

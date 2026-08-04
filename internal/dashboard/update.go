@@ -128,9 +128,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		m.move(-1)
 	case "down", "j":
 		m.move(1)
-	case "left":
+	case "left", "h":
 		m.resizePreview(previewResizeStep)
-	case "right":
+	case "right", "l":
 		m.resizePreview(-previewResizeStep)
 	case "ctrl+u":
 		m.scrollPreview(m.previewScrollStep())
@@ -156,7 +156,8 @@ func (m Model) handleMouse(msg tea.MouseMsg) (Model, tea.Cmd) {
 	}
 	// Rows 0 (header) and 1 (divider) are chrome; body rows start at 2.
 	bodyRow := msg.Y - 2
-	if bodyRow < 0 || bodyRow >= len(m.items) {
+	di := m.itemAtRow(bodyRow, m.height-3)
+	if di < 0 {
 		return m, nil
 	}
 	// Only clicks on the list column act; the preview panel is a no-op.
@@ -166,16 +167,45 @@ func (m Model) handleMouse(msg tea.MouseMsg) (Model, tea.Cmd) {
 			return m, nil
 		}
 	}
-	if m.items[bodyRow].kind != itemAgent {
+	if m.items[di].kind != itemAgent {
 		return m, nil // session/window headers are not clickable
 	}
 	for i, sel := range m.selMap {
-		if sel == bodyRow {
+		if sel == di {
 			m.selected = i
 			return m.focusSelected()
 		}
 	}
 	return m, nil
+}
+
+// itemAtRow returns the index into m.items of the item rendered at the
+// given body row (0-based, below the header/divider), or -1 when the row is
+// blank padding or past the last fully rendered item. Agent items occupy
+// two rows (name + cwd/pause line) — three when the agent has usage stats —
+// while session and window headers take one.
+func (m Model) itemAtRow(row, bodyLines int) int {
+	if row < 0 || bodyLines < 1 || len(m.filtered) == 0 {
+		return -1
+	}
+	line := 0
+	for di, it := range m.items {
+		n := 1
+		if it.kind == itemAgent {
+			n = 2
+			if !m.rows[it.rowIdx].Usage.Empty() {
+				n = 3
+			}
+		}
+		if row < line+n {
+			if line+n <= bodyLines {
+				return di // the item was rendered in full
+			}
+			return -1 // past the last rendered item (list overflow)
+		}
+		line += n
+	}
+	return -1
 }
 
 // resizePreview grows or shrinks the preview panel by deltaPct percentage

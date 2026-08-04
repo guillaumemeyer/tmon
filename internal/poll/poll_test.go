@@ -95,6 +95,44 @@ func TestConnectorOnlyInjection(t *testing.T) {
 	}
 }
 
+func TestUsageRidesConnectorRecord(t *testing.T) {
+	// A record's usage stats land on the matching snapshot agent, for both
+	// a detected baseline PID and a connector-only PID.
+	stubDetect(t, []detect.Agent{{PID: 42, Label: "Grok", CWD: "code/tmon"}})
+	cfg := testConfig(t)
+	records := []connector.Record{
+		{PID: 42, Label: "Grok", Status: agent.StatusWorking, Detail: "tool:Bash", At: time.Now(), Usage: agent.Usage{TokensUsed: 13025, WindowTokens: 262144}},
+		{PID: 7777, Label: "Hermes", Status: agent.StatusIdle, Detail: "gateway", At: time.Now(), Usage: agent.Usage{TokensUsed: 5000}},
+	}
+	res, err := run(cfg, nil, false, records)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byPID := map[int]agent.AgentState{}
+	for _, a := range res.Agents {
+		byPID[a.PID] = a
+	}
+	if u := byPID[42].Usage; u == nil || u.TokensUsed != 13025 || u.WindowTokens != 262144 {
+		t.Errorf("Grok usage = %+v, want tokens 13025 window 262144", u)
+	}
+	if u := byPID[7777].Usage; u == nil || u.TokensUsed != 5000 {
+		t.Errorf("Hermes usage = %+v, want tokens 5000", u)
+	}
+
+	// A record with empty usage must not attach a zero-value pointer.
+	res2, err := run(cfg, nil, false, []connector.Record{
+		{PID: 42, Label: "Grok", Status: agent.StatusIdle, At: time.Now()},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range res2.Agents {
+		if a.Usage != nil {
+			t.Errorf("PID %d: expected nil usage, got %+v", a.PID, a.Usage)
+		}
+	}
+}
+
 func TestMergeBaselineAndConnectorOnly(t *testing.T) {
 	stubDetect(t, []detect.Agent{{PID: 42, Label: "Grok", CWD: "code/tmon"}})
 	cfg := testConfig(t)

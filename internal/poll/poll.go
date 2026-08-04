@@ -98,6 +98,21 @@ func run(cfg config.Config, prevStatus map[int]agent.Status, notify bool, record
 	}
 
 	snapshot := tracker.Snapshot()
+	// Usage stats ride along with connector records; the tracker only
+	// evaluates statuses, so copy each record's usage onto the snapshot by
+	// PID (connector-only agents included).
+	for _, rec := range records {
+		if rec.Usage.Empty() {
+			continue
+		}
+		for i := range snapshot {
+			if snapshot[i].PID == rec.PID {
+				u := rec.Usage
+				snapshot[i].Usage = &u
+				break
+			}
+		}
+	}
 	tracker.EndPoll()
 
 	if notify {

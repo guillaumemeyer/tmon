@@ -358,7 +358,7 @@ func TestPreviewResizeKeys(t *testing.T) {
 		t.Fatalf("default previewPct = %d, want %d", m.previewPct, defaultPreviewPct)
 	}
 
-	// Left grows the preview, right shrinks it.
+	// Left (and h) grow the preview; right (and l) shrink it.
 	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyLeft})
 	if m.previewPct != defaultPreviewPct+previewResizeStep {
 		t.Fatalf("after left: previewPct = %d, want %d", m.previewPct, defaultPreviewPct+previewResizeStep)
@@ -368,6 +368,16 @@ func TestPreviewResizeKeys(t *testing.T) {
 	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyRight})
 	if m.previewPct != defaultPreviewPct-previewResizeStep {
 		t.Fatalf("after right×2: previewPct = %d, want %d", m.previewPct, defaultPreviewPct-previewResizeStep)
+	}
+
+	// h and l are vim aliases for the same resize directions.
+	m = applyMsg(t, m, key('h'))
+	if m.previewPct != defaultPreviewPct {
+		t.Fatalf("after h: previewPct = %d, want %d", m.previewPct, defaultPreviewPct)
+	}
+	m = applyMsg(t, m, key('l'))
+	if m.previewPct != defaultPreviewPct-previewResizeStep {
+		t.Fatalf("after l: previewPct = %d, want %d", m.previewPct, defaultPreviewPct-previewResizeStep)
 	}
 
 	// Clamp at max (reached by pressing left repeatedly).
@@ -442,21 +452,57 @@ func TestMouseClickFocusesAgent(t *testing.T) {
 		return nil
 	}
 
-	// Body rows: 0=session, 1=window, 2=Grok, 3=Claude, 4=session, 5=window,
-	// 6=Codex. Clicking an agent row selects it and focuses its pane.
+	// Body rows: 0=session, 1=window, 2-3=Grok (name, cwd), 4-5=Claude,
+	// 6=session, 7=window, 8-9=Codex. Clicking an agent row (either of its
+	// two lines) selects it and focuses its pane.
 	m = applyMsg(t, m, click(2, 4))
 	if focused != "main:0.0" {
 		t.Fatalf("click Grok: focused %q, want main:0.0", focused)
 	}
 
-	m = applyMsg(t, m, click(2, 5))
+	m = applyMsg(t, m, click(2, 6))
 	if focused != "main:0.1" {
 		t.Fatalf("click Claude: focused %q, want main:0.1", focused)
 	}
 
-	m = applyMsg(t, m, click(2, 8))
+	m = applyMsg(t, m, click(2, 10))
 	if focused != "side:3.0" {
 		t.Fatalf("click Codex: focused %q, want side:3.0", focused)
+	}
+}
+
+func TestMouseClickOnStatsLine(t *testing.T) {
+	old := capturePane
+	capturePane = func(p string) string { return "x" }
+	t.Cleanup(func() { capturePane = old })
+
+	rows := testRows()
+	rows[0].Usage = agent.Usage{TokensUsed: 52367, WindowTokens: 200000} // Grok
+	f := &fakeLoader{data: Data{Rows: rows}}
+	m := New(f.load, true)
+	m = applyMsg(t, m, initMsg{})
+	m.width, m.height = 100, 24
+
+	var focused string
+	m.focusCmd = func(r Row) tea.Cmd {
+		focused = r.Pane
+		return nil
+	}
+
+	// Body rows: 0=session, 1=window, 2-4=Grok (name, cwd, stats), 5-6=Claude,
+	// 7=session, 8=window, 9-10=Codex. A click on the stats line (body row 4)
+	// selects Grok; Claude and Codex keep their two-row layout.
+	m = applyMsg(t, m, click(2, 6))
+	if focused != "main:0.0" {
+		t.Fatalf("click stats line: focused %q, want main:0.0", focused)
+	}
+	m = applyMsg(t, m, click(2, 8))
+	if focused != "main:0.1" {
+		t.Fatalf("click Claude after stats line: focused %q, want main:0.1", focused)
+	}
+	m = applyMsg(t, m, click(2, 11))
+	if focused != "side:3.0" {
+		t.Fatalf("click Codex after stats line: focused %q, want side:3.0", focused)
 	}
 }
 

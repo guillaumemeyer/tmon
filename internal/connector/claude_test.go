@@ -10,11 +10,12 @@ import (
 	"github.com/guillaumemeyer/tmon/internal/config"
 )
 
-// claudeCfg returns a config whose HookStateDir points at a temp dir.
+// claudeCfg returns a config whose state and hook dirs point at temp dirs.
 func claudeCfg(t *testing.T) config.Config {
 	t.Helper()
 	cfg := config.Defaults()
-	cfg.HookStateDir = filepath.Join(t.TempDir(), "state", "hooks")
+	cfg.StateDir = t.TempDir()
+	cfg.HookStateDir = filepath.Join(cfg.StateDir, "hooks")
 	return cfg
 }
 
@@ -213,5 +214,130 @@ func TestClaudeSessionNamesSkipsUnnamedAndMalformed(t *testing.T) {
 	}
 	if _, ok := names[9]; ok {
 		t.Error("non-numeric filename should be skipped")
+	}
+}
+
+// ─── usage enrichment ────────────────────────────────────────────────────────
+
+// stubClaudeAbsCWD makes claudeUsage resolve the fixture's absolute cwd
+// (no real process is running for the fake PID).
+func stubClaudeAbsCWD(t *testing.T, abs string) {
+	t.Helper()
+	old := claudeAbsCWD
+	claudeAbsCWD = func(pid int, short string) string { return abs }
+	t.Cleanup(func() { claudeAbsCWD = old })
+}
+
+func TestClaudeProbeUsageFromTranscript(t *testing.T) {
+	cfg := claudeCfg(t)
+	writeClaudeHook(t, cfg, "s1", "working", "tool:Bash", "/home/guillaume/code/tmon")
+	stubClaudeAgents(t, map[string]int{"code/tmon": 4242})
+	home := stubClaudeHome(t)
+	stubClaudeAbsCWD(t, "/home/guillaume/code/tmon")
+
+	dir := filepath.Join(home, "projects", "-home-guillaume-code-tmon")
+	writeFile(t, filepath.Join(dir, "a1b2c3.jsonl"),
+		`{"type":"mode","mode":"normal"}
+{"parentUuid":"u1","message":{"model":"claude-sonnet-5","role":"assistant"},"usage":{"input_tokens":2,"cache_creation_input_tokens":12147,"cache_read_input_tokens":28964,"output_tokens":732}}
+{"type":"user","content":"hi"}
+{"parentUuid":"u2","message":{"model":"claude-sonnet-5","role":"assistant"},"usage":{"input_tokens":3,"cache_creation_input_tokens":0,"cache_read_input_tokens":100,"output_tokens":20}}
+`)
+
+	recs, err := (Claude{}).Probe(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("records = %+v, want 1", recs)
+	}
+	u := recs[0].Usage
+	want := int64(2 + 12147 + 28964 + 732 + 3 + 0 + 100 + 20)
+	if u.TokensUsed != want {
+		t.Errorf("TokensUsed = %d, want %d", u.TokensUsed, want)
+	}
+	if u.WindowTokens != 1000000 {
+		t.Errorf("WindowTokens = %d, want 1000000 (claude-sonnet-5)", u.WindowTokens)
+	}
+}
+
+func TestClaudeProbeUsageSkipsNonUsageLines(t *testing.T) {
+	// User messages, mode events and a trailing partial line must not
+	// inflate the count.
+	cfg := claudeCfg(t)
+	writeClaudeHook(t, cfg, "s1", "working", "tool:Bash", "/home/guillaume/code/tmon")
+	stubClaudeAgents(t, map[string]int{"code/tmon": 4242})
+	home := stubClaudeHome(t)
+	stubClaudeAbsCWD(t, "/home/guillaume/code/tmon")
+
+	dir := filepath.Join(home, "projects", "-home-guillaume-code-tmon")
+	writeFile(t, filepath.Join(dir, "s1.jsonl"),
+		`{"type":"mode","mode":"normal"}
+{"type":"user","content":"hi"}
+{"message":{"model":"claude-haiku"},"usage":{"input_tokens":10,"output_tokens":5}}
+`)
+	recs, err := (Claude{}).Probe(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := recs[0].Usage
+	if u.TokensUsed != 15 {
+		t.Errorf("TokensUsed = %d, want 15", u.TokensUsed)
+	}
+	if u.WindowTokens != 200000 {
+		t.Errorf("WindowTokens = %d, want 200000 (claude-haiku)", u.WindowTokens)
+	}
+}
+
+func TestClaudeUsageEmptyWithoutTranscript(t *testing.T) {
+	cfg := claudeCfg(t)
+	writeClaudeHook(t, cfg, "s1", "working", "tool:Bash", "/home/guillaume/code/tmon")
+	stubClaudeAgents(t, map[string]int{"code/tmon": 4242})
+	stubClaudeHome(t)
+	stubClaudeAbsCWD(t, "/home/guillaume/code/tmon")
+
+	recs, err := (Claude{}).Probe(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("records = %+v, want 1", recs)
+	}
+	if !recs[0].Usage.Empty() {
+		t.Errorf("Usage = %+v, want empty (no transcript)", recs[0].Usage)
+	}
+}
+
+func TestClaudeUnknownModelHasTokensOnly(t *testing.T) {
+	cfg := claudeCfg(t)
+	writeClaudeHook(t, cfg, "s1", "working", "tool:Bash", "/home/guillaume/code/tmon")
+	stubClaudeAgents(t, map[string]int{"code/tmon": 4242})
+	home := stubClaudeHome(t)
+	stubClaudeAbsCWD(t, "/home/guillaume/code/tmon")
+
+	dir := filepath.Join(home, "projects", "-home-guillaume-code-tmon")
+	writeFile(t, filepath.Join(dir, "s1.jsonl"),
+		`{"message":{"model":"claude-mystery-9"},"usage":{"input_tokens":7,"output_tokens":1}}
+`)
+	recs, err := (Claude{}).Probe(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := recs[0].Usage
+	if u.TokensUsed != 8 || u.WindowTokens != 0 {
+		t.Errorf("Usage = %+v, want tokens 8 and unknown window", u)
+	}
+}
+
+func TestClaudeProjectDirByDecode(t *testing.T) {
+	home := stubClaudeHome(t)
+	projects := filepath.Join(home, "projects")
+	os.MkdirAll(filepath.Join(projects, "-home-other-dir"), 0o755)
+
+	dir := claudeProjectDirByDecode(projects, "/home/other/dir")
+	if dir != filepath.Join(projects, "-home-other-dir") {
+		t.Errorf("decode scan = %q, want %q", dir, filepath.Join(projects, "-home-other-dir"))
+	}
+	if got := claudeProjectDirByDecode(projects, "/no/such/path"); got != "" {
+		t.Errorf("decode scan for missing path = %q, want empty", got)
 	}
 }

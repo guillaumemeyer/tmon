@@ -33,6 +33,33 @@ type AgentState struct {
 	Detail     string `json:"detail,omitempty"` // connector detail, e.g. "tool:Bash"
 	Title      string `json:"title,omitempty"`  // session/conversation title from a connector
 	LastTs     int64  `json:"lastTs,omitempty"` // unix seconds of last status change
+	Usage      *Usage `json:"usage,omitempty"`  // token usage stats for the dashboard; nil = unknown
+}
+
+// Usage is the per-agent token usage stats shown by the dashboard's stats
+// line. Connectors populate what their agent exposes; zero/empty fields mean
+// "unknown" and are rendered as n/a. Quota fields (QuotaPct, QuotaReset)
+// cover account/plan limits (e.g. a 5-hour window); no current agent exposes
+// those locally, so they stay empty until a source exists.
+type Usage struct {
+	TokensUsed   int64  `json:"tokensUsed,omitempty"`   // context tokens used in this conversation
+	WindowTokens int64  `json:"windowTokens,omitempty"` // context window size; 0 = unknown
+	QuotaPct     int    `json:"quotaPct,omitempty"`     // account quota used %; 0 = unknown
+	QuotaReset   string `json:"quotaReset,omitempty"`   // next quota reset, e.g. "14:00"; "" = unknown
+}
+
+// Empty reports whether no usage stat is known at all.
+func (u Usage) Empty() bool {
+	return u.TokensUsed == 0 && u.WindowTokens == 0 && u.QuotaPct == 0 && u.QuotaReset == ""
+}
+
+// ContextPct returns the context-window usage percent (0 when the window
+// size is unknown).
+func (u Usage) ContextPct() int {
+	if u.WindowTokens <= 0 {
+		return 0
+	}
+	return int(u.TokensUsed * 100 / u.WindowTokens)
 }
 
 // Options configures the tracker.

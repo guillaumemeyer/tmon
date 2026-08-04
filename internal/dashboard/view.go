@@ -3,6 +3,7 @@ package dashboard
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -82,6 +83,8 @@ func (m Model) panelWidths(w int) (listW, panelW int) {
 
 // listLines renders the filtered list into at most bodyLines lines, each
 // exactly w cells wide so the preview separator stays vertically aligned.
+// An agent occupies two rows (name + cwd/pause line) — three when token
+// usage is known — and headers take one.
 func (m Model) listLines(w, bodyLines int) []string {
 	lines := make([]string, 0, bodyLines)
 	if len(m.filtered) == 0 {
@@ -92,10 +95,11 @@ func (m Model) listLines(w, bodyLines int) []string {
 		lines = append(lines, fit(msg, w))
 	} else {
 		for di, it := range m.items {
-			if di >= bodyLines {
+			rendered := m.renderItem(di, it, w)
+			if len(lines)+len(rendered) > bodyLines {
 				break // no scrolling, like the bash popup
 			}
-			lines = append(lines, m.renderItem(di, it, w))
+			lines = append(lines, rendered...)
 		}
 	}
 	for len(lines) < bodyLines {
@@ -205,42 +209,112 @@ func (m Model) headerLine(w int) string {
 	return title + strings.Repeat(" ", pad) + hint
 }
 
-// renderItem renders one grouped line, always exactly w cells wide. The
+// renderItem renders one display item into one or more lines, each exactly
+// w cells wide. Session and window headers take one line; an agent takes
+// two — a bold "Title (Name)" line and a dimmed cwd + pause-status line —
+// plus a third dim stats line when the connector reported token usage. The
 // selected agent line gets a green bold ">" marker aligned with the window
 // index column instead of a full-line background highlight.
-func (m Model) renderItem(di int, it item, w int) string {
+func (m Model) renderItem(di int, it item, w int) []string {
 	switch it.kind {
 	case itemSession:
-		return fit(styleCyan.Bold(true).Render("  "+it.sessionName), w)
+		return []string{fit(styleCyan.Bold(true).Render("  "+it.sessionName), w)}
 	case itemWindow:
 		name := it.windowIdx
 		if it.windowName != "" && it.windowName != "?" {
 			name = it.windowIdx + ":" + it.windowName
 		}
-		return fit(styleDim.Render("    "+name), w)
+		return []string{fit(styleDim.Render("    "+name), w)}
 	case itemAgent:
 		r := m.rows[it.rowIdx]
 		selected := len(m.selMap) > 0 && m.selMap[m.selected] == di
-		// Both branches are 6 cells wide before "[": the marker keeps the
-		// pane bracket aligned with unselected rows.
+		// Both branches are 6 cells wide before the name: the marker keeps
+		// the name aligned with unselected rows.
 		marker := "      "
 		if selected {
 			marker = "    " + styleGreen.Bold(true).Render(">") + " "
 		}
-		line := fmt.Sprintf("%s[%s] %s %s  %s",
-			marker, r.PaneIndex, animatedStatusChar(r.Status, m.ascii), agentDisplayName(r), displayCWD(r.CWD))
-		if r.BlockedReason != "" {
-			line += "  " + styleOrange.Render(r.BlockedReason)
+		// Line 1: the session title (or plain name) in bold.
+		line1 := marker + styleWhite.Bold(true).Render(agentDisplayName(r))
+		// Line 2: the working directory, plus the pause status when the
+		// agent is blocked — the prompt it is waiting on, or "paused".
+		line2 := "      " + styleDim.Render(displayCWD(r.CWD))
+		if r.Status == agent.StatusBlocked {
+			pause := r.BlockedReason
+			if pause == "" {
+				pause = "paused"
+			}
+			line2 += "  " + styleOrange.Render(pause)
 		}
-		if r.Detail != "" {
-			line += "  " + styleDim.Render(r.Detail)
+		lines := []string{fit(line1, w), fit(line2, w)}
+		// Line 3 (when the connector reported usage): the token stats line.
+		// It is indented to the marker column like line 2 and stays dim.
+		if l := usageLine(r.Usage); l != "" {
+			lines = append(lines, fit("      "+styleDim.Render(l), w))
 		}
-		if age := ageString(r.LastTs); age != "" {
-			line += "  " + styleDim.Render(age)
-		}
-		return fit(line, w)
+		return lines
 	}
-	return fit("", w)
+	return []string{fit("", w)}
+}
+
+// usageLine renders the per-agent stats line: context tokens used over the
+// model's context window with the used percentage, then the account-quota
+// remaining percentage and next reset time when known. Returns "" when no
+// stat is available, so the agent stays at two lines.
+func usageLine(u agent.Usage) string {
+	if u.Empty() {
+		return ""
+	}
+	parts := make([]string, 0, 2)
+	if u.TokensUsed > 0 || u.WindowTokens > 0 {
+		ctx := "ctx " + humanTokens(u.TokensUsed)
+		if u.WindowTokens > 0 {
+			ctx += "/" + humanTokens(u.WindowTokens) + " (" + strconv.Itoa(u.ContextPct()) + "%)"
+		}
+		parts = append(parts, ctx)
+	}
+	if u.QuotaPct > 0 {
+		left := 100 - u.QuotaPct
+		if left < 0 {
+			left = 0
+		}
+		q := strconv.Itoa(left) + "% left"
+		if u.QuotaReset != "" {
+			q += " · reset " + u.QuotaReset
+		}
+		parts = append(parts, q)
+	}
+	return strings.Join(parts, " · ")
+}
+
+// humanTokens formats a token count compactly: "2.5M", "262k", "51.7k",
+// "13k", or the plain number below 1000. Counts of at least 100k use whole
+// thousands (context windows are 200k/1M), smaller counts keep one decimal.
+func humanTokens(n int64) string {
+	switch {
+	case n >= 1_000_000:
+		return trimZero(fmt.Sprintf("%.1fM", float64(n)/1_000_000))
+	case n >= 100_000:
+		return strconv.FormatInt(n/1000, 10) + "k"
+	case n >= 1_000:
+		return trimZero(fmt.Sprintf("%.1fk", float64(n)/1_000))
+	default:
+		return strconv.FormatInt(n, 10)
+	}
+}
+
+// trimZero drops a redundant ".0" from a formatted number ("13.0k" → "13k").
+func trimZero(s string) string {
+	if i := strings.IndexByte(s, '.'); i >= 0 {
+		j := i + 1
+		for j < len(s) && s[j] >= '0' && s[j] <= '9' {
+			j++
+		}
+		if strings.TrimRight(s[i+1:j], "0") == "" {
+			return s[:i] + s[j:]
+		}
+	}
+	return s
 }
 
 // displayCWD renders an agent's working directory for the popup: absolute
@@ -269,20 +343,24 @@ func displayCWD(cwd string) string {
 // agent with a real pane is focused, a preview scroll tip is shown.
 func (m Model) footerLine(w int) string {
 	right := m.footerRight()
+	// Version pinned bottom-left, one cell in from the border.
+	left := ""
+	if m.version != "" {
+		left = " " + styleDim.Render(m.version) + "  "
+	}
 	switch {
 	case m.searching:
-		left := styleWhite.Render(" ▌ "+m.query) + styleDim.Render("▌")
+		left += styleWhite.Render("▌ "+m.query) + styleDim.Render("▌")
 		return m.twoSided(left, right, w)
 	case m.query != "":
-		left := styleDim.Render(" ▌ " + m.query)
+		left += styleDim.Render("▌ " + m.query)
 		if m.filterStatus != "" {
 			left += styleDim.Render(" · " + m.filterLabel())
 		}
 		return m.twoSided(left, right, w)
 	default:
-		left := ""
 		if m.filterStatus != "" {
-			left = styleDim.Render(" ▌ " + m.filterLabel() + " (press again to clear)")
+			left += styleDim.Render("▌ " + m.filterLabel() + " (press again to clear)")
 		}
 		return m.twoSided(left, right, w)
 	}
@@ -296,9 +374,9 @@ func (m Model) footerRight() string {
 		parts = append(parts, fmt.Sprintf("%d/%d", len(m.filtered), len(m.rows)))
 	}
 	parts = append(parts, "[↑/↓ j/k] navigate")
-	parts = append(parts, "[←/→] resize")
+	parts = append(parts, "[←/→ h/l] resize preview")
 	if m.previewNavTipVisible() {
-		parts = append(parts, "[C-u/C-d] scroll")
+		parts = append(parts, "[C-u/C-d] scroll preview")
 	}
 	parts = append(parts, "[1-9] jump ")
 	return styleDim.Render(strings.Join(parts, "  "))
@@ -333,30 +411,6 @@ func (m Model) twoSided(left, right string, w int) string {
 		return ansi.Truncate(left, w, "")
 	}
 	return left + strings.Repeat(" ", pad) + right
-}
-
-// animatedStatusChar returns the per-agent status character. Icons are
-// static — there is no pulse animation.
-func animatedStatusChar(status agent.Status, ascii bool) string {
-	switch status {
-	case agent.StatusBlocked:
-		if ascii {
-			return styleOrange.Render("B")
-		}
-		return styleOrange.Render("🛑")
-	case agent.StatusWorking:
-		if ascii {
-			return styleGreen.Render("W")
-		}
-		return styleGreen.Render("⚡️")
-	case agent.StatusIdle:
-		if ascii {
-			return styleBlue.Render("I")
-		}
-		return styleBlue.Render("💤")
-	default:
-		return styleDim.Render("·")
-	}
 }
 
 // ageString renders how long ago the status last changed: "now", "1m",
