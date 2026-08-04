@@ -68,6 +68,25 @@ func ReadCWD(pid int) (string, error) {
 	return os.Readlink(pidPath(pid, "cwd"))
 }
 
+// ReadEnv returns the value of key from /proc/<pid>/environ, or "" when the
+// variable is unset or the environ file is unreadable.
+func ReadEnv(pid int, key string) string {
+	if key == "" {
+		return ""
+	}
+	b, err := os.ReadFile(pidPath(pid, "environ"))
+	if err != nil {
+		return ""
+	}
+	prefix := key + "="
+	for _, entry := range strings.Split(string(b), "\x00") {
+		if strings.HasPrefix(entry, prefix) {
+			return entry[len(prefix):]
+		}
+	}
+	return ""
+}
+
 // statFields parses /proc/<pid>/stat, returning the fields that follow the
 // "pid (comm) " prefix.
 func statFields(pid int) ([]string, error) {

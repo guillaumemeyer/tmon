@@ -14,6 +14,7 @@ import (
 	"github.com/guillaumemeyer/tmon/internal/detect"
 	"github.com/guillaumemeyer/tmon/internal/pane"
 	"github.com/guillaumemeyer/tmon/internal/proc"
+	"github.com/guillaumemeyer/tmon/internal/theme"
 	"github.com/guillaumemeyer/tmon/internal/tmux"
 )
 
@@ -98,25 +99,41 @@ func run(cfg config.Config, prevStatus map[int]agent.Status, notify bool, record
 	}
 
 	snapshot := tracker.Snapshot()
-	// Usage stats ride along with connector records; the tracker only
-	// evaluates statuses, so copy each record's usage onto the snapshot by
-	// PID (connector-only agents included).
+	// Usage and profile ride along with connector records; the tracker only
+	// evaluates statuses, so copy each record's enrichment onto the snapshot
+	// by PID (connector-only agents included).
 	for _, rec := range records {
-		if rec.Usage.Empty() {
-			continue
-		}
 		for i := range snapshot {
-			if snapshot[i].PID == rec.PID {
+			if snapshot[i].PID != rec.PID {
+				continue
+			}
+			if !rec.Usage.Empty() {
 				u := rec.Usage
 				snapshot[i].Usage = &u
-				break
 			}
+			if rec.Profile != "" {
+				snapshot[i].Profile = rec.Profile
+			}
+			break
 		}
 	}
 	tracker.EndPoll()
 
 	if notify {
 		notifyTransitions(prevStatus, snapshot, cfg.BlockedBell)
+	}
+
+	// Opt-in pane glow: when a pane's agent status changed, tint the pane's
+	// content area so a blocked agent is visible across the room. Only
+	// changed panes generate tmux round-trips; steady state is silent.
+	if cfg.PaneTint {
+		pal := theme.Resolve(theme.Options{
+			Name:           cfg.Theme,
+			ColorOverrides: cfg.ColorOverrides,
+			IconOverrides:  cfg.IconOverrides,
+			ASCII:          cfg.ASCII,
+		}).Palette
+		applyTints(pal, sf.Agents, snapshot)
 	}
 
 	res := Result{Statuses: statuses, Agents: snapshot}
@@ -210,4 +227,65 @@ var (
 	paneBlocked  = func(paneTarget string) bool {
 		return paneTarget != "?" && tmux.Available() && blocked.DetectPane(paneTarget)
 	}
+	tintPane = func(pane, style string) {
+		if pane == "" || pane == "?" || !tmux.Available() {
+			return
+		}
+		tmux.Run("select-pane", "-t", pane, "-P", style) // errors ignored: pane may have vanished
+	}
 )
+
+// applyTints diffs the previous poll's agents (loaded from state.json)
+// against the fresh snapshot and recolors the panes whose status changed:
+// blocked and working panes get a darkened palette tint, idle panes are
+// cleared, and panes whose agent exited are restored to default colors.
+// Unchanged panes are skipped entirely — tinting only pays for transitions.
+// New agents are left alone when they first land in idle (their pane may
+// never have been tinted); a connector reporting working/blocked on first
+// sight still tints immediately.
+func applyTints(pal theme.Palette, prev, snap []agent.AgentState) {
+	prevByPane := make(map[string]agent.Status, len(prev))
+	for _, a := range prev {
+		if a.Pane != "" && a.Pane != "?" {
+			prevByPane[a.Pane] = a.Status
+		}
+	}
+	snapByPane := make(map[string]agent.Status, len(snap))
+	for _, a := range snap {
+		if a.Pane != "" && a.Pane != "?" {
+			snapByPane[a.Pane] = a.Status
+		}
+	}
+
+	// Agents that exited: put their panes back to normal.
+	for pane := range prevByPane {
+		if _, ok := snapByPane[pane]; !ok {
+			tintPane(pane, tintStyle(pal, agent.StatusIdle))
+		}
+	}
+
+	for pane, st := range snapByPane {
+		old, seen := prevByPane[pane]
+		if seen {
+			if old == st {
+				continue // unchanged: no tmux traffic
+			}
+		} else if st == agent.StatusIdle {
+			continue // brand-new idle pane: never tinted, leave it alone
+		}
+		tintPane(pane, tintStyle(pal, st))
+	}
+}
+
+// tintStyle is the select-pane -P style for a status: a darkened palette
+// background for blocked/working, default colors for idle/exited.
+func tintStyle(pal theme.Palette, st agent.Status) string {
+	switch st {
+	case agent.StatusBlocked:
+		return "bg=" + theme.Tint(pal.Blocked) + ",fg=default"
+	case agent.StatusWorking:
+		return "bg=" + theme.Tint(pal.Working) + ",fg=default"
+	default:
+		return "bg=default,fg=default"
+	}
+}

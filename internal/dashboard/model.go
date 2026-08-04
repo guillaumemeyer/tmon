@@ -19,6 +19,7 @@ type Row struct {
 	PID           int
 	Label         string
 	Title         string // session/conversation title, e.g. Grok's generated_title; "" if unknown
+	Profile       string // agent profile (Hermes multi-home); "" if unknown
 	Cmdline       string
 	CWD           string
 	Status        agent.Status

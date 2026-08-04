@@ -22,14 +22,15 @@ import (
 
 // Record is one authoritative observation of an agent's state.
 type Record struct {
-	PID    int          // process PID; liveness is checked before use
-	Label  string       // must match a detect signature label
-	Status agent.Status // blocked | working | idle
-	Detail string       // "tool:Bash", "phase:reasoning", "permission:Write"
-	CWD    string       // optional; empty keeps detect's value
-	At     time.Time    // when the signal was observed (freshness check)
-	Title  string       // optional session/conversation title, e.g. a Grok generated_title
-	Usage  agent.Usage  // token usage stats for the dashboard; zero = unknown
+	PID     int          // process PID; liveness is checked before use
+	Label   string       // must match a detect signature label
+	Status  agent.Status // blocked | working | idle
+	Detail  string       // "tool:Bash", "phase:reasoning", "permission:Write"
+	CWD     string       // optional; empty keeps detect's value
+	At      time.Time    // when the signal was observed (freshness check)
+	Title   string       // optional session/conversation title, e.g. a Grok generated_title
+	Profile string       // optional agent profile (Hermes multi-home), shown as "Hermes - <profile>"
+	Usage   agent.Usage  // token usage stats for the dashboard; zero = unknown
 }
 
 // Connector is one agent's authoritative state source.

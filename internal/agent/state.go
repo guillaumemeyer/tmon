@@ -30,10 +30,11 @@ type AgentState struct {
 	IdleStreak int    `json:"idleStreak"`
 	Pane       string `json:"pane,omitempty"`
 	CWD        string `json:"cwd,omitempty"`
-	Detail     string `json:"detail,omitempty"` // connector detail, e.g. "tool:Bash"
-	Title      string `json:"title,omitempty"`  // session/conversation title from a connector
-	LastTs     int64  `json:"lastTs,omitempty"` // unix seconds of last status change
-	Usage      *Usage `json:"usage,omitempty"`  // token usage stats for the dashboard; nil = unknown
+	Detail     string `json:"detail,omitempty"`  // connector detail, e.g. "tool:Bash"
+	Title      string `json:"title,omitempty"`   // session/conversation title from a connector
+	Profile    string `json:"profile,omitempty"` // agent profile (Hermes multi-home); "" = unknown
+	LastTs     int64  `json:"lastTs,omitempty"`  // unix seconds of last status change
+	Usage      *Usage `json:"usage,omitempty"`   // token usage stats for the dashboard; nil = unknown
 }
 
 // Usage is the per-agent token usage stats shown by the dashboard's stats

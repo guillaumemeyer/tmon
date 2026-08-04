@@ -1,16 +1,18 @@
-# tmon — Your AI agents, now with a leash
+# tmon — zero-config agents fleet manager for tmux
+
+**tmon is a zero-config agents fleet manager for tmux** — not another coding agent.
 
 You've got Grok Build crunching through a refactor in one pane, Claude Code
 negotiating a design doc in another, and Hermes Agent off doing… whatever
 Hermes Agent does. Wouldn't it be nice to know who's actually working, who's
 stuck waiting for your approval, and who's just daydreaming?
 
-**tmon** sits quietly in your tmux status bar and tells you exactly that.
-It finds running AI coding agents, tracks whether they're working, idle, or
-waiting on you, and shows a compact count indicator with color-coded status
-icons. Need details? Hit `prefix a a` for an interactive dashboard that lists
-every agent and lets you jump straight to their pane. Or just **click the
-status bar indicator** — that works too.
+tmon sits quietly in your status bar and tells you exactly that. It finds
+running AI coding agents across your panes, tracks whether they're working,
+idle, or waiting on you, and shows a compact count indicator with color-coded
+status icons. Need details? Hit `prefix a a` for an interactive dashboard that
+lists every agent and lets you jump straight to their pane. Or just **click
+the status bar indicator** — that works too.
 
 ---
 
@@ -443,6 +445,57 @@ set -g @tmon-ascii-icons "1"   # [@]-B2-W3-I1 instead of 🤖-🚨2-⚡️3-💤
 set -g @tmon-bold-counts "0"
 ```
 
+### `@tmon-context-warn`
+
+> When any agent's context-window usage reaches this percent, the status bar
+> appends a ⚠️ warning (in the theme's `warn` color) and the dashboard's
+> usage bar turns yellow. `0` disables the warning.
+
+| | |
+|---|---|
+| **Default** | `85` |
+| **Options** | any percent, or `0` to disable |
+
+```tmux
+set -g @tmon-context-warn "90"
+```
+
+### `@tmon-blocked-bell`
+
+> Ring the terminal bell when an agent transitions to **blocked** — useful
+> when the status bar is out of view. The bell only fires on transitions,
+> never on steady state, and only in the daemon path (`tmon daemon --notify`);
+> `tmon status` is transition-free by design.
+
+| | |
+|---|---|
+| **Default** | `off` |
+| **Options** | `on` or `off` |
+
+```tmux
+set -g @tmon-blocked-bell "on"
+```
+
+### `@tmon-pane-tint`
+
+> Make blocked agents visible from across the room: when an agent's status
+> changes, its pane's content area gets a subtle glow in the theme's color —
+> a darkened blocked-color background while it waits for you, a darkened
+> working-color background while it's in flow. Idle clears the tint; when an
+> agent exits, its pane goes back to default colors. It's opt-in, subtle
+> (colors are dimmed to ~35% luminance so text stays readable), and fully
+> reversible — `tmon tint off` restores every pane, and tmon runs that
+> cleanup automatically at plugin load when the option is off.
+
+| | |
+|---|---|
+| **Default** | `off` |
+| **Options** | `on` or `off` |
+
+```tmux
+set -g @tmon-pane-tint "on"
+```
+
 ### Themes
 
 tmon ships with color themes for both the status bar and the dashboard. Set
@@ -467,7 +520,7 @@ Fine-tune any theme with per-slot overrides. `@tmon-color-<slot>` accepts a
 tmux color — a name (`red`), an indexed color (`colour208`), or hex
 (`#ff5555`) — for the slots `app`, `blocked`, `working`, `idle`, `dim`,
 `accent`, `warn`, `selbg`. `@tmon-icon-<slot>` swaps a status glyph for
-`app`, `blocked`, `working`, `idle`:
+`app`, `blocked`, `working`, `idle`, `warn`:
 
 ```tmux
 set -g @tmon-color-blocked "#ff5555"

@@ -31,6 +31,10 @@
 #                            dashboard's usage bar turns yellow); "0" disables
 #   @tmon-blocked-bell      "off" (default) — ring the terminal bell when an
 #                            agent transitions to blocked; "on" enables
+#   @tmon-pane-tint         "off" (default) — tint agent panes by status: a
+#                            blocked agent's pane glows with a darkened
+#                            blocked-color background, working agents get a
+#                            greenish glow, idle clears it; "on" enables
 #   @tmon-theme             "default" (default) — color theme preset for the
 #                            status bar and dashboard: default, catppuccin,
 #                            nord, dracula, tokyonight, gruvbox, solarized,
@@ -77,6 +81,7 @@ ASCII_ICONS=$(get_tmux_option "@tmon-ascii-icons" "0")
 BOLD_COUNTS=$(get_tmux_option "@tmon-bold-counts" "1")
 CONTEXT_WARN=$(get_tmux_option "@tmon-context-warn" "85")
 BLOCKED_BELL=$(get_tmux_option "@tmon-blocked-bell" "off")
+PANE_TINT=$(get_tmux_option "@tmon-pane-tint" "off")
 THEME=$(get_tmux_option "@tmon-theme" "default")
 AUTO_HOOKS=$(get_tmux_option "@tmon-auto-hooks" "on")
 
@@ -97,6 +102,7 @@ tmux set-environment -g TMON_ASCII_ICONS "$ASCII_ICONS"
 tmux set-environment -g TMON_BOLD_COUNTS "$BOLD_COUNTS"
 tmux set-environment -g TMON_CONTEXT_WARN "$CONTEXT_WARN"
 tmux set-environment -g TMON_BLOCKED_BELL "$BLOCKED_BELL"
+tmux set-environment -g TMON_PANE_TINT "$PANE_TINT"
 tmux set-environment -g TMON_THEME "$THEME"
 tmux set-environment -g TMON_HOOK_STATE_DIR "$STATE_DIR/hooks"
 
@@ -145,6 +151,13 @@ main() {
   # so reloads stay silent.
   if [ "$AUTO_HOOKS" = "on" ] && [ -x "$BINARY" ]; then
     "$BINARY" hooks auto
+  fi
+
+  # Pane tint cleanup. When the feature is off (the default), force-restore
+  # every pane so a stale tint from a previous session (or a crashed
+  # process) doesn't linger after reload.
+  if [ "$PANE_TINT" != "on" ] && [ -x "$BINARY" ]; then
+    "$BINARY" tint off
   fi
 
   # Make `git pull` a complete update. TPM's `prefix U` runs exactly `git pull`

@@ -6,7 +6,9 @@
 package theme
 
 import (
+	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/guillaumemeyer/tmon/internal/agent"
@@ -230,4 +232,130 @@ func Lipgloss(c string) string {
 		}
 	}
 	return c
+}
+
+// Tint darkens a tmux color string for use as a subtle pane background,
+// keeping the palette's hue but dropping it to ~tintFactor luminance so
+// default-foreground text stays readable over it. It understands "#rrggbb"
+// (and 3-digit "#rgb") hex, "colourNNN" xterm-256 indices, and the standard
+// ANSI color names. Anything unrecognized passes through unchanged, so a
+// user color override that isn't a color still degrades gracefully.
+func Tint(c string) string {
+	hex, ok := toHex(c)
+	if !ok {
+		return c
+	}
+	r, g, b := hexRGB(hex)
+	return fmt.Sprintf("#%02x%02x%02x",
+		int(float64(r)*tintFactor), int(float64(g)*tintFactor), int(float64(b)*tintFactor))
+}
+
+// tintFactor scales each channel toward black; ~35% keeps the tint visible
+// but clearly subordinate to the pane's own text.
+const tintFactor = 0.35
+
+// ansiColors maps the 16 base color names (and common aliases) to their
+// xterm-256 indices, so Tint can resolve "green" and "brightred" like tmux
+// does before darkening.
+var ansiColors = map[string]int{
+	"black": 0, "red": 1, "green": 2, "yellow": 3,
+	"blue": 4, "magenta": 5, "cyan": 6, "white": 7,
+	"brightblack": 8, "brightred": 9, "brightgreen": 10, "brightyellow": 11,
+	"brightblue": 12, "brightmagenta": 13, "brightcyan": 14, "brightwhite": 15,
+	"grey": 8, "gray": 8,
+}
+
+// toHex resolves a tmux color string to "#rrggbb". The second return is
+// false when the string isn't a color Tint understands.
+func toHex(c string) (string, bool) {
+	if len(c) == 7 && c[0] == '#' && isHex(c[1:]) {
+		return c, true
+	}
+	// tmux also accepts 3-digit shorthand: "#rgb" doubles each digit.
+	if len(c) == 4 && c[0] == '#' && isHex(c[1:]) {
+		return "#" + string([]byte{c[1], c[1], c[2], c[2], c[3], c[3]}), true
+	}
+	if rest, ok := strings.CutPrefix(c, "colour"); ok && rest != "" && allDigits(rest) {
+		if n, err := strconv.Atoi(rest); err == nil && n >= 0 && n <= 255 {
+			return xterm256Hex(n), true
+		}
+	}
+	if n, ok := ansiColors[strings.ToLower(c)]; ok {
+		return xterm256Hex(n), true
+	}
+	return "", false
+}
+
+func isHex(s string) bool {
+	for _, r := range s {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
+func allDigits(s string) bool {
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// xterm256Hex converts an xterm-256 palette index to "#rrggbb": the 16
+// system colors, the 6×6×6 color cube, and the 24-step gray ramp.
+func xterm256Hex(n int) string {
+	var r, g, b int
+	switch {
+	case n < 16:
+		r, g, b = systemRGB(n)
+	case n <= 231:
+		v := n - 16
+		r, g, b = cube[v/36], cube[(v%36)/6], cube[v%6]
+	default:
+		gray := 8 + (n-232)*10
+		r, g, b = gray, gray, gray
+	}
+	return fmt.Sprintf("#%02x%02x%02x", r, g, b)
+}
+
+// cube is the 6×6×6 color-cube channel values (0, 95, 135, 175, 215, 255).
+var cube = [6]int{0, 95, 135, 175, 215, 255}
+
+// systemRGB maps xterm indices 0–15 to their canonical RGB values.
+func systemRGB(n int) (r, g, b int) {
+	// Standard xterm system colors: base 8 + bright 8.
+	system := [16][3]int{
+		{0, 0, 0}, {128, 0, 0}, {0, 128, 0}, {128, 128, 0},
+		{0, 0, 128}, {128, 0, 128}, {0, 128, 128}, {192, 192, 192},
+		{128, 128, 128}, {255, 0, 0}, {0, 255, 0}, {255, 255, 0},
+		{0, 0, 255}, {255, 0, 255}, {0, 255, 255}, {255, 255, 255},
+	}
+	return system[n][0], system[n][1], system[n][2]
+}
+
+// hexRGB parses a validated "#rrggbb" string into its channels.
+func hexRGB(h string) (r, g, b int) {
+	r = hexPair(h[1:3])
+	g = hexPair(h[3:5])
+	b = hexPair(h[5:7])
+	return
+}
+
+func hexPair(s string) int {
+	v := 0
+	for _, c := range s {
+		v *= 16
+		switch {
+		case c >= '0' && c <= '9':
+			v += int(c - '0')
+		case c >= 'a' && c <= 'f':
+			v += int(c-'a') + 10
+		default:
+			v += int(c-'A') + 10
+		}
+	}
+	return v
 }

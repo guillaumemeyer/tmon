@@ -153,3 +153,28 @@ func TestForStatus(t *testing.T) {
 		t.Fatalf("ForStatus(unknown) = %q, want app mark", got)
 	}
 }
+
+// TestTint locks the darkening factor: each channel scales to 35%, so the
+// default palette's colours darken to readable, subtle pane backgrounds.
+func TestTint(t *testing.T) {
+	cases := map[string]string{
+		// #ff8700 (colour208) → 89,47,0
+		"#ff8700":     "#592f00",
+		"colour208":   "#592f00", // xterm cube resolves to the same orange
+		"green":       "#002c00", // ANSI green #008000 → 0,44,0
+		"blue":        "#00002c", // ANSI blue #000080 → 0,0,44
+		"#abc":        "#3b4147", // 3-digit shorthand doubles each digit
+		"colour255":   "#535353", // gray ramp: 8+(255-232)*10=238 → 83,83,83
+		"brightred":   "#590000", // bright red #ff0000
+		"grey":        "#2c2c2c", // ANSI grey #808080 → 44,44,44
+		"notacolor":   "notacolor", // passthrough
+		"":            "",
+		"colour999":   "colour999", // out of range → passthrough
+		"colour":      "colour",    // no index → passthrough
+	}
+	for in, want := range cases {
+		if got := Tint(in); got != want {
+			t.Errorf("Tint(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

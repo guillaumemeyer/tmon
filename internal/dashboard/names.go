@@ -35,9 +35,16 @@ func agentFullName(label string) string {
 // session has a title it is shown as "Title (Name)", otherwise just the
 // name. The title comes from the connector (Grok's generated_title, Claude's
 // session name) and falls back to the plain name when unknown.
+//
+// Hermes with a known profile renders as "Hermes - <profile>" (or
+// "Title (Hermes - <profile>)") so multi-home installs are distinguishable.
 func agentDisplayName(r Row) string {
-	if r.Title == "" {
-		return agentFullName(r.Label)
+	name := agentFullName(r.Label)
+	if r.Label == "Hermes" && r.Profile != "" {
+		name = "Hermes - " + r.Profile
 	}
-	return r.Title + " (" + agentFullName(r.Label) + ")"
+	if r.Title == "" {
+		return name
+	}
+	return r.Title + " (" + name + ")"
 }

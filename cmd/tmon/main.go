@@ -12,9 +12,11 @@ import (
 const usageText = `tmon — tmux AI agent monitor
 
 Usage:
-  tmon status            Print the status-bar indicator (used by tmux #())
+  tmon status [--json]   Print the status-bar indicator (used by tmux #());
+                          with --json, the full agent state as JSON
   tmon daemon [--notify] Run the polling loop (optionally with notifications)
   tmon dashboard         Open the interactive agent navigation popup
+  tmon doctor [--json]   Environment health report (✓/✗); --json for CI
   tmon theme             List theme presets
   tmon theme preview [n] Show a color preview of a theme
   tmon hooks <cmd>       Install/remove agent lifecycle hooks:
@@ -22,6 +24,7 @@ Usage:
                            tmon hooks remove  <agent>
                            tmon hooks auto             Install for agents found on this machine
                            tmon hooks status
+  tmon tint off          Restore all panes to default colors (undoes pane tints)
   tmon version           Print the installed version
 
 Environment (set by tmon.tmux from the @tmon-* tmux options):
@@ -43,7 +46,14 @@ Environment (set by tmon.tmux from the @tmon-* tmux options):
                               (default default)
   TMON_COLOR_<SLOT>           Override a theme color slot (app|blocked|working|
                               idle|dim|accent|warn|selbg); name, colourNNN, or hex
-  TMON_ICON_<SLOT>            Override a status glyph (app|blocked|working|idle)
+  TMON_ICON_<SLOT>            Override a status glyph (app|blocked|working|
+                              idle|warn)
+  TMON_CONTEXT_WARN           Context-usage % at which the ⚠️ warning appears
+                              in the status bar (default 85; 0 disables)
+  TMON_BLOCKED_BELL           Ring the terminal bell when an agent blocks:
+                              on|off (default off)
+  TMON_PANE_TINT              Tint agent panes by status (blocked/working get a
+                              subtle darkened background glow): on|off (default off)
 `
 
 func main() {
@@ -59,10 +69,14 @@ func main() {
 		os.Exit(cmdDaemon(os.Args[2:]))
 	case "dashboard":
 		os.Exit(cmdDashboard(os.Args[2:]))
+	case "doctor":
+		os.Exit(cmdDoctor(os.Args[2:]))
 	case "theme":
 		os.Exit(cmdTheme(os.Args[2:]))
 	case "hooks":
 		os.Exit(cmdHooks(os.Args[2:]))
+	case "tint":
+		os.Exit(cmdTint(os.Args[2:]))
 	case "version":
 		fmt.Println(version)
 	case "help", "-h", "--help":

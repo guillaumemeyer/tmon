@@ -2,6 +2,7 @@ package poll
 
 import (
 	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
@@ -9,6 +10,7 @@ import (
 	"github.com/guillaumemeyer/tmon/internal/config"
 	"github.com/guillaumemeyer/tmon/internal/connector"
 	"github.com/guillaumemeyer/tmon/internal/detect"
+	"github.com/guillaumemeyer/tmon/internal/theme"
 )
 
 func testConfig(t *testing.T) config.Config {
@@ -268,5 +270,118 @@ func TestTransitionMessageFilter(t *testing.T) {
 	}
 	if got := transitionMessage("Grok", agent.StatusIdle, agent.StatusWorking, "code/tmon"); got != "Grok is now working in code/tmon" {
 		t.Errorf("with cwd = %q, want \"Grok is now working in code/tmon\"", got)
+	}
+}
+
+// ─── Pane tint ────────────────────────────────────────────────────────────
+
+// tintCalls swaps in a recording tintPane and returns the recorded
+// "pane|style" calls.
+func tintCalls(t *testing.T) *[]string {
+	t.Helper()
+	calls := &[]string{}
+	old := tintPane
+	tintPane = func(pane, style string) { *calls = append(*calls, pane+"|"+style) }
+	t.Cleanup(func() { tintPane = old })
+	return calls
+}
+
+func TestApplyTintsChangedAndUnchanged(t *testing.T) {
+	calls := tintCalls(t)
+	prev := []agent.AgentState{
+		{PID: 1, Label: "Grok", Pane: "s:1.1", Status: agent.StatusWorking},
+		{PID: 2, Label: "Claude", Pane: "s:1.2", Status: agent.StatusBlocked},
+	}
+	snap := []agent.AgentState{
+		{PID: 1, Label: "Grok", Pane: "s:1.1", Status: agent.StatusBlocked},  // changed: tint
+		{PID: 2, Label: "Claude", Pane: "s:1.2", Status: agent.StatusBlocked}, // unchanged: skip
+	}
+	applyTints(theme.Default.Palette, prev, snap)
+	want := []string{"s:1.1|bg=#592f00,fg=default"}
+	if !reflect.DeepEqual(*calls, want) {
+		t.Fatalf("tint calls = %v, want %v", *calls, want)
+	}
+}
+
+func TestApplyTintsWorkingTint(t *testing.T) {
+	calls := tintCalls(t)
+	prev := []agent.AgentState{{PID: 1, Label: "Grok", Pane: "s:1.1", Status: agent.StatusIdle}}
+	snap := []agent.AgentState{{PID: 1, Label: "Grok", Pane: "s:1.1", Status: agent.StatusWorking}}
+	applyTints(theme.Default.Palette, prev, snap)
+	want := []string{"s:1.1|bg=#002c00,fg=default"} // green darkened
+	if !reflect.DeepEqual(*calls, want) {
+		t.Fatalf("tint calls = %v, want %v", *calls, want)
+	}
+}
+
+func TestApplyTintsIdleClears(t *testing.T) {
+	calls := tintCalls(t)
+	prev := []agent.AgentState{{PID: 1, Label: "Grok", Pane: "s:1.1", Status: agent.StatusBlocked}}
+	snap := []agent.AgentState{{PID: 1, Label: "Grok", Pane: "s:1.1", Status: agent.StatusIdle}}
+	applyTints(theme.Default.Palette, prev, snap)
+	want := []string{"s:1.1|bg=default,fg=default"}
+	if !reflect.DeepEqual(*calls, want) {
+		t.Fatalf("tint calls = %v, want %v", *calls, want)
+	}
+}
+
+func TestApplyTintsExitRestores(t *testing.T) {
+	calls := tintCalls(t)
+	prev := []agent.AgentState{{PID: 1, Label: "Grok", Pane: "s:1.1", Status: agent.StatusWorking}}
+	applyTints(theme.Default.Palette, prev, nil)
+	want := []string{"s:1.1|bg=default,fg=default"}
+	if !reflect.DeepEqual(*calls, want) {
+		t.Fatalf("tint calls = %v, want %v", *calls, want)
+	}
+}
+
+func TestApplyTintsNewAgent(t *testing.T) {
+	// A brand-new agent landing in idle is left alone (the pane was never
+	// tinted by us); one reported blocked/working on first sight tints.
+	calls := tintCalls(t)
+	applyTints(theme.Default.Palette, nil, []agent.AgentState{
+		{PID: 9, Label: "Codex", Pane: "s:2.1", Status: agent.StatusIdle},
+	})
+	if len(*calls) != 0 {
+		t.Fatalf("new idle agent tinted: %v, want no calls", *calls)
+	}
+
+	applyTints(theme.Default.Palette, nil, []agent.AgentState{
+		{PID: 9, Label: "Codex", Pane: "s:2.1", Status: agent.StatusBlocked},
+	})
+	want := []string{"s:2.1|bg=#592f00,fg=default"}
+	if !reflect.DeepEqual(*calls, want) {
+		t.Fatalf("new blocked agent tint calls = %v, want %v", *calls, want)
+	}
+}
+
+func TestApplyTintsSkipsUnmappedPanes(t *testing.T) {
+	// "?" and empty panes (outside tmux, or unresolved) never reach tintPane.
+	calls := tintCalls(t)
+	prev := []agent.AgentState{
+		{PID: 1, Label: "Grok", Pane: "?", Status: agent.StatusWorking},
+		{PID: 2, Label: "Claude", Pane: "", Status: agent.StatusBlocked},
+	}
+	snap := []agent.AgentState{
+		{PID: 1, Label: "Grok", Pane: "?", Status: agent.StatusBlocked},
+		{PID: 2, Label: "Claude", Pane: "", Status: agent.StatusIdle},
+	}
+	applyTints(theme.Default.Palette, prev, snap)
+	if len(*calls) != 0 {
+		t.Fatalf("unmapped panes tinted: %v, want no calls", *calls)
+	}
+}
+
+func TestTintDisabledNoOp(t *testing.T) {
+	// With @tmon-pane-tint off (the default) the poll loop never tints,
+	// even though agents and statuses are flowing.
+	stubDetect(t, []detect.Agent{{PID: 42, Label: "Grok", CWD: "code/tmon"}})
+	calls := tintCalls(t)
+	cfg := testConfig(t) // PaneTint defaults to false
+	if _, err := run(cfg, nil, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(*calls) != 0 {
+		t.Fatalf("tint calls with option disabled = %v, want none", *calls)
 	}
 }

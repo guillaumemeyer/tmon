@@ -1,6 +1,8 @@
 package connector
 
 import (
+	"database/sql"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -8,68 +10,156 @@ import (
 
 	"github.com/guillaumemeyer/tmon/internal/agent"
 	"github.com/guillaumemeyer/tmon/internal/config"
+
+	_ "modernc.org/sqlite"
 )
 
-const hermesFixtureHome = "fixture/.hermes"
-
-// hermesFixture points the hermesHome seam at a temp dir; content is the
-// gateway_state.json body, or "" to omit the file.
-func hermesFixture(t *testing.T, content string) string {
+// hermesFixtureHome points hermesHome at a temp ~/.hermes layout and returns
+// the home path. Optional profile homes are created under profiles/.
+func hermesFixtureHome(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
-	home := filepath.Join(root, hermesFixtureHome)
-	if content != "" {
-		writeFile(t, filepath.Join(home, "gateway_state.json"), content)
+	home := filepath.Join(root, ".hermes")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
 	}
+	// Minimal install marker.
+	writeFile(t, filepath.Join(home, "config.yaml"), "model:\n  default: deepseek-v4-flash\n")
 	old := hermesHome
 	hermesHome = func() string { return home }
 	t.Cleanup(func() { hermesHome = old })
 	return home
 }
 
-// stubHermesLive makes Collect see Hermes records: registry wired, PID alive.
-func stubHermesLive(t *testing.T) {
-	t.Helper()
-	oldReg := Registry
-	Registry = []Connector{Hermes{}}
-	t.Cleanup(func() { Registry = oldReg })
-	oldAlive := procAlive
-	procAlive = func(pid int) bool { return true }
-	t.Cleanup(func() { procAlive = oldAlive })
-}
-
-// hermesTestCfg returns a config with a temp StateDir so usage caching and
-// insights stubs never touch the real plugin state.
 func hermesTestCfg(t *testing.T) config.Config {
 	t.Helper()
 	cfg := config.Defaults()
 	cfg.StateDir = t.TempDir()
+	cfg.HookStateDir = filepath.Join(cfg.StateDir, "hooks")
+	cfg.ConnectorFreshness = time.Minute
 	return cfg
 }
 
-// stubHermesInsights replaces the insights CLI with a fixture so tests
-// never spawn the real hermes binary.
-func stubHermesInsights(t *testing.T, out string, err error) {
+// stubHermesProcs replaces process discovery with a fixed list.
+func stubHermesProcs(t *testing.T, procs []hermesProc) {
 	t.Helper()
-	old := hermesInsightsOutput
-	hermesInsightsOutput = func(config.Config) (string, error) { return out, err }
-	t.Cleanup(func() { hermesInsightsOutput = old })
+	oldList := hermesListPIDs
+	oldCmd := hermesReadCmdline
+	oldCWD := hermesReadCWD
+	oldEnv := hermesReadEnv
+	byPID := make(map[int]hermesProc, len(procs))
+	pids := make([]int, 0, len(procs))
+	for _, p := range procs {
+		byPID[p.pid] = p
+		pids = append(pids, p.pid)
+	}
+	hermesListPIDs = func() ([]int, error) { return pids, nil }
+	hermesReadCmdline = func(pid int) (string, error) {
+		if p, ok := byPID[pid]; ok {
+			return p.cmdline, nil
+		}
+		return "", os.ErrNotExist
+	}
+	hermesReadCWD = func(pid int) (string, error) {
+		if p, ok := byPID[pid]; ok && p.cwdFull != "" {
+			return p.cwdFull, nil
+		}
+		return "", os.ErrNotExist
+	}
+	hermesReadEnv = func(pid int, key string) string {
+		if p, ok := byPID[pid]; ok && key == "HERMES_HOME" {
+			return p.envHome
+		}
+		return ""
+	}
+	t.Cleanup(func() {
+		hermesListPIDs = oldList
+		hermesReadCmdline = oldCmd
+		hermesReadCWD = oldCWD
+		hermesReadEnv = oldEnv
+	})
 }
 
-// insightsFixture is a trimmed `hermes insights --days 1` box table.
-const insightsFixture = `  📋 Overview
-  ────────────────────────────────────────────────────────
-  Sessions:          1             Messages:        99
-  Tool calls:        46            User messages:   7
-  Input tokens:      79,757        Output tokens:   51,660
-  Total tokens:      2,632,153
-`
+// writeHermesStateDB creates a minimal state.db with one open local session.
+func writeHermesStateDB(t *testing.T, home string, s hermesSession, lastMsgAt int64) {
+	t.Helper()
+	path := filepath.Join(home, "state.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	_, err = db.Exec(`
+		CREATE TABLE sessions (
+			id TEXT PRIMARY KEY,
+			source TEXT NOT NULL,
+			title TEXT,
+			model TEXT,
+			cwd TEXT,
+			input_tokens INTEGER DEFAULT 0,
+			output_tokens INTEGER DEFAULT 0,
+			started_at REAL NOT NULL,
+			ended_at REAL,
+			archived INTEGER DEFAULT 0
+		);
+		CREATE TABLE messages (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			session_id TEXT NOT NULL,
+			role TEXT NOT NULL,
+			content TEXT,
+			timestamp REAL NOT NULL,
+			active INTEGER DEFAULT 1
+		);
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = db.Exec(
+		`INSERT INTO sessions (id, source, title, model, cwd, input_tokens, output_tokens, started_at, ended_at, archived)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 0)`,
+		s.ID, s.Source, s.Title, s.Model, s.CWD, s.InTokens, s.OutTokens, s.StartedAt,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lastMsgAt > 0 {
+		_, err = db.Exec(
+			`INSERT INTO messages (session_id, role, content, timestamp) VALUES (?, 'assistant', 'hi', ?)`,
+			s.ID, float64(lastMsgAt),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
 
-func freshTS() string { return time.Now().UTC().Format(time.RFC3339Nano) }
+func TestHermesGatewayOnlyYieldsNoRecords(t *testing.T) {
+	hermesFixtureHome(t)
+	stubHermesProcs(t, []hermesProc{{
+		pid: 1, cmdline: "python -m hermes_cli.main gateway run",
+	}})
+	recs, err := (Hermes{}).Probe(hermesTestCfg(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 0 {
+		t.Fatalf("records = %+v, want none for gateway-only", recs)
+	}
+}
 
-func TestHermesRunningGateway(t *testing.T) {
-	stubHermesInsights(t, insightsFixture, nil)
-	hermesFixture(t, `{"pid":4242,"gateway_state":"running","active_agents":0,"updated_at":"`+freshTS()+`"}`)
+func TestHermesCLISessionTitleProfileModel(t *testing.T) {
+	home := hermesFixtureHome(t)
+	writeHermesStateDB(t, home, hermesSession{
+		ID: "sess1", Source: "tui", Title: "Root Cause of Gateway Auth",
+		Model: "deepseek-v4-flash", CWD: "/home/u/code",
+		InTokens: 1000, OutTokens: 200, StartedAt: float64(time.Now().Unix()),
+	}, 0)
+	stubHermesProcs(t, []hermesProc{{
+		pid: 42, cmdline: "hermes --tui",
+		cwdFull: "/home/u/code", cwd: "u/code",
+		envHome: home,
+	}})
+
 	recs, err := (Hermes{}).Probe(hermesTestCfg(t))
 	if err != nil {
 		t.Fatal(err)
@@ -78,165 +168,178 @@ func TestHermesRunningGateway(t *testing.T) {
 		t.Fatalf("records = %+v, want 1", recs)
 	}
 	r := recs[0]
-	if r.Status != agent.StatusIdle || r.Detail != "gateway" {
-		t.Errorf("record = %+v, want idle gateway", r)
+	if r.PID != 42 || r.Label != "Hermes" {
+		t.Errorf("identity = %+v", r)
 	}
-	if r.PID != 4242 || r.Label != "Hermes" {
-		t.Errorf("record = %+v, want PID 4242 label Hermes", r)
+	if r.Profile != "default" {
+		t.Errorf("Profile = %q, want default", r.Profile)
+	}
+	if r.Title != "Root Cause of Gateway Auth" {
+		t.Errorf("Title = %q", r.Title)
+	}
+	if r.Detail != "model:deepseek-v4-flash" {
+		t.Errorf("Detail = %q", r.Detail)
+	}
+	if r.Usage.TokensUsed != 1200 {
+		t.Errorf("TokensUsed = %d, want 1200", r.Usage.TokensUsed)
+	}
+	if r.Status != agent.StatusIdle {
+		t.Errorf("Status = %s, want idle (no recent messages)", r.Status)
 	}
 }
 
-func TestHermesActiveAgents(t *testing.T) {
-	stubHermesInsights(t, insightsFixture, nil)
-	hermesFixture(t, `{"pid":4242,"gateway_state":"running","active_agents":2,"updated_at":"`+freshTS()+`"}`)
-	recs, err := (Hermes{}).Probe(hermesTestCfg(t))
-	if err != nil {
+func TestHermesNamedProfileFromEnv(t *testing.T) {
+	home := hermesFixtureHome(t)
+	coder := filepath.Join(home, "profiles", "coder")
+	if err := os.MkdirAll(coder, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if recs[0].Status != agent.StatusWorking || recs[0].Detail != "2 active agents" {
-		t.Errorf("record = %+v, want working with 2 active agents", recs[0])
-	}
-}
-
-func TestHermesNonRunningStateIsIdle(t *testing.T) {
-	stubHermesInsights(t, insightsFixture, nil)
-	hermesFixture(t, `{"pid":4242,"gateway_state":"stopped","active_agents":0,"updated_at":"`+freshTS()+`"}`)
-	recs, err := (Hermes{}).Probe(hermesTestCfg(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if recs[0].Status != agent.StatusIdle || recs[0].Detail != "gateway:stopped" {
-		t.Errorf("record = %+v, want idle gateway:stopped", recs[0])
-	}
-}
-
-func TestHermesPIDFallback(t *testing.T) {
-	// gateway_state.json missing entirely: gateway.pid alone still yields an
-	// idle record (Enabled gates on gateway_state.json, so this path only
-	// triggers when that file becomes unreadable mid-flight).
-	stubHermesInsights(t, insightsFixture, nil)
-	home := hermesFixture(t, "")
-	writeFile(t, filepath.Join(home, "gateway.pid"), `{"pid":4242,"kind":"hermes-gateway"}`)
-	recs, err := (Hermes{}).Probe(hermesTestCfg(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(recs) != 1 || recs[0].Status != agent.StatusIdle || recs[0].Detail != "gateway" {
-		t.Fatalf("records = %+v, want idle gateway from pid file", recs)
-	}
-}
-
-func TestHermesCorruptStateFallsBackToPID(t *testing.T) {
-	stubHermesInsights(t, insightsFixture, nil)
-	home := hermesFixture(t, "not json at all")
-	writeFile(t, filepath.Join(home, "gateway.pid"), `{"pid":4242}`)
-	recs, err := (Hermes{}).Probe(hermesTestCfg(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(recs) != 1 || recs[0].PID != 4242 {
-		t.Fatalf("records = %+v, want PID 4242 from fallback", recs)
-	}
-}
-
-func TestHermesFreshStateSurvivesCollect(t *testing.T) {
-	stubHermesInsights(t, insightsFixture, nil)
-	hermesFixture(t, `{"pid":4242,"gateway_state":"running","active_agents":1,"updated_at":"`+freshTS()+`"}`)
-	stubHermesLive(t)
-	got := Collect(hermesTestCfg(t), time.Now())
-	if len(got) != 1 || got[0].Status != agent.StatusWorking {
-		t.Fatalf("collect = %+v, want one active record", got)
-	}
-}
-
-func TestHermesStaleStateDroppedByCollect(t *testing.T) {
-	stubHermesInsights(t, insightsFixture, nil)
-	stale := time.Now().Add(-2 * time.Minute).UTC().Format(time.RFC3339Nano)
-	hermesFixture(t, `{"pid":4242,"gateway_state":"running","active_agents":1,"updated_at":"`+stale+`"}`)
-	stubHermesLive(t)
-	got := Collect(hermesTestCfg(t), time.Now())
-	if len(got) != 0 {
-		t.Fatalf("collect = %+v, want none (stale gateway state dropped)", got)
-	}
-}
-
-func TestHermesEnabledGatesOnStatePath(t *testing.T) {
-	root := t.TempDir()
-	home := filepath.Join(root, hermesFixtureHome)
-	old := hermesHome
-	hermesHome = func() string { return home }
-	t.Cleanup(func() { hermesHome = old })
-
-	if (Hermes{}).Enabled(config.Defaults()) {
-		t.Error("enabled before gateway_state.json exists")
-	}
-	writeFile(t, filepath.Join(home, "gateway_state.json"), "{}")
-	if !(Hermes{}).Enabled(config.Defaults()) {
-		t.Error("not enabled with gateway_state.json present")
-	}
-}
-
-// ─── usage enrichment ────────────────────────────────────────────────────────
-
-func TestHermesProbeUsageFromInsights(t *testing.T) {
-	stubHermesInsights(t, insightsFixture, nil)
-	hermesFixture(t, `{"pid":4242,"gateway_state":"running","active_agents":1,"updated_at":"`+freshTS()+`"}`)
+	writeFile(t, filepath.Join(coder, "config.yaml"), "model:\n  default: other\n")
+	writeHermesStateDB(t, coder, hermesSession{
+		ID: "c1", Source: "cli", Title: "Build feature",
+		Model: "gpt-test", CWD: "/work",
+		InTokens: 50, OutTokens: 10, StartedAt: float64(time.Now().Unix()),
+	}, 0)
+	stubHermesProcs(t, []hermesProc{{
+		pid: 7, cmdline: "hermes chat",
+		cwdFull: "/work", envHome: coder,
+	}})
 
 	recs, err := (Hermes{}).Probe(hermesTestCfg(t))
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || len(recs) != 1 {
+		t.Fatalf("recs=%+v err=%v", recs, err)
 	}
-	if len(recs) != 1 {
-		t.Fatalf("records = %+v, want 1", recs)
+	if recs[0].Profile != "coder" {
+		t.Errorf("Profile = %q, want coder", recs[0].Profile)
 	}
-	if u := recs[0].Usage; u.TokensUsed != 79757+51660 {
-		t.Errorf("TokensUsed = %d, want %d", u.TokensUsed, 79757+51660)
+	if recs[0].Title != "Build feature" {
+		t.Errorf("Title = %q", recs[0].Title)
 	}
 }
 
-func TestHermesUsageInsightsCachedWithinTTL(t *testing.T) {
-	calls := 0
-	stubHermesInsights(t, "", nil)
-	old := hermesInsightsOutput
-	hermesInsightsOutput = func(config.Config) (string, error) {
-		calls++
-		return insightsFixture, nil
+func TestHermesWorkingFromRecentMessage(t *testing.T) {
+	home := hermesFixtureHome(t)
+	now := time.Now().Unix()
+	writeHermesStateDB(t, home, hermesSession{
+		ID: "s", Source: "tui", Title: "Live",
+		Model: "m", CWD: "/x", StartedAt: float64(now),
+	}, now) // message just now
+	stubHermesProcs(t, []hermesProc{{
+		pid: 9, cmdline: "hermes", cwdFull: "/x", envHome: home,
+	}})
+	recs, err := (Hermes{}).Probe(hermesTestCfg(t))
+	if err != nil || len(recs) != 1 {
+		t.Fatalf("recs=%+v err=%v", recs, err)
 	}
-	t.Cleanup(func() { hermesInsightsOutput = old })
+	if recs[0].Status != agent.StatusWorking {
+		t.Errorf("Status = %s, want working", recs[0].Status)
+	}
+}
 
-	hermesFixture(t, `{"pid":4242,"gateway_state":"running","active_agents":0,"updated_at":"`+freshTS()+`"}`)
+func TestHermesBlockedFromApprovals(t *testing.T) {
+	home := hermesFixtureHome(t)
+	writeHermesStateDB(t, home, hermesSession{
+		ID: "s", Source: "cli", Title: "Approve me",
+		Model: "m", CWD: "/x", StartedAt: float64(time.Now().Unix()),
+	}, 0)
+	stubHermesProcs(t, []hermesProc{{
+		pid: 3, cmdline: "hermes chat", cwdFull: "/x", envHome: home,
+	}})
 	cfg := hermesTestCfg(t)
-
-	for i := 0; i < 3; i++ {
-		recs, err := (Hermes{}).Probe(cfg)
-		if err != nil || len(recs) != 1 {
-			t.Fatalf("probe %d: recs=%+v err=%v", i, recs, err)
-		}
-	}
-	if calls != 1 {
-		t.Errorf("insights ran %d times, want 1 (TTL cache)", calls)
-	}
-}
-
-func TestHermesUsageEmptyWhenInsightsFails(t *testing.T) {
-	stubHermesInsights(t, "", os.ErrNotExist)
-	hermesFixture(t, `{"pid":4242,"gateway_state":"running","active_agents":0,"updated_at":"`+freshTS()+`"}`)
-
-	recs, err := (Hermes{}).Probe(hermesTestCfg(t))
-	if err != nil {
+	apDir := filepath.Join(cfg.HookStateDir, "hermes")
+	if err := os.MkdirAll(apDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if !recs[0].Usage.Empty() {
-		t.Errorf("Usage = %+v, want empty when insights fails", recs[0].Usage)
+	body, _ := json.Marshal(hermesApprovalFile{Pending: map[string]hermesApprovalEntry{
+		"sess-key": {
+			PatternKey: "rm_rf",
+			Surface:    "cli",
+			HermesHome: home,
+			TS:         time.Now().Unix(),
+		},
+	}})
+	writeFile(t, filepath.Join(apDir, "approvals.json"), string(body))
+
+	recs, err := (Hermes{}).Probe(cfg)
+	if err != nil || len(recs) != 1 {
+		t.Fatalf("recs=%+v err=%v", recs, err)
+	}
+	if recs[0].Status != agent.StatusBlocked {
+		t.Errorf("Status = %s, want blocked", recs[0].Status)
+	}
+	if recs[0].Detail != "approval:rm_rf" {
+		t.Errorf("Detail = %q", recs[0].Detail)
 	}
 }
 
-func TestParseInsightsTokens(t *testing.T) {
-	in, out := parseInsightsTokens(insightsFixture)
-	if in != 79757 || out != 51660 {
-		t.Errorf("parse = %d/%d, want 79757/51660", in, out)
+func TestHermesEnabledOnConfigOnly(t *testing.T) {
+	home := hermesFixtureHome(t)
+	// no gateway_state.json
+	if !(Hermes{}).Enabled(config.Defaults()) {
+		t.Error("want enabled with config.yaml present")
 	}
-	if in, out := parseInsightsTokens("no numbers here"); in != 0 || out != 0 {
-		t.Errorf("unparseable = %d/%d, want 0/0", in, out)
+	_ = home
+	// empty dir
+	empty := t.TempDir()
+	old := hermesHome
+	hermesHome = func() string { return empty }
+	t.Cleanup(func() { hermesHome = old })
+	if (Hermes{}).Enabled(config.Defaults()) {
+		t.Error("want disabled with empty home")
+	}
+}
+
+func TestIsHermesGateway(t *testing.T) {
+	if !isHermesGateway("python -m hermes_cli.main gateway run") {
+		t.Error("expected gateway run to match")
+	}
+	if !isHermesGateway("/path/hermes-gateway.service") {
+		t.Error("expected hermes-gateway to match")
+	}
+	if isHermesGateway("hermes --tui") {
+		t.Error("tui should not be gateway")
+	}
+	if isHermesGateway("hermes chat") {
+		t.Error("chat should not be gateway")
+	}
+}
+
+func TestProfileNameFromHome(t *testing.T) {
+	root := "/home/u/.hermes"
+	if g := profileNameFromHome(root, root); g != "default" {
+		t.Errorf("default = %q", g)
+	}
+	if g := profileNameFromHome(root+"/profiles/coder", root); g != "coder" {
+		t.Errorf("coder = %q", g)
+	}
+}
+
+func TestHermesConfigModel(t *testing.T) {
+	home := t.TempDir()
+	writeFile(t, filepath.Join(home, "config.yaml"), "model:\n  base_url: x\n  default: deepseek-v4-flash\n  provider: deepseek\nagent:\n  max_turns: 1\n")
+	if g := hermesConfigModel(home); g != "deepseek-v4-flash" {
+		t.Errorf("model = %q", g)
+	}
+}
+
+func TestHermesFreshCollect(t *testing.T) {
+	home := hermesFixtureHome(t)
+	writeHermesStateDB(t, home, hermesSession{
+		ID: "s", Source: "tui", Title: "T",
+		Model: "m", CWD: "/x", InTokens: 1, StartedAt: float64(time.Now().Unix()),
+	}, 0)
+	stubHermesProcs(t, []hermesProc{{
+		pid: 99, cmdline: "hermes", cwdFull: "/x", envHome: home,
+	}})
+	oldReg := Registry
+	Registry = []Connector{Hermes{}}
+	t.Cleanup(func() { Registry = oldReg })
+	oldAlive := procAlive
+	procAlive = func(pid int) bool { return true }
+	t.Cleanup(func() { procAlive = oldAlive })
+
+	got := Collect(hermesTestCfg(t), time.Now())
+	if len(got) != 1 || got[0].Title != "T" || got[0].Profile != "default" {
+		t.Fatalf("collect = %+v", got)
 	}
 }

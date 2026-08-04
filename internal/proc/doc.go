@@ -11,6 +11,6 @@
 //
 // API surface (all platforms):
 //
-//	ListPIDs, ReadCmdline, ReadCWD, ParentPID,
+//	ListPIDs, ReadCmdline, ReadCWD, ReadEnv, ParentPID,
 //	ReadCPUTicks, ReadIOBytes, TTYForPID, CWDShort
 package proc

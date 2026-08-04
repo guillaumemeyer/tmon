@@ -220,6 +220,24 @@ func TestBlockedBellFromEnv(t *testing.T) {
 	}
 }
 
+func TestPaneTintFromEnv(t *testing.T) {
+	if c := Defaults(); c.PaneTint {
+		t.Fatal("default PaneTint should be off")
+	}
+	t.Setenv("TMON_PANE_TINT", "on")
+	if c := FromEnv(); !c.PaneTint {
+		t.Fatal("PaneTint should be on with TMON_PANE_TINT=on")
+	}
+	t.Setenv("TMON_PANE_TINT", "off")
+	if c := FromEnv(); c.PaneTint {
+		t.Fatal("PaneTint should be off with TMON_PANE_TINT=off")
+	}
+	t.Setenv("TMON_PANE_TINT", "junk") // unparsable falls back to the default
+	if c := FromEnv(); c.PaneTint {
+		t.Fatal("PaneTint should be off with a garbage value")
+	}
+}
+
 func TestThemeOverrides(t *testing.T) {
 	t.Setenv("TMON_THEME", "nord")
 	t.Setenv("TMON_COLOR_BLOCKED", "#ff0000")

@@ -17,6 +17,9 @@ func ReadCmdline(pid int) (string, error) { return "", unsupported("ReadCmdline"
 // ReadCWD is not supported on this platform.
 func ReadCWD(pid int) (string, error) { return "", unsupported("ReadCWD") }
 
+// ReadEnv is not supported on this platform.
+func ReadEnv(pid int, key string) string { return "" }
+
 // ParentPID is not supported on this platform.
 func ParentPID(pid int) (int, error) { return 0, unsupported("ParentPID") }
 

@@ -31,6 +31,7 @@ type Config struct {
 	IconOverrides       map[string]string // @tmon-icon-* overrides: slot → glyph
 	ContextWarn         int               // context-usage % at which the ⚠️ warning appears (0 disables)
 	BlockedBell         bool              // ring the terminal bell when an agent transitions to blocked
+	PaneTint            bool              // tint agent panes by status (blocked/working) via select-pane
 }
 
 // Defaults returns the configuration used when no TMON_* variables are set.
@@ -120,6 +121,7 @@ func FromEnv() Config {
 	c.BoldCounts = envBool("TMON_BOLD_COUNTS", c.BoldCounts)
 	c.ContextWarn = envInt("TMON_CONTEXT_WARN", c.ContextWarn)
 	c.BlockedBell = envBool("TMON_BLOCKED_BELL", c.BlockedBell)
+	c.PaneTint = envBool("TMON_PANE_TINT", c.PaneTint)
 	if v := os.Getenv("TMON_THEME"); v != "" {
 		c.Theme = v
 	}

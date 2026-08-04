@@ -83,6 +83,10 @@ func ReadCmdline(pid int) (string, error) {
 	return joinArgv(argv), nil
 }
 
+// ReadEnv returns the value of key from the process environment.
+// Darwin does not expose environ without CGO, so this always returns "".
+func ReadEnv(pid int, key string) string { return "" }
+
 // ReadCWD resolves the working directory of pid via proc_info(PROC_PIDVNODEPATHINFO).
 func ReadCWD(pid int) (string, error) {
 	buf := make([]byte, procVnodePathInfoSize)
