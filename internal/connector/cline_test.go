@@ -43,8 +43,8 @@ func TestClineEmitsActiveForNewestSession(t *testing.T) {
 		t.Fatalf("records = %+v, want 1", recs)
 	}
 	r := recs[0]
-	if r.PID != 31337 || r.Label != "Cline" || r.Status != agent.StatusActive || r.Detail != "session:sess-b" {
-		t.Errorf("record = %+v, want PID 31337 Cline active session:sess-b", r)
+	if r.PID != 31337 || r.Label != "Cline" || r.Status != agent.StatusWorking || r.Detail != "session:sess-b" {
+		t.Errorf("record = %+v, want PID 31337 Cline working session:sess-b", r)
 	}
 }
 

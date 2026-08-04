@@ -24,7 +24,7 @@ import (
 type Record struct {
 	PID    int          // process PID; liveness is checked before use
 	Label  string       // must match a detect signature label
-	Status agent.Status // blocked | active | running | idle
+	Status agent.Status // blocked | working | idle
 	Detail string       // "tool:Bash", "phase:reasoning", "permission:Write"
 	CWD    string       // optional; empty keeps detect's value
 	At     time.Time    // when the signal was observed (freshness check)

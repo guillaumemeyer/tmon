@@ -3,6 +3,7 @@ package statusbar
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/guillaumemeyer/tmon/internal/agent"
 )
@@ -13,43 +14,53 @@ const (
 	fgOrange = "#[fg=colour208]"
 	fgBlue   = "#[fg=blue]"
 	fgCyan   = "#[fg=cyan]"
+	boldOn   = "#[bold]"
 	reset    = "#[default]"
 )
 
-// Render builds the indicator line, e.g. "[@]? 2-● 3-‖ 1 ".
-// frame toggles the animated characters on odd values. The empty state is
-// the fixed-width "[@]? 0-● 0-‖ 0 " so the status bar never jumps.
-func Render(statuses []agent.Status, frame int) string {
-	var blocked, active, paused int
+// Render builds the indicator line: "🤖-🛑1-⚡️2-💤3 " in emoji mode (ascii
+// false) or "[@]-B1-W2-I3 " in ASCII mode. Each status segment (icon + count)
+// is rendered only when that status has at least one agent, so an empty fleet
+// renders as just the app icon. Icons are static — there is no pulse
+// animation. When bold is true, each count digit is wrapped in #[bold].
+func Render(statuses []agent.Status, ascii bool, bold bool) string {
+	var blocked, working, idle int
 	for _, s := range statuses {
 		switch s {
 		case agent.StatusBlocked:
 			blocked++
-		case agent.StatusActive, agent.StatusRunning:
-			active++ // the green bucket includes both
-		case agent.StatusPaused:
-			paused++
+		case agent.StatusWorking:
+			working++
+		case agent.StatusIdle:
+			idle++
 		}
 	}
 
-	if len(statuses) == 0 {
-		return fgCyan + "[@]" + reset +
-			fgOrange + "?" + " 0" + reset + "-" +
-			fgGreen + "●" + " 0" + reset + "-" +
-			fgBlue + "‖" + " 0" + reset + " "
+	app := "[@]"
+	bGlyph, wGlyph, iGlyph := "B", "W", "I"
+	if !ascii {
+		app = "🤖"
+		bGlyph, wGlyph, iGlyph = "🛑", "⚡️", "💤"
 	}
 
-	odd := frame%2 != 0
-	bChar, aChar := "?", "●"
-	if blocked > 0 && odd {
-		bChar = "!"
+	var segs []string
+	add := func(glyph, color string, n int) {
+		if n <= 0 {
+			return
+		}
+		count := fmt.Sprintf("%d", n)
+		if bold {
+			count = boldOn + count
+		}
+		segs = append(segs, color+glyph+count+reset)
 	}
-	if active > 0 && odd {
-		aChar = "!"
-	}
+	add(bGlyph, fgOrange, blocked)
+	add(wGlyph, fgGreen, working)
+	add(iGlyph, fgBlue, idle)
 
-	return fgCyan + "[@]" + reset +
-		fgOrange + bChar + fmt.Sprintf("%2d", blocked) + reset + "-" +
-		fgGreen + aChar + fmt.Sprintf("%2d", active) + reset + "-" +
-		fgBlue + "‖" + fmt.Sprintf("%2d", paused) + reset + " "
+	line := fgCyan + app + reset
+	if len(segs) > 0 {
+		line += "-" + strings.Join(segs, "-")
+	}
+	return line + " "
 }

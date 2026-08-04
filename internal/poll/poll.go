@@ -17,15 +17,14 @@ import (
 	"github.com/guillaumemeyer/tmon/internal/tmux"
 )
 
-// Result carries one poll's output: the statuses for the status bar, the
-// persisted snapshot, and the frame that drives the animated characters.
+// Result carries one poll's output: the statuses for the status bar and the
+// persisted snapshot.
 type Result struct {
-	Frame    int
 	Statuses []agent.Status
 	Agents   []agent.AgentState
 }
 
-// Run performs one full poll: load the previous frame, detect baseline
+// Run performs one full poll: load the previous snapshot, detect baseline
 // agents, overlay fresh connector records, evaluate, persist, and (with
 // notify) announce transitions against prevStatus. prevStatus maps PID to
 // the previous poll's status; pass nil to skip notifications.
@@ -40,7 +39,6 @@ func run(cfg config.Config, prevStatus map[int]agent.Status, notify bool, record
 	if err != nil {
 		sf = agent.NewState() // corrupt state: start fresh rather than fail
 	}
-	frame := sf.Frame + 1
 
 	// Pane mapping only matters inside tmux.
 	var paneMap *pane.Map
@@ -106,9 +104,8 @@ func run(cfg config.Config, prevStatus map[int]agent.Status, notify bool, record
 		notifyTransitions(prevStatus, snapshot)
 	}
 
-	res := Result{Frame: frame, Statuses: statuses, Agents: snapshot}
+	res := Result{Statuses: statuses, Agents: snapshot}
 
-	sf.Frame = frame % 100
 	sf.Agents = snapshot
 	if err := sf.Save(cfg.StateFilePath()); err != nil {
 		return res, err
@@ -158,18 +155,16 @@ func notifyTransition(label string, old, new agent.Status, cwd string) {
 }
 
 // transitionMessage returns the display-message for a transition, or "" for
-// silent ones. Only "started" (running) and "active" are announced; blocked
-// and idling are quiet.
+// silent ones. Only "working" is announced; blocked and idling are quiet.
+// First sightings land in idle, so there is no "started" toast anymore.
 func transitionMessage(label string, old, new agent.Status, cwd string) string {
 	if old == new {
 		return ""
 	}
 	var msg string
 	switch new {
-	case agent.StatusActive:
-		msg = label + " is now active"
-	case agent.StatusRunning:
-		msg = label + " started"
+	case agent.StatusWorking:
+		msg = label + " is now working"
 	default:
 		return ""
 	}

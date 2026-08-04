@@ -49,8 +49,8 @@ func TestHermesRunningGateway(t *testing.T) {
 		t.Fatalf("records = %+v, want 1", recs)
 	}
 	r := recs[0]
-	if r.Status != agent.StatusRunning || r.Detail != "gateway" {
-		t.Errorf("record = %+v, want running gateway", r)
+	if r.Status != agent.StatusIdle || r.Detail != "gateway" {
+		t.Errorf("record = %+v, want idle gateway", r)
 	}
 	if r.PID != 4242 || r.Label != "Hermes" {
 		t.Errorf("record = %+v, want PID 4242 label Hermes", r)
@@ -63,25 +63,25 @@ func TestHermesActiveAgents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if recs[0].Status != agent.StatusActive || recs[0].Detail != "2 active agents" {
-		t.Errorf("record = %+v, want active with 2 active agents", recs[0])
+	if recs[0].Status != agent.StatusWorking || recs[0].Detail != "2 active agents" {
+		t.Errorf("record = %+v, want working with 2 active agents", recs[0])
 	}
 }
 
-func TestHermesNonRunningStateIsPaused(t *testing.T) {
+func TestHermesNonRunningStateIsIdle(t *testing.T) {
 	hermesFixture(t, `{"pid":4242,"gateway_state":"stopped","active_agents":0,"updated_at":"`+freshTS()+`"}`)
 	recs, err := (Hermes{}).Probe(config.Defaults())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if recs[0].Status != agent.StatusPaused || recs[0].Detail != "gateway:stopped" {
+	if recs[0].Status != agent.StatusIdle || recs[0].Detail != "gateway:stopped" {
 		t.Errorf("record = %+v, want idle gateway:stopped", recs[0])
 	}
 }
 
 func TestHermesPIDFallback(t *testing.T) {
-	// gateway_state.json missing entirely: gateway.pid alone still yields a
-	// running record (Enabled gates on gateway_state.json, so this path only
+	// gateway_state.json missing entirely: gateway.pid alone still yields an
+	// idle record (Enabled gates on gateway_state.json, so this path only
 	// triggers when that file becomes unreadable mid-flight).
 	home := hermesFixture(t, "")
 	writeFile(t, filepath.Join(home, "gateway.pid"), `{"pid":4242,"kind":"hermes-gateway"}`)
@@ -89,8 +89,8 @@ func TestHermesPIDFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(recs) != 1 || recs[0].Status != agent.StatusRunning || recs[0].Detail != "gateway" {
-		t.Fatalf("records = %+v, want running gateway from pid file", recs)
+	if len(recs) != 1 || recs[0].Status != agent.StatusIdle || recs[0].Detail != "gateway" {
+		t.Fatalf("records = %+v, want idle gateway from pid file", recs)
 	}
 }
 
@@ -110,7 +110,7 @@ func TestHermesFreshStateSurvivesCollect(t *testing.T) {
 	hermesFixture(t, `{"pid":4242,"gateway_state":"running","active_agents":1,"updated_at":"`+freshTS()+`"}`)
 	stubHermesLive(t)
 	got := Collect(config.Defaults(), time.Now())
-	if len(got) != 1 || got[0].Status != agent.StatusActive {
+	if len(got) != 1 || got[0].Status != agent.StatusWorking {
 		t.Fatalf("collect = %+v, want one active record", got)
 	}
 }

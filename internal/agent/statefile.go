@@ -12,11 +12,9 @@ import (
 const StateFileVersion = 2
 
 // StateFile is the on-disk snapshot shared between `tmon status` (writer)
-// and `tmon dashboard` (reader). Frame drives the animated status characters
-// and lives here so both processes toggle in lockstep.
+// and `tmon dashboard` (reader).
 type StateFile struct {
 	Version int          `json:"version"`
-	Frame   int          `json:"frame"`
 	Agents  []AgentState `json:"agents"`
 }
 

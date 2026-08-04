@@ -61,8 +61,8 @@ func TestAiderEmitsActiveWhenHistoryFresh(t *testing.T) {
 		t.Fatalf("records = %+v, want 1", recs)
 	}
 	r := recs[0]
-	if r.PID != 4242 || r.Label != "Aider" || r.Status != agent.StatusActive || r.Detail != "editing" {
-		t.Errorf("record = %+v, want PID 4242 Aider active editing", r)
+	if r.PID != 4242 || r.Label != "Aider" || r.Status != agent.StatusWorking || r.Detail != "editing" {
+		t.Errorf("record = %+v, want PID 4242 Aider working editing", r)
 	}
 	if want := proc.CWDShort(proj); r.CWD != want {
 		t.Errorf("CWD = %q, want short form %q", r.CWD, want)

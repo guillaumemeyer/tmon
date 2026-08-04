@@ -20,7 +20,7 @@ func cmdDashboard(args []string) int {
 	}
 
 	cfg := config.FromEnv()
-	m := dashboard.New(dashboard.DefaultLoader(cfg))
+	m := dashboard.New(dashboard.DefaultLoader(cfg), cfg.ASCII)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "tmon: dashboard:", err)

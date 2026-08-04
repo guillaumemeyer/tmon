@@ -11,8 +11,8 @@
 #   @tmon-status-position    "right" (default) or "left" — which side of the
 #                            status bar carries the agent indicator
 #   @tmon-poll-interval      3000 (default) — ms between agent scans
-#   @tmon-activity-threshold 500 (default) — CPU ms/s to consider "active"
-#   @tmon-io-threshold       102400 (default) — min IO bytes/poll for "active"
+#   @tmon-activity-threshold 500 (default) — CPU ms/s to consider "working"
+#   @tmon-io-threshold       102400 (default) — min IO bytes/poll for "working"
 #   @tmon-dashboard-key      "a" (default) — chord leader for the popup
 #                            (prefix <key> <key>)
 #   @tmon-connectors         "auto" (default) — comma list of connectors, or
@@ -21,6 +21,11 @@
 #   @tmon-connector-freshness 30 (default) — seconds a connector's status
 #                            signal stays authoritative before the /proc
 #                            heuristic takes over again
+#   @tmon-ascii-icons       "0" (default) — render the status icons as
+#                            emoji (🤖 🛑 ⚡️ 💤); "1" switches to ASCII
+#                            ([@] B W I)
+#   @tmon-bold-counts       "1" (default) — render the per-status counts
+#                            (the 2 in 🛑2) in bold; "0" turns it off
 #   @tmon-auto-hooks        "on" (default) — auto-install lifecycle hooks at
 #                            plugin load for every supported agent found on
 #                            this machine (set "off" to disable)
@@ -54,6 +59,8 @@ IO_THRESHOLD=$(get_tmux_option "@tmon-io-threshold" "102400")
 DASHBOARD_KEY=$(get_tmux_option "@tmon-dashboard-key" "a")
 CONNECTORS=$(get_tmux_option "@tmon-connectors" "auto")
 CONNECTOR_FRESHNESS=$(get_tmux_option "@tmon-connector-freshness" "30")
+ASCII_ICONS=$(get_tmux_option "@tmon-ascii-icons" "0")
+BOLD_COUNTS=$(get_tmux_option "@tmon-bold-counts" "1")
 AUTO_HOOKS=$(get_tmux_option "@tmon-auto-hooks" "on")
 
 # ─── Runtime environment ──────────────────────────────────────────────────────
@@ -69,6 +76,8 @@ tmux set-environment -g TMON_ACTIVITY_THRESHOLD_MS "$ACTIVITY_THRESHOLD"
 tmux set-environment -g TMON_IO_ACTIVITY_THRESHOLD "$IO_THRESHOLD"
 tmux set-environment -g TMON_CONNECTORS "$CONNECTORS"
 tmux set-environment -g TMON_CONNECTOR_FRESHNESS "$CONNECTOR_FRESHNESS"
+tmux set-environment -g TMON_ASCII_ICONS "$ASCII_ICONS"
+tmux set-environment -g TMON_BOLD_COUNTS "$BOLD_COUNTS"
 tmux set-environment -g TMON_HOOK_STATE_DIR "$STATE_DIR/hooks"
 
 # Subprocesses spawned from this sourcing shell (bootstrap, hooks auto) read
@@ -107,6 +116,7 @@ main() {
     case "$existing" in
       *"$BINARY"*) ;;
       *)
+        existing="${existing%"${existing##*[![:space:]]}"}" # drop trailing spaces
         if [ -n "$existing" ]; then
           tmux set -g status-left "$widget $existing"
         else
@@ -119,6 +129,7 @@ main() {
     case "$existing" in
       *"$BINARY"*) ;;
       *)
+        existing="${existing%"${existing##*[![:space:]]}"}" # drop trailing spaces
         if [ -n "$existing" ]; then
           tmux set -g status-right "$existing $widget"
         else

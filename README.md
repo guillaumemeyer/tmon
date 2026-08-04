@@ -10,7 +10,7 @@ stuck waiting for your approval, and who's just daydreaming?
 **tmon** sits quietly in your tmux status bar and tells you exactly that.
 It sniffs out running AI coding agents from `/proc`, tracks their activity
 via CPU ticks and IO bytes, and renders it all as a dead-simple count
-indicator with animated status characters. Need details? Hit `prefix a a`
+indicator with color-coded status icons. Need details? Hit `prefix a a`
 for an interactive dashboard that shows every agent and lets you jump
 straight to their pane. Or just **click the status bar indicator** — that
 works too.
@@ -26,24 +26,32 @@ wires up the status bar, keybindings, and popup.
 ### Status bar
 
 ```
-[@]? 2-● 3-‖ 1
- ↑  ↑   ↑   ↑
- icon blocked active paused
+🤖-🛑2-⚡️3-💤1
+↑  ↑   ↑   ↑
+icon blocked working idle
 ```
 
-- **● cyan `[@]` prefix** — your personal fleet of AI agents
-- **? orange** — agent is blocked, waiting for you (permission prompt, plan approval, y/n question). Toggles to **!** every other poll as a visual nudge.
-- **● green** — agent is cooking (CPU or IO activity detected, or just booted up). Toggles to **!** every other poll as a visual pulse.
-- **‖ blue** — agent is paused: the session is alive but the agent is not actively thinking or writing, and it isn't waiting on you
-- **[@]? 0-● 0-‖ 0** — no agents detected (peace and quiet)
+- **🤖 cyan** — your personal fleet of AI agents
+- **🛑 orange** — agent is blocked, waiting for you (permission prompt, plan approval, y/n question)
+- **⚡️ green** — agent is working (CPU or IO activity detected)
+- **💤 blue** — agent is idle: the session is alive but the agent is not actively thinking or writing, and it isn't waiting on you
+- **🤖** alone — no agents detected (peace and quiet)
 
-Every segment always renders at a fixed width, so your status bar won't
-dance around when counts change.
+Each status segment (icon + count) only appears when at least one agent is
+in that state, so the indicator stays compact and never dances around.
+Set `@tmon-ascii-icons "1"` to swap the emoji for plain ASCII — same
+colors, same visibility rules, no emoji:
 
-> **Note:** The green ● segment includes both "active" agents (actively using
-> CPU/IO above threshold) and "running" agents (just detected, haven't yet
-> shown activity). Both are doing real work. The distinction matters mainly
-> for the dashboard where you can see the exact status label.
+```
+[@]-B2-W3-I1
+↑   ↑  ↑  ↑
+app B  W  I
+   blocked working idle
+```
+
+> **Note:** A brand-new agent shows as **💤 idle** until its first activity
+> sample — agents often think remotely with near-zero local CPU, so the
+> first poll just proves the process exists.
 
 ### Dashboard (`prefix a a`)
 
@@ -52,33 +60,34 @@ window, with its display name, status, and exact tmux location:
 
 ```
 ┌──────────────────────────────────────────────────────┐
-│  [@] TMON                             [ESC] to quit  │
+│  🤖 TMON                       [/] search [g] group  │
 │ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ │
 │                                                      │
 │  main                                                │
 │    0:code                                            │
-│      [0] ● Grok Build           ~/code/tmon          │
-│      [1] ? Claude Code          ~/docs/design   [y/N]│
+│      [0] ⚡️ Grok Build          ~/code/tmon          │
+│      [1] 🛑 Claude Code         ~/docs/design   [y/N]│
 │  side                                                │
 │    0:research                                        │
-│      [2] ‖ Windsurf              ~/research          │
+│      [2] 💤 Windsurf             ~/research          │
 │                                                      │
-│ ▌ / to search        ? 1  ● 1  ‖ 1      [1-9] jump  │
+│ ▌ / to search          🛑 1  ⚡️ 1  💤 1   [1-9] jump │
 └──────────────────────────────────────────────────────┘
 ```
 
-Each agent gets one line with its display name, animated status
+Each agent gets one line with its display name, status
 character, pane index, and working directory — plus, when available, the
 reason it's blocked (e.g. `[y/N]`), the connector detail (e.g. `tool:Bash`),
 and how long ago its status last changed. The selected row is highlighted
 with a dim background. The footer always shows the live status counts
-(`? blocked · ● active · ‖ paused`) for the current filter.
+(`🛑 blocked · ⚡️ working · 💤 idle`, or `B/W/I` in ASCII mode) for the
+current filter.
 
 Press `d` for a **preview panel** on the right: the selected agent's pane,
 captured live and ANSI-stripped, re-captured whenever the selection changes
 or the data reloads. Press `g` to cycle the grouping: by session, by status
-(blocked → active → running → paused), or as a flat list. Filter by status
-with `b` (blocked), `w` (running), `a` (active), `p` (paused); press the key
+(blocked → working → idle), or as a flat list. Filter by status
+with `b` (blocked), `w` (working), `i` (idle); press the key
 again to clear. `1`–`9` jumps straight to the Nth agent.
 
 **Status is always accurate** — the dashboard reads the same state file that
@@ -101,7 +110,7 @@ data reload every ~6 seconds.
 | `↑` `↓` / `j` `k` | Navigate the list |
 | `1`–`9` | Jump to the Nth agent in the list |
 | `g` | Cycle grouping: session → status → flat list |
-| `b` / `w` / `a` / `p` | Filter by status: blocked / running / active / paused (press again to clear) |
+| `b` / `w` / `i` | Filter by status: blocked / working / idle (press again to clear) |
 | `d` | Toggle the right-side pane preview panel |
 | `Enter` / `→` / `l` / `Space` | Jump to the selected agent's pane |
 | `/` | Start filtering (agent name, session, window) |
@@ -350,6 +359,39 @@ set -g @tmon-connector-freshness "60"   # keep connector state longer
 set -g @tmon-auto-hooks off   # manage hooks manually
 ```
 
+### `@tmon-ascii-icons`
+
+> Render the status icons as plain ASCII instead of emoji. Off by default —
+> the status bar and dashboard use 🤖 for the app and 🛑/⚡️/💤 for
+> blocked/working/idle. When on, those become `[@]` and `B`/`W`/`I` (same
+> colors, same visibility rules). Pick this if
+> your terminal font lacks the emoji glyphs.
+
+| | |
+|---|---|
+| **Default** | `0` |
+| **Options** | `0` (emoji) or `1` (ASCII) |
+
+```tmux
+set -g @tmon-ascii-icons "1"   # [@]-B2-W3-I1 instead of 🤖-🛑2-⚡️3-💤1
+```
+
+### `@tmon-bold-counts`
+
+> Render the per-status counts (the `2` in `🛑2`) in bold so they stand out
+> next to the colored glyphs. On by default — the glyph keeps its color and
+> only the digit is emboldened. Turn it off if your terminal renders bold
+> poorly (e.g. some bitmap fonts fake it with color).
+
+| | |
+|---|---|
+| **Default** | `1` |
+| **Options** | `0` (normal weight) or `1` (bold) |
+
+```tmux
+set -g @tmon-bold-counts "0"   # 🤖-🛑2-⚡️3-💤1 with normal-weight digits
+```
+
 ### Advanced: environment variables
 
 These are exported by `tmon.tmux` from the tmux options above (and pushed
@@ -361,7 +403,9 @@ actually see them). They can also be overridden directly for custom setups:
 | `TMON_POLL_INTERVAL_MS` | `@tmon-poll-interval` | Poll interval in ms |
 | `TMON_ACTIVITY_THRESHOLD_MS` | `@tmon-activity-threshold` | CPU threshold in ms/s |
 | `TMON_IO_ACTIVITY_THRESHOLD` | `@tmon-io-threshold` | IO threshold in bytes |
-| `TMON_IDLE_DECAY_POLLS` | *(no tmux option)* | Consecutive quiet polls before "paused" (default: 3) |
+| `TMON_IDLE_DECAY_POLLS` | *(no tmux option)* | Consecutive quiet polls before "idle" (default: 3) |
+| `TMON_ASCII_ICONS` | `@tmon-ascii-icons` | `0` = emoji icons (default), `1` = ASCII `B`/`W`/`I` |
+| `TMON_BOLD_COUNTS` | `@tmon-bold-counts` | `1` = bold counts (default), `0` = normal weight |
 | `TMON_CONNECTORS` | `@tmon-connectors` | Connector selection: `auto` or a comma list |
 | `TMON_CONNECTOR_FRESHNESS` | `@tmon-connector-freshness` | Seconds a connector signal stays valid (default: 30) |
 | `TMON_HOOK_STATE_DIR` | *(set by tmon.tmux)* | Where installed hooks write session state, default `<state>/hooks` |
@@ -385,20 +429,21 @@ tmon reads two counters from `/proc`:
 - **CPU ticks** from `/proc/[pid]/stat` (fields 14+15+16+17: user + system + child user + child system)
 - **IO bytes** from `/proc/[pid]/io` (rchar + wchar)
 
-Agents transition through a **4-state machine**:
+Agents transition through a **3-state machine**:
 
-1. **running** — First sight of an agent; shown immediately regardless of activity
-   (agents often think remotely with near-zero local CPU).
-2. **active** — CPU delta ≥ `@tmon-activity-threshold` or IO delta ≥ `@tmon-io-threshold`
-   since the last poll. This filters out scheduler noise and terminal cursor updates.
-3. **blocked** — Overrides everything. If the pane content matches any blocked-state
-   pattern (permission prompts, y/n questions, approval wait), the agent is stuck
-   waiting for you.
-4. **paused** — The agent is alive but not actively thinking or writing: no
-   meaningful CPU or IO activity for 3 consecutive polls (9 seconds
-   at default 3s interval). The grace period prevents flickering for agents
-   between API calls. An agent expecting your input never lands here — the
-   blocked state above overrides it.
+1. **idle** — First sight of an agent, or no meaningful CPU or IO activity
+   for `@tmon-idle-decay-polls` consecutive polls (3 by default, ~9 seconds
+   at the default 3s interval). The grace period prevents flickering for
+   agents between API calls. Agents often think remotely with near-zero
+   local CPU, so a brand-new agent starts here until its first activity
+   sample.
+2. **working** — CPU delta ≥ `@tmon-activity-threshold` or IO delta ≥
+   `@tmon-io-threshold` since the last poll. This filters out scheduler
+   noise and terminal cursor updates.
+3. **blocked** — Overrides everything. If the pane content matches any
+   blocked-state pattern (permission prompts, y/n questions, approval
+   wait), the agent is stuck waiting for you. An agent expecting your
+   input never lands in idle — the blocked state above overrides it.
 
 ### Blocked state detection
 
@@ -411,7 +456,7 @@ grab the visible terminal content and looks for telltale signs of a stuck agent:
 - **Chat questions**: "Should I", "Waiting for your input"
 
 Blocked detection overrides everything — if tmon thinks an agent is waiting
-for you, it won't call it "active" no matter how much CPU it's burning.
+for you, it won't call it "working" no matter how much CPU it's burning.
 
 ### Pane mapping
 
@@ -457,7 +502,7 @@ only make state more accurate, never less:
   agent's phase-change time, hook-event time, or file mtime). Signals older
   than `TMON_CONNECTOR_FRESHNESS` (default 30s) are dropped, so a signal
   that goes quiet decays back to the heuristic path instead of leaving the
-  agent "stuck active". An agent whose connector is silent is tracked
+  agent "stuck working". An agent whose connector is silent is tracked
   exactly as it was before connectors existed.
 - **Liveness gate** — records for exited processes are dropped immediately.
 - **Dormant by default** — a connector only runs when its agent's state
@@ -466,16 +511,16 @@ only make state more accurate, never less:
 
 | Agent | Source of authoritative state | Status granularity |
 |-------|------------------------------|--------------------|
-| **Grok Build** | `~/.grok/active_sessions.json` + `events.jsonl` phases | blocked (permission prompt, names the tool), active (reasoning / responding / tool / waiting on model), running |
-| **Hermes Agent** | `~/.hermes/gateway_state.json` (heartbeat) | blocked n/a — active (n agents), running (gateway), paused |
-| **Claude Code** | lifecycle hooks (`tmon hooks install claude`) | blocked (permission prompt), active (tool running / compacting / subagent), paused (turn complete) |
+| **Grok Build** | `~/.grok/active_sessions.json` + `events.jsonl` phases | blocked (permission prompt, names the tool), working (reasoning / responding / tool / waiting on model), idle (session open, no events yet) |
+| **Hermes Agent** | `~/.hermes/gateway_state.json` (heartbeat) | blocked n/a — working (n active agents), idle (gateway up) |
+| **Claude Code** | lifecycle hooks (`tmon hooks install claude`) | blocked (permission prompt), working (tool running / compacting / subagent), idle (turn complete) |
 | **Codex CLI** | lifecycle hooks (`tmon hooks install codex`) | same event set as Claude |
-| **Cursor** | lifecycle hooks (`tmon hooks install cursor`), else `~/.cursor` session files | hook events, else running |
-| **Copilot** | lifecycle hooks (`tmon hooks install copilot`), else `~/.copilot` session files | hook events, else running |
+| **Cursor** | lifecycle hooks (`tmon hooks install cursor`), else `~/.cursor` session files | hook events, else idle |
+| **Copilot** | lifecycle hooks (`tmon hooks install copilot`), else `~/.copilot` session files | hook events, else idle |
 | **Windsurf** | lifecycle hooks (`tmon hooks install windsurf`) | hook events |
-| **Cline** | newest `~/.cline/data/sessions/` activity | active (session written) |
-| **Aider** | `.aider.chat.history.md` mtime per project | active (editing) |
-| **CodeBuddy** | `~/.codebuddy/sessions/<pid>.json` | running (session live) |
+| **Cline** | newest `~/.cline/data/sessions/` activity | working (session written) |
+| **Aider** | `.aider.chat.history.md` mtime per project | working (editing) |
+| **CodeBuddy** | `~/.codebuddy/sessions/<pid>.json` | idle (session live) |
 | **OpenClaw** | *(stretch: SQLite/WS API not read yet)* | — (heuristic only) |
 
 ### Hooks (`tmon hooks`)
@@ -526,14 +571,14 @@ removing hooks never loses you anything you had before.
 ## Notifications
 
 tmon can send tmux `display-message` popups on state transitions (agent
-started, agent became active). Run the daemon in notify mode:
+became blocked, working, or idle). Run the daemon in notify mode:
 
 ```bash
 ~/.tmux/plugins/tmon/bin/tmon daemon --notify
 ```
 
 This runs continuously in the background, emitting transient popups like
-"Grok Build started in code/tmon" or "Claude Code is now active in src/api"
+"Grok is now working in code/tmon" or "Claude Code is now blocked in src/api"
 whenever an agent changes state. Notifications are opt-in and off by default
 to avoid noise. (To have tmux start it on every server, add
 `run-shell -b "~/.tmux/plugins/tmon/bin/tmon daemon --notify"` to your

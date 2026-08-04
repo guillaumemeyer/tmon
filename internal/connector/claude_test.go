@@ -39,7 +39,7 @@ func stubClaudeAgents(t *testing.T, byCWD map[string]int) {
 
 func TestClaudePairsSessionToProcessByCWD(t *testing.T) {
 	cfg := claudeCfg(t)
-	writeClaudeHook(t, cfg, "s1", "active", "tool:Bash", "/home/guillaume/code/tmon")
+	writeClaudeHook(t, cfg, "s1", "working", "tool:Bash", "/home/guillaume/code/tmon")
 	stubClaudeAgents(t, map[string]int{"code/tmon": 4242})
 
 	recs, err := (Claude{}).Probe(cfg)
@@ -50,8 +50,8 @@ func TestClaudePairsSessionToProcessByCWD(t *testing.T) {
 		t.Fatalf("records = %+v, want 1", recs)
 	}
 	r := recs[0]
-	if r.PID != 4242 || r.Label != "Claude" || r.Status != agent.StatusActive || r.Detail != "tool:Bash" {
-		t.Errorf("record = %+v, want PID 4242 Claude active tool:Bash", r)
+	if r.PID != 4242 || r.Label != "Claude" || r.Status != agent.StatusWorking || r.Detail != "tool:Bash" {
+		t.Errorf("record = %+v, want PID 4242 Claude working tool:Bash", r)
 	}
 	if r.CWD != "code/tmon" {
 		t.Errorf("CWD = %q, want short form code/tmon", r.CWD)
@@ -60,7 +60,7 @@ func TestClaudePairsSessionToProcessByCWD(t *testing.T) {
 
 func TestClaudeSkipsSessionWithoutProcess(t *testing.T) {
 	cfg := claudeCfg(t)
-	writeClaudeHook(t, cfg, "s1", "active", "tool:Bash", "/home/guillaume/code/tmon")
+	writeClaudeHook(t, cfg, "s1", "working", "tool:Bash", "/home/guillaume/code/tmon")
 	stubClaudeAgents(t, map[string]int{}) // claude not running
 
 	recs, err := (Claude{}).Probe(cfg)
@@ -106,7 +106,7 @@ func TestClaudeEnabledGatesOnHookDir(t *testing.T) {
 	if (Claude{}).Enabled(cfg) {
 		t.Error("enabled before any hook state exists")
 	}
-	writeClaudeHook(t, cfg, "s1", "active", "tool:Bash", "/a/b")
+	writeClaudeHook(t, cfg, "s1", "working", "tool:Bash", "/a/b")
 	if !(Claude{}).Enabled(cfg) {
 		t.Error("not enabled with hook state present")
 	}
@@ -114,7 +114,7 @@ func TestClaudeEnabledGatesOnHookDir(t *testing.T) {
 
 func TestClaudeStaleHookFileDroppedByCollect(t *testing.T) {
 	cfg := claudeCfg(t)
-	writeClaudeHook(t, cfg, "s1", "active", "tool:Bash", "/home/guillaume/code/tmon")
+	writeClaudeHook(t, cfg, "s1", "working", "tool:Bash", "/home/guillaume/code/tmon")
 	stubClaudeAgents(t, map[string]int{"code/tmon": 4242})
 
 	// Age the hook file past the freshness gate.

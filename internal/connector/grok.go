@@ -87,12 +87,12 @@ func (Grok) Probe(cfg config.Config) ([]Record, error) {
 		rec := Record{
 			PID:    s.PID,
 			Label:  "Grok",
-			Status: agent.StatusRunning,
+			Status: agent.StatusIdle,
 			Detail: "started",
 			At:     now,
 		}
 		if !s.OpenedAt.IsZero() {
-			rec.At = s.OpenedAt // a session with no events yet is "running since opened"
+			rec.At = s.OpenedAt // a session with no events yet is "idle since opened"
 		}
 		if s.CWD != "" {
 			rec.CWD = proc.CWDShort(s.CWD)
@@ -154,7 +154,7 @@ func enrichGrok(rec *Record, dir string) {
 			rec.At = ts
 		}
 		rec.Status, rec.Detail = mapGrokPhase(lastPhase.Phase)
-		if rec.Status == agent.StatusActive && rec.Detail == "tool:" {
+		if rec.Status == agent.StatusWorking && rec.Detail == "tool:" {
 			name := lastTool.ToolName
 			if name == "" || (lastCompletion.ToolName == name && lastCompletion.TS > lastTool.TS) {
 				name = "running"
@@ -173,21 +173,21 @@ func enrichGrok(rec *Record, dir string) {
 }
 
 // mapGrokPhase maps a Grok phase_changed value to the tmon status machine.
-// Unknown phases are shown as running — new Grok versions may add phases.
+// Unknown phases are shown as idle — new Grok versions may add phases.
 func mapGrokPhase(phase string) (agent.Status, string) {
 	switch phase {
 	case "permission_prompt":
 		return agent.StatusBlocked, "waiting:approval"
 	case "streaming_reasoning":
-		return agent.StatusActive, "phase:reasoning"
+		return agent.StatusWorking, "phase:reasoning"
 	case "streaming_text":
-		return agent.StatusActive, "phase:responding"
+		return agent.StatusWorking, "phase:responding"
 	case "tool_execution":
-		return agent.StatusActive, "tool:"
+		return agent.StatusWorking, "tool:"
 	case "waiting_for_model":
-		return agent.StatusActive, "phase:waiting-model"
+		return agent.StatusWorking, "phase:waiting-model"
 	default:
-		return agent.StatusRunning, "phase:" + phase
+		return agent.StatusIdle, "phase:" + phase
 	}
 }
 

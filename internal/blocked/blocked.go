@@ -28,7 +28,7 @@ var patterns = []string{
 	`Do you approve`,
 	`Proceed anyway`,
 	`Continue anyway`,
-	`Continue?`,
+	`Continue\?`, // literal "Continue?" — bare ? would match "continue" (optional e)
 	`Would you like to`,
 	`Press any key`,
 	`Press Enter`,

@@ -8,7 +8,7 @@
 //
 // The gateway is a long-running daemon; its state file is only rewritten
 // when something changes. The freshness gate therefore treats a stale file
-// as "gateway paused": the record decays to the /proc path (the interactive
+// as "gateway idle": the record decays to the /proc path (the interactive
 // TUI keeps its own heuristic row) until Hermes becomes active again.
 package connector
 
@@ -96,7 +96,7 @@ func probeGatewayState(path string) (Record, bool, error) {
 	rec := Record{
 		PID:    gs.PID,
 		Label:  "Hermes",
-		Status: agent.StatusRunning,
+		Status: agent.StatusIdle,
 		Detail: "gateway",
 		At:     fileModTime(path),
 	}
@@ -107,11 +107,11 @@ func probeGatewayState(path string) (Record, bool, error) {
 	switch gs.GatewayState {
 	case "running":
 		if gs.ActiveAgents > 0 {
-			rec.Status = agent.StatusActive
+			rec.Status = agent.StatusWorking
 			rec.Detail = fmt.Sprintf("%d active agents", gs.ActiveAgents)
 		}
 	default:
-		rec.Status = agent.StatusPaused
+		rec.Status = agent.StatusIdle
 		rec.Detail = "gateway:" + gs.GatewayState
 	}
 	return rec, true, nil
@@ -132,7 +132,7 @@ func probeGatewayPID(path string) ([]Record, error) {
 	return []Record{{
 		PID:    gp.PID,
 		Label:  "Hermes",
-		Status: agent.StatusRunning,
+		Status: agent.StatusIdle,
 		Detail: "gateway",
 		At:     fileModTime(path),
 	}}, nil

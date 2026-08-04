@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -16,13 +17,15 @@ type Config struct {
 	StateDir            string // directory holding state.json
 	BinDir              string // directory holding the tmon binary
 	PollIntervalMs      int    // milliseconds between full scans
-	ActivityThresholdMs int    // CPU ms/s to consider "active"
-	IOThreshold         int64  // min IO bytes/poll to consider "active"
-	IdleDecayPolls      int    // consecutive quiet polls before "paused"
+	ActivityThresholdMs int    // CPU ms/s to consider "working"
+	IOThreshold         int64  // min IO bytes/poll to consider "working"
+	IdleDecayPolls      int    // consecutive quiet polls before "idle"
 	CLKTicks            int    // kernel clock ticks per second (default 100)
 	Connectors          string // comma list or "auto" (enable every connector whose paths exist)
 	ConnectorFreshness  time.Duration
 	HookStateDir        string // where installed agent hooks write session state
+	ASCII               bool   // render status icons as ASCII (B/W/I) instead of emoji
+	BoldCounts          bool   // render the per-status counts in the status bar in bold
 }
 
 // Defaults returns the configuration used when no TMON_* variables are set.
@@ -42,6 +45,7 @@ func Defaults() Config {
 		Connectors:          "auto",
 		ConnectorFreshness:  30 * time.Second,
 		HookStateDir:        filepath.Join(stateDir, "hooks"),
+		BoldCounts:          true,
 	}
 }
 
@@ -58,6 +62,18 @@ func envInt64(name string, def int64) int64 {
 	if v := os.Getenv(name); v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil {
 			return n
+		}
+	}
+	return def
+}
+
+func envBool(name string, def bool) bool {
+	if v := os.Getenv(name); v != "" {
+		switch strings.ToLower(v) {
+		case "1", "true", "on", "yes":
+			return true
+		case "0", "false", "off", "no":
+			return false
 		}
 	}
 	return def
@@ -89,6 +105,8 @@ func FromEnv() Config {
 	if v := os.Getenv("TMON_HOOK_STATE_DIR"); v != "" {
 		c.HookStateDir = v
 	}
+	c.ASCII = envBool("TMON_ASCII_ICONS", c.ASCII)
+	c.BoldCounts = envBool("TMON_BOLD_COUNTS", c.BoldCounts)
 	return c
 }
 

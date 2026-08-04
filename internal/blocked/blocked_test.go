@@ -54,6 +54,10 @@ func TestDoesNotMatchNoise(t *testing.T) {
 		"y",
 		"approve", // bare word without prompt context
 		"planning the release",
+		// Claude Code welcome / plan promo (was a false positive on unescaped Continue?)
+		"If you hit your limit, you can continue on Fable 5 with usage credits.",
+		"you can continue on",
+		"continue working",
 	}
 	for _, content := range noise {
 		if Matches(content) {

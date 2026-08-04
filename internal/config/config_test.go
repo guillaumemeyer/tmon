@@ -12,6 +12,7 @@ func TestFromEnvDefaults(t *testing.T) {
 		"TMON_STATE_DIR", "TMON_BIN_DIR",
 		"TMON_POLL_INTERVAL_MS", "TMON_ACTIVITY_THRESHOLD_MS",
 		"TMON_IO_ACTIVITY_THRESHOLD", "TMON_IDLE_DECAY_POLLS",
+		"TMON_ASCII_ICONS", "TMON_BOLD_COUNTS",
 	} {
 		t.Setenv(k, "")
 	}
@@ -115,5 +116,60 @@ func TestConnectorFreshnessIgnoresGarbage(t *testing.T) {
 	c := FromEnv()
 	if c.ConnectorFreshness != 30*time.Second {
 		t.Errorf("garbage freshness should fall back, got %v", c.ConnectorFreshness)
+	}
+}
+
+func TestASCIIIconsDefaultsToEmoji(t *testing.T) {
+	t.Setenv("TMON_ASCII_ICONS", "")
+	c := FromEnv()
+	if c.ASCII {
+		t.Errorf("ASCII = true, want false (emoji default)")
+	}
+}
+
+func TestASCIIIconsOverride(t *testing.T) {
+	for _, v := range []string{"1", "on", "true", "yes"} {
+		t.Setenv("TMON_ASCII_ICONS", v)
+		if !FromEnv().ASCII {
+			t.Errorf("ASCII = false with %q, want true", v)
+		}
+	}
+	t.Setenv("TMON_ASCII_ICONS", "0")
+	if FromEnv().ASCII {
+		t.Error("ASCII = true with \"0\", want false")
+	}
+}
+
+func TestASCIIIconsIgnoresGarbage(t *testing.T) {
+	t.Setenv("TMON_ASCII_ICONS", "soon")
+	if FromEnv().ASCII {
+		t.Error("garbage ASCII env should fall back to the default (false)")
+	}
+}
+
+func TestBoldCountsDefaultsToOn(t *testing.T) {
+	t.Setenv("TMON_BOLD_COUNTS", "")
+	if !FromEnv().BoldCounts {
+		t.Error("BoldCounts = false, want true (default)")
+	}
+}
+
+func TestBoldCountsOverride(t *testing.T) {
+	for _, v := range []string{"1", "on", "true", "yes"} {
+		t.Setenv("TMON_BOLD_COUNTS", v)
+		if !FromEnv().BoldCounts {
+			t.Errorf("BoldCounts = false with %q, want true", v)
+		}
+	}
+	t.Setenv("TMON_BOLD_COUNTS", "0")
+	if FromEnv().BoldCounts {
+		t.Error("BoldCounts = true with \"0\", want false")
+	}
+}
+
+func TestBoldCountsIgnoresGarbage(t *testing.T) {
+	t.Setenv("TMON_BOLD_COUNTS", "soon")
+	if !FromEnv().BoldCounts {
+		t.Error("garbage BoldCounts env should fall back to the default (true)")
 	}
 }

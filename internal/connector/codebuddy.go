@@ -53,7 +53,7 @@ func (CodeBuddy) Probe(cfg config.Config) ([]Record, error) {
 		recs = append(recs, Record{
 			PID:    pid,
 			Label:  "CodeBuddy",
-			Status: agent.StatusRunning,
+			Status: agent.StatusIdle,
 			Detail: "session:" + strings.TrimSuffix(e.Name(), ".json"),
 			At:     fi.ModTime(),
 		})

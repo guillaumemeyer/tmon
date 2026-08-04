@@ -12,7 +12,7 @@ import (
 
 func TestGroupByStatus(t *testing.T) {
 	f := &fakeLoader{data: Data{Rows: testRows()}}
-	m := New(f.load)
+	m := New(f.load, true)
 	m = applyMsg(t, m, initMsg{})
 
 	if m.groupMode != groupSession {
@@ -24,13 +24,13 @@ func TestGroupByStatus(t *testing.T) {
 		t.Fatalf("group mode after g = %d, want status", m.groupMode)
 	}
 
-	// testRows: Claude blocked, Grok active, Codex paused. Expect one header
-	// per present status in urgency order: blocked, active, paused.
+	// testRows: Claude blocked, Grok working, Codex idle. Expect one header
+	// per present status in urgency order: blocked, working, idle.
 	want := []itemKind{itemStatus, itemAgent, itemStatus, itemAgent, itemStatus, itemAgent}
 	if len(m.items) != len(want) {
 		t.Fatalf("items = %d, want %d: %+v", len(m.items), len(want), m.items)
 	}
-	wantStatus := []agent.Status{agent.StatusBlocked, agent.StatusActive, agent.StatusPaused}
+	wantStatus := []agent.Status{agent.StatusBlocked, agent.StatusWorking, agent.StatusIdle}
 	pos := 0
 	for i, kind := range want {
 		if m.items[i].kind != kind {
@@ -51,7 +51,7 @@ func TestGroupByStatus(t *testing.T) {
 
 func TestGroupByAgent(t *testing.T) {
 	f := &fakeLoader{data: Data{Rows: testRows()}}
-	m := New(f.load)
+	m := New(f.load, true)
 	m = applyMsg(t, m, initMsg{})
 
 	m = applyMsg(t, m, key('g')) // status
@@ -71,7 +71,7 @@ func TestGroupByAgent(t *testing.T) {
 
 func TestStatusFilters(t *testing.T) {
 	f := &fakeLoader{data: Data{Rows: testRows()}}
-	m := New(f.load)
+	m := New(f.load, true)
 	m = applyMsg(t, m, initMsg{})
 
 	// b → blocked only (Claude).
@@ -89,42 +89,36 @@ func TestStatusFilters(t *testing.T) {
 		t.Fatalf("filter after toggle = %v, filtered %d, want cleared", m.filterStatus, len(m.filtered))
 	}
 
-	// a → active only (Grok).
-	m = applyMsg(t, m, key('a'))
-	if len(m.filtered) != 1 || m.rows[m.filtered[0]].Label != "Grok" {
-		t.Fatalf("a filter: filtered = %v, want only Grok", m.filtered)
-	}
-
-	// w → running: none in the fixture.
+	// w → working only (Grok).
 	m = applyMsg(t, m, key('w'))
-	if m.filterStatus != agent.StatusRunning || len(m.filtered) != 0 {
-		t.Fatalf("w filter: filtered = %v, want none", m.filtered)
+	if m.filterStatus != agent.StatusWorking || len(m.filtered) != 1 || m.rows[m.filtered[0]].Label != "Grok" {
+		t.Fatalf("w filter: filter = %v, filtered = %v, want only Grok", m.filterStatus, m.filtered)
 	}
 
-	// p → paused only (Codex).
-	m = applyMsg(t, m, key('p'))
+	// i → idle only (Codex).
+	m = applyMsg(t, m, key('i'))
 	if len(m.filtered) != 1 || m.rows[m.filtered[0]].Label != "Codex" {
-		t.Fatalf("p filter: filtered = %v, want only Codex", m.filtered)
+		t.Fatalf("i filter: filtered = %v, want only Codex", m.filtered)
 	}
 }
 
 func TestStatusFilterCombinesWithQuery(t *testing.T) {
 	f := &fakeLoader{data: Data{Rows: testRows()}}
-	m := New(f.load)
+	m := New(f.load, true)
 	m = applyMsg(t, m, initMsg{})
 
-	m = applyMsg(t, m, key('a')) // active only
+	m = applyMsg(t, m, key('w')) // working only
 	m = applyMsg(t, m, key('/'))
 	m = applyMsg(t, m, key('g'))
 	m = applyMsg(t, m, key('r'))
 	if len(m.filtered) != 1 || m.rows[m.filtered[0]].Label != "Grok" {
-		t.Fatalf("filtered = %v, want Grok (active + name match)", m.filtered)
+		t.Fatalf("filtered = %v, want Grok (working + name match)", m.filtered)
 	}
 }
 
 func TestNumberJump(t *testing.T) {
 	f := &fakeLoader{data: Data{Rows: testRows()}}
-	m := New(f.load)
+	m := New(f.load, true)
 	m = applyMsg(t, m, initMsg{})
 
 	m = applyMsg(t, m, key('2'))
@@ -143,7 +137,7 @@ func TestNumberJump(t *testing.T) {
 
 func TestPreviewToggleCapturesSelection(t *testing.T) {
 	f := &fakeLoader{data: Data{Rows: testRows()}}
-	m := New(f.load)
+	m := New(f.load, true)
 	m = applyMsg(t, m, initMsg{})
 
 	var captured []string
@@ -178,9 +172,9 @@ func TestPreviewToggleCapturesSelection(t *testing.T) {
 	}
 }
 
-func TestPreviewRecapturesOnFullReload(t *testing.T) {
-	f := &modeAwareLoader{full: Data{Rows: testRows(), Frame: 0}}
-	m := New(f.load)
+func TestPreviewRecapturesOnReload(t *testing.T) {
+	f := &fakeLoader{data: Data{Rows: testRows()}}
+	m := New(f.load, true)
 	m = applyMsg(t, m, initMsg{})
 
 	var captures []string
@@ -192,39 +186,17 @@ func TestPreviewRecapturesOnFullReload(t *testing.T) {
 	if len(captures) != 1 {
 		t.Fatalf("captures after toggle = %d, want 1", len(captures))
 	}
-	// Three light ticks keep rows cached (no recapture)…
-	for i := 0; i < 3; i++ {
-		m = applyMsg(t, m, tickMsg{})
-	}
-	if len(captures) != 1 {
-		t.Fatalf("captures after light ticks = %d, want unchanged", len(captures))
-	}
-	// …the fourth is a full reload: rows refresh and the pane re-captures
-	// even though the selection's pane target is unchanged.
+	// Every auto-refresh tick is a full reload: rows refresh and the pane
+	// re-captures even though the selection's pane target is unchanged.
 	m = applyMsg(t, m, tickMsg{})
 	if len(captures) != 2 || captures[1] != "main:0.0" {
-		t.Fatalf("captures after full reload = %v, want re-capture of main:0.0", captures)
+		t.Fatalf("captures after reload = %v, want re-capture of main:0.0", captures)
 	}
-}
-
-// modeAwareLoader mimics DefaultLoader: light refreshes return only a frame,
-// full reloads return rows.
-type modeAwareLoader struct {
-	modes []Mode
-	full  Data
-}
-
-func (f *modeAwareLoader) load(mode Mode) (Data, error) {
-	f.modes = append(f.modes, mode)
-	if mode == ModeLight {
-		return Data{Frame: 1}, nil
-	}
-	return f.full, nil
 }
 
 func TestPreviewViewShowsSeparatorAndContent(t *testing.T) {
-	f := &fakeLoader{data: Data{Rows: testRows(), Frame: 2}}
-	m := New(f.load)
+	f := &fakeLoader{data: Data{Rows: testRows()}}
+	m := New(f.load, true)
 	m = applyMsg(t, m, initMsg{})
 	m.width, m.height = 120, 24
 
@@ -245,14 +217,14 @@ func TestPreviewViewShowsSeparatorAndContent(t *testing.T) {
 }
 
 func TestFooterShowsStatusCounts(t *testing.T) {
-	f := &fakeLoader{data: Data{Rows: testRows(), Frame: 2}}
-	m := New(f.load)
+	f := &fakeLoader{data: Data{Rows: testRows()}}
+	m := New(f.load, true)
 	m = applyMsg(t, m, initMsg{})
 	m.width, m.height = 80, 24
 
 	v := ansi.Strip(m.View())
-	// testRows: 1 blocked, 1 active, 1 paused → ? 1  ● 1  ‖ 1.
-	for _, want := range []string{"? 1", "● 1", "‖ 1", "[1-9] jump"} {
+	// testRows: 1 blocked, 1 working, 1 idle → B 1  W 1  I 1.
+	for _, want := range []string{"B 1", "W 1", "I 1", "[1-9] jump"} {
 		if !strings.Contains(v, want) {
 			t.Fatalf("footer missing %q in:\n%s", want, v)
 		}
@@ -260,8 +232,8 @@ func TestFooterShowsStatusCounts(t *testing.T) {
 }
 
 func TestFooterShowsActiveFilter(t *testing.T) {
-	f := &fakeLoader{data: Data{Rows: testRows(), Frame: 2}}
-	m := New(f.load)
+	f := &fakeLoader{data: Data{Rows: testRows()}}
+	m := New(f.load, true)
 	m = applyMsg(t, m, initMsg{})
 	m.width, m.height = 80, 24
 

@@ -1,4 +1,4 @@
-// Package agent implements the four-state activity machine and the JSON
+// Package agent implements the three-state activity machine and the JSON
 // snapshot shared between `tmon status` (writer) and `tmon dashboard`
 // (reader), so the two always agree — a fix for the drift between the two
 // bash scripts.
@@ -11,14 +11,13 @@ import (
 	"github.com/guillaumemeyer/tmon/internal/config"
 )
 
-// Status is one of the four activity levels.
+// Status is one of the three activity levels.
 type Status string
 
 const (
-	StatusRunning Status = "running"
-	StatusActive  Status = "active"
-	StatusBlocked Status = "blocked"
-	StatusPaused  Status = "paused"
+	StatusBlocked Status = "blocked" // expecting a user action; overrides everything
+	StatusWorking Status = "working" // actively thinking or writing
+	StatusIdle    Status = "idle"    // alive but not working and not waiting
 )
 
 // AgentState is the per-process tracked state, persisted in state.json.
@@ -38,9 +37,9 @@ type AgentState struct {
 // Options configures the tracker.
 type Options struct {
 	PollIntervalSec     int   // seconds between full scans
-	ActivityThresholdMs int   // CPU ms/s to consider "active"
-	IOThreshold         int64 // min IO bytes/poll to consider "active"
-	IdleDecayPolls      int   // consecutive quiet polls before "paused"
+	ActivityThresholdMs int   // CPU ms/s to consider "working"
+	IOThreshold         int64 // min IO bytes/poll to consider "working"
+	IdleDecayPolls      int   // consecutive quiet polls before "idle"
 	CLKTicksPerSec      int   // kernel clock ticks per second
 }
 
@@ -75,7 +74,7 @@ func (t *Tracker) BeginPoll() {
 // Evaluate computes the activity status for a detected agent given its
 // current cumulative counters and whether its pane looks blocked.
 func (t *Tracker) Evaluate(pid int, label, cwd, pane string, cpuNow, ioNow int64, blocked bool) Status {
-	oldStatus := StatusRunning
+	oldStatus := StatusIdle
 	oldStreak := 0
 	oldLastTs := int64(0)
 	prev := t.prev[pid]
@@ -97,13 +96,13 @@ func (t *Tracker) Evaluate(pid int, label, cwd, pane string, cpuNow, ioNow int64
 	}
 
 	// First sighting (or a process that previously showed zero CPU): show it
-	// as running immediately — agents often think remotely with near-zero
-	// local CPU, and the delta math needs a baseline poll anyway.
+	// as idle immediately — agents often think remotely with near-zero local
+	// CPU, and the delta math needs a baseline poll anyway.
 	if prev == nil || prev.CPU == 0 {
-		next.Status, next.IdleStreak = StatusRunning, 0
-		next.LastTs = stamp(oldStatus, StatusRunning, oldLastTs)
+		next.Status, next.IdleStreak = StatusIdle, 0
+		next.LastTs = stamp(oldStatus, StatusIdle, oldLastTs)
 		t.curr[pid] = next
-		return StatusRunning
+		return StatusIdle
 	}
 
 	// Convert the per-second CPU threshold to ticks per poll interval,
@@ -116,14 +115,14 @@ func (t *Tracker) Evaluate(pid int, label, cwd, pane string, cpuNow, ioNow int64
 	cpuDelta := cpuNow - prev.CPU
 	ioDelta := ioNow - prev.IO
 	if cpuDelta >= int64(threshold) || ioDelta >= t.opts.IOThreshold {
-		next.Status, next.IdleStreak = StatusActive, 0
-		next.LastTs = stamp(oldStatus, StatusActive, oldLastTs)
+		next.Status, next.IdleStreak = StatusWorking, 0
+		next.LastTs = stamp(oldStatus, StatusWorking, oldLastTs)
 		t.curr[pid] = next
-		return StatusActive
+		return StatusWorking
 	}
 
 	// No meaningful activity: apply the decay grace period so agents
-	// between API calls don't flicker, then flag the agent as paused —
+	// between API calls don't flicker, then flag the agent as idle —
 	// alive, but not actively thinking or writing. Agents expecting user
 	// action never reach here: blocked above overrides everything.
 	streak := oldStreak + 1
@@ -134,10 +133,10 @@ func (t *Tracker) Evaluate(pid int, label, cwd, pane string, cpuNow, ioNow int64
 		t.curr[pid] = next
 		return oldStatus
 	}
-	next.Status = StatusPaused
-	next.LastTs = stamp(oldStatus, StatusPaused, oldLastTs)
+	next.Status = StatusIdle
+	next.LastTs = stamp(oldStatus, StatusIdle, oldLastTs)
 	t.curr[pid] = next
-	return StatusPaused
+	return StatusIdle
 }
 
 // EvaluateAuthoritative records a status supplied by a connector — the
@@ -147,7 +146,7 @@ func (t *Tracker) Evaluate(pid int, label, cwd, pane string, cpuNow, ioNow int64
 // otherwise previous CPU/IO values are preserved so a later fallback to the
 // heuristic path has a baseline.
 func (t *Tracker) EvaluateAuthoritative(pid int, label, cwd, pane string, st Status, detail string) Status {
-	oldStatus := StatusRunning
+	oldStatus := StatusIdle
 	oldLastTs := int64(0)
 	prev := t.prev[pid]
 	if prev != nil {

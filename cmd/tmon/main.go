@@ -26,9 +26,11 @@ Environment (set by tmon.tmux from the @tmon-* tmux options):
   TMON_STATE_DIR              State dir; default <plugin>/state
   TMON_BIN_DIR                Binary dir; default <plugin>/bin
   TMON_POLL_INTERVAL_MS       Poll interval in ms (default 3000)
-  TMON_ACTIVITY_THRESHOLD_MS  CPU floor for "active" in ms/s (default 500)
-  TMON_IO_ACTIVITY_THRESHOLD  Min IO bytes/poll for "active" (default 102400)
-  TMON_IDLE_DECAY_POLLS       Grace polls before flagging "paused" (default 3)
+  TMON_ACTIVITY_THRESHOLD_MS  CPU floor for "working" in ms/s (default 500)
+  TMON_IO_ACTIVITY_THRESHOLD  Min IO bytes/poll for "working" (default 102400)
+  TMON_IDLE_DECAY_POLLS       Grace polls before flagging "idle" (default 3)
+  TMON_ASCII_ICONS            Render status icons as ASCII instead of emoji
+                              (default 0 = emoji 🤖 🛑 ⚡️ 💤; 1 = [@] B W I)
   TMON_CONNECTORS             Connector selection: "auto" or a comma list
                               (default auto; agents' own state sources)
   TMON_CONNECTOR_FRESHNESS    Seconds a connector signal stays valid (default 30)

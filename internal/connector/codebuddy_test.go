@@ -36,8 +36,8 @@ func TestCodeBuddyEmitsRecordPerSessionFile(t *testing.T) {
 		t.Fatalf("records = %+v, want 2 (non-numeric filename ignored)", recs)
 	}
 	for _, r := range recs {
-		if r.Label != "CodeBuddy" || r.Status != agent.StatusRunning {
-			t.Errorf("record = %+v, want CodeBuddy running", r)
+		if r.Label != "CodeBuddy" || r.Status != agent.StatusIdle {
+			t.Errorf("record = %+v, want CodeBuddy idle", r)
 		}
 		if r.PID != 4242 && r.PID != 5150 {
 			t.Errorf("PID = %d, want one of 4242/5150", r.PID)

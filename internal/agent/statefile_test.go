@@ -11,9 +11,8 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	path := filepath.Join(dir, "state.json")
 
 	sf := NewState()
-	sf.Frame = 7
 	sf.Agents = []AgentState{
-		{PID: 100, Label: "Grok", Status: StatusActive, CPU: 1234, IO: 5678, IdleStreak: 0, Pane: "main:0.0", CWD: "code/tmon"},
+		{PID: 100, Label: "Grok", Status: StatusWorking, CPU: 1234, IO: 5678, IdleStreak: 0, Pane: "main:0.0", CWD: "code/tmon"},
 	}
 	if err := sf.Save(path); err != nil {
 		t.Fatal(err)
@@ -23,11 +22,11 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Version != StateFileVersion || got.Frame != 7 || len(got.Agents) != 1 {
+	if got.Version != StateFileVersion || len(got.Agents) != 1 {
 		t.Fatalf("round-trip mismatch: %+v", got)
 	}
 	a := got.Agents[0]
-	if a.PID != 100 || a.Label != "Grok" || a.Status != StatusActive || a.CPU != 1234 || a.IO != 5678 || a.Pane != "main:0.0" || a.CWD != "code/tmon" {
+	if a.PID != 100 || a.Label != "Grok" || a.Status != StatusWorking || a.CPU != 1234 || a.IO != 5678 || a.Pane != "main:0.0" || a.CWD != "code/tmon" {
 		t.Errorf("agent mismatch: %+v", a)
 	}
 }
@@ -56,7 +55,7 @@ func TestSaveIsAtomic(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "state.json")
 	sf := NewState()
-	sf.Agents = []AgentState{{PID: 1, Label: "Grok", Status: StatusRunning}}
+	sf.Agents = []AgentState{{PID: 1, Label: "Grok", Status: StatusIdle}}
 	if err := sf.Save(path); err != nil {
 		t.Fatal(err)
 	}

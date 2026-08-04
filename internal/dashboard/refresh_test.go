@@ -17,7 +17,6 @@ func refreshFixture(t *testing.T, states []agent.AgentState, blocked map[string]
 	cfg := config.Defaults()
 	cfg.StateDir = t.TempDir()
 	sf := agent.NewState()
-	sf.Frame = 3
 	sf.Agents = states
 	if err := sf.Save(cfg.StateFilePath()); err != nil {
 		t.Fatal(err)
@@ -52,7 +51,7 @@ func refreshFixture(t *testing.T, states []agent.AgentState, blocked map[string]
 
 func TestLoadFullMergesConnectorOnlyAgents(t *testing.T) {
 	cfg, _ := refreshFixture(t, []agent.AgentState{
-		{PID: 10, Label: "Grok", Status: agent.StatusActive, Detail: "tool:Bash", CWD: "code/tmon", Pane: "main:0.0", LastTs: 1700000000},
+		{PID: 10, Label: "Grok", Status: agent.StatusWorking, Detail: "tool:Bash", CWD: "code/tmon", Pane: "main:0.0", LastTs: 1700000000},
 		{PID: 999, Label: "Hermes", Status: agent.StatusBlocked, Detail: "3 active agents", CWD: "code/tmon", Pane: "main:0.2"},
 	}, nil)
 
@@ -74,7 +73,7 @@ func TestLoadFullMergesConnectorOnlyAgents(t *testing.T) {
 			hermes = &data.Rows[i]
 		}
 	}
-	if grok == nil || grok.Detail != "tool:Bash" || grok.Status != agent.StatusActive || grok.LastTs != 1700000000 {
+	if grok == nil || grok.Detail != "tool:Bash" || grok.Status != agent.StatusWorking || grok.LastTs != 1700000000 {
 		t.Errorf("Grok row = %+v, want detail/lastTs overlay from state", grok)
 	}
 	if hermes == nil {
@@ -92,7 +91,7 @@ func TestLoadFullMergesConnectorOnlyAgents(t *testing.T) {
 
 func TestLoadFullBlockedReasonOverlay(t *testing.T) {
 	cfg, _ := refreshFixture(t, []agent.AgentState{
-		{PID: 10, Label: "Grok", Status: agent.StatusRunning, CWD: "code/tmon", Pane: "main:0.0"},
+		{PID: 10, Label: "Grok", Status: agent.StatusIdle, CWD: "code/tmon", Pane: "main:0.0"},
 	}, map[string]string{"main:0.0": "[y/N]"})
 
 	data, err := loadFull(cfg)
@@ -113,7 +112,7 @@ func TestLoadFullBlockedReasonOverlay(t *testing.T) {
 
 func TestLoadFullUnpanedConnectorOnlyAgent(t *testing.T) {
 	cfg, _ := refreshFixture(t, []agent.AgentState{
-		{PID: 999, Label: "CodeBuddy", Status: agent.StatusRunning, Detail: "session:4242", CWD: "code/tmon"},
+		{PID: 999, Label: "CodeBuddy", Status: agent.StatusIdle, Detail: "session:4242", CWD: "code/tmon"},
 	}, nil)
 
 	data, err := loadFull(cfg)
@@ -139,7 +138,7 @@ func TestLoadFullUnpanedConnectorOnlyAgent(t *testing.T) {
 
 func TestRowFromAgentStateDefaultsStatus(t *testing.T) {
 	r := rowFromAgentState(agent.AgentState{PID: 5, Label: "Aider"})
-	if r.Status != agent.StatusRunning {
-		t.Fatalf("status = %v, want running default", r.Status)
+	if r.Status != agent.StatusIdle {
+		t.Fatalf("status = %v, want idle default", r.Status)
 	}
 }

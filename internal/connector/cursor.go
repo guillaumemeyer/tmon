@@ -5,7 +5,7 @@
 // hooks are not installed, the newest session file under ~/.cursor/ (the
 // CLI data lives under ~/.cursor/cli/ when present) serves as a weaker
 // fallback: if a Cursor agent process is running and that file was touched
-// within the freshness window, the agent is at least "running". If the
+// within the freshness window, the agent is at least "idle". If the
 // paths drift, the connector emits nothing and Cursor stays on the
 // CPU/IO heuristic path.
 package connector

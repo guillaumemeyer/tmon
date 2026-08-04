@@ -57,8 +57,8 @@ func TestCursorNativeFallbackPairsRunningProcessWithFreshFile(t *testing.T) {
 		t.Fatalf("records = %+v, want 1", recs)
 	}
 	r := recs[0]
-	if r.PID != 4242 || r.Label != "Cursor" || r.Status != agent.StatusRunning || r.Detail != "session:active" {
-		t.Errorf("record = %+v, want PID 4242 Cursor running session:active", r)
+	if r.PID != 4242 || r.Label != "Cursor" || r.Status != agent.StatusIdle || r.Detail != "session:active" {
+		t.Errorf("record = %+v, want PID 4242 Cursor idle session:active", r)
 	}
 	if time.Since(r.At) > 5*time.Second {
 		t.Errorf("At = %v, want recent file mtime", r.At)

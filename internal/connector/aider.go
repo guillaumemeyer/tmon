@@ -55,7 +55,7 @@ func (Aider) Probe(cfg config.Config) ([]Record, error) {
 		recs = append(recs, Record{
 			PID:    pid,
 			Label:  "Aider",
-			Status: agent.StatusActive,
+			Status: agent.StatusWorking,
 			Detail: "editing",
 			CWD:    proc.CWDShort(cwd),
 			At:     at,

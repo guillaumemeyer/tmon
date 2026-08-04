@@ -4,7 +4,7 @@
 // writing conversation JSON as it works. The connector watches for the
 // session whose files were touched most recently: when a Cline process is
 // running and that session was written within the freshness window, the
-// agent is active. Session dirs that go quiet simply stop producing
+// agent is working. Session dirs that go quiet simply stop producing
 // records, so Cline decays back to the CPU/IO heuristic path.
 package connector
 
@@ -44,7 +44,7 @@ func (Cline) Probe(cfg config.Config) ([]Record, error) {
 	return []Record{{
 		PID:    pid,
 		Label:  "Cline",
-		Status: agent.StatusActive,
+		Status: agent.StatusWorking,
 		Detail: "session:" + id,
 		At:     at,
 	}}, nil

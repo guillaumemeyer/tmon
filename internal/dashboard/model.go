@@ -11,10 +11,7 @@ import (
 )
 
 // Refresh cadence, matching the bash popup.
-const (
-	refreshInterval = 1500 * time.Millisecond // between auto-refresh ticks
-	fullReloadTicks = 4                       // full data reload every N ticks (~6s)
-)
+const refreshInterval = 1500 * time.Millisecond // between auto-refresh ticks
 
 // Row is one detected agent and the pane data the popup shows about it.
 type Row struct {
@@ -34,24 +31,14 @@ type Row struct {
 	PaneIndex     string
 }
 
-// Data is one dashboard snapshot. A light refresh returns only Frame (Rows
-// nil) so the model keeps its cached rows; a full reload returns both.
+// Data is one dashboard snapshot: the full agent list after a reload.
 type Data struct {
-	Rows  []Row
-	Frame int
+	Rows []Row
 }
-
-// Mode selects how much work a refresh does.
-type Mode bool
-
-const (
-	ModeLight Mode = false // re-read the shared state file for the animation frame
-	ModeFull  Mode = true  // full reload: detection, pane map, blocked checks
-)
 
 // Loader produces dashboard snapshots. It is a field so tests can inject a
 // fake one; DefaultLoader builds the real implementation.
-type Loader func(mode Mode) (Data, error)
+type Loader func() (Data, error)
 
 // itemKind discriminates the grouped display items.
 type itemKind int
@@ -86,9 +73,8 @@ const (
 // toggle order: most urgent first.
 var statusOrder = []agent.Status{
 	agent.StatusBlocked,
-	agent.StatusActive,
-	agent.StatusRunning,
-	agent.StatusPaused,
+	agent.StatusWorking,
+	agent.StatusIdle,
 }
 
 // Model is the bubbletea state for the dashboard popup.
@@ -111,8 +97,7 @@ type Model struct {
 	query     string
 	searching bool
 
-	frame int // animation frame (toggles ?/● ↔ !)
-	ticks int // auto-refresh tick counter
+	ascii bool // render status icons as ASCII (B/W/I) instead of emoji
 
 	width, height int
 
@@ -123,8 +108,9 @@ type Model struct {
 
 // New returns the dashboard model. loader supplies data snapshots; if nil
 // the dashboard stays empty (safe zero value for direct construction).
-func New(loader Loader) Model {
-	return Model{loader: loader, focusCmd: defaultFocusCmd}
+// ascii renders the status icons as ASCII (B/W/I) instead of emoji.
+func New(loader Loader, ascii bool) Model {
+	return Model{loader: loader, ascii: ascii, focusCmd: defaultFocusCmd}
 }
 
 // Init kicks off the initial full load and the auto-refresh ticker.

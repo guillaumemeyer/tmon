@@ -18,53 +18,57 @@ func testOptions() Options {
 	})
 }
 
-func TestFirstSightingIsRunning(t *testing.T) {
+func TestFirstSightingIsIdle(t *testing.T) {
 	tr := NewTracker(testOptions())
 	tr.BeginPoll()
-	if got := tr.Evaluate(1, "Grok", "c", "?", 1000, 0, false); got != StatusRunning {
-		t.Errorf("first sighting = %q, want running", got)
+	if got := tr.Evaluate(1, "Grok", "c", "?", 1000, 0, false); got != StatusIdle {
+		t.Errorf("first sighting = %q, want idle", got)
 	}
 }
 
-func TestZeroCPUStaysRunning(t *testing.T) {
-	// The bash plugin treats a zero previous CPU read as a first sighting;
-	// a just-forked process with no ticks yet must not be called "paused".
+func TestZeroCPUStaysIdle(t *testing.T) {
+	// A just-forked process with no ticks yet must not be mislabeled; the
+	// delta math needs a baseline poll anyway.
 	tr := NewTracker(testOptions())
 	tr.BeginPoll()
 	tr.Evaluate(1, "Grok", "c", "?", 0, 0, false)
 	tr.EndPoll()
 
 	tr.BeginPoll()
-	if got := tr.Evaluate(1, "Grok", "c", "?", 0, 0, false); got != StatusRunning {
-		t.Errorf("zero-CPU second poll = %q, want running", got)
+	if got := tr.Evaluate(1, "Grok", "c", "?", 0, 0, false); got != StatusIdle {
+		t.Errorf("zero-CPU second poll = %q, want idle", got)
 	}
 }
 
 func TestIdleDecayGrace(t *testing.T) {
 	tr := NewTracker(testOptions())
 	tr.BeginPoll()
-	tr.Evaluate(1, "Grok", "c", "?", 1000, 0, false) // first sight: running
+	tr.Evaluate(1, "Grok", "c", "?", 1000, 0, false) // first sight: idle
+	tr.EndPoll()
+
+	tr.BeginPoll()
+	tr.Evaluate(1, "Grok", "c", "?", 1200, 0, false) // working
 	tr.EndPoll()
 
 	// Two quiet polls stay in grace (streak 1 and 2); the third quiet poll
-	// (streak 3, == IdleDecayPolls) flips to paused. README: "no meaningful
+	// (streak 3, == IdleDecayPolls) flips to idle. README: "no meaningful
 	// activity for 3 consecutive polls".
 	for i := 1; i <= 2; i++ {
 		tr.BeginPoll()
-		got := tr.Evaluate(1, "Grok", "c", "?", 1000, 0, false)
-		if got != StatusRunning {
-			t.Fatalf("quiet poll %d = %q, want running (grace)", i, got)
+		got := tr.Evaluate(1, "Grok", "c", "?", 1200, 0, false)
+		if got != StatusWorking {
+			t.Fatalf("quiet poll %d = %q, want working (grace)", i, got)
 		}
 		tr.EndPoll()
 	}
 
 	tr.BeginPoll()
-	if got := tr.Evaluate(1, "Grok", "c", "?", 1000, 0, false); got != StatusPaused {
-		t.Errorf("3rd quiet poll = %q, want paused", got)
+	if got := tr.Evaluate(1, "Grok", "c", "?", 1200, 0, false); got != StatusIdle {
+		t.Errorf("3rd quiet poll = %q, want idle", got)
 	}
 }
 
-func TestActiveOnCPU(t *testing.T) {
+func TestWorkingOnCPU(t *testing.T) {
 	// Threshold: 500 ms/s * 3 s * 100 ticks/s / 1000 = 150 ticks/poll.
 	tr := NewTracker(testOptions())
 	tr.BeginPoll()
@@ -73,12 +77,12 @@ func TestActiveOnCPU(t *testing.T) {
 
 	tr.BeginPoll()
 	got := tr.Evaluate(1, "Grok", "c", "?", 1200, 0, false) // +200 ticks
-	if got != StatusActive {
-		t.Errorf("CPU-active poll = %q, want active", got)
+	if got != StatusWorking {
+		t.Errorf("CPU-active poll = %q, want working", got)
 	}
 }
 
-func TestActiveOnIO(t *testing.T) {
+func TestWorkingOnIO(t *testing.T) {
 	tr := NewTracker(testOptions())
 	tr.BeginPoll()
 	tr.Evaluate(1, "Grok", "c", "?", 1000, 0, false)
@@ -86,12 +90,12 @@ func TestActiveOnIO(t *testing.T) {
 
 	tr.BeginPoll()
 	got := tr.Evaluate(1, "Grok", "c", "?", 1000, 200000, false) // +200KB IO
-	if got != StatusActive {
-		t.Errorf("IO-active poll = %q, want active", got)
+	if got != StatusWorking {
+		t.Errorf("IO-active poll = %q, want working", got)
 	}
 }
 
-func TestIOBelowThresholdIsNotActive(t *testing.T) {
+func TestIOBelowThresholdIsNotWorking(t *testing.T) {
 	tr := NewTracker(testOptions())
 	tr.BeginPoll()
 	tr.Evaluate(1, "Grok", "c", "?", 1000, 0, false)
@@ -99,8 +103,8 @@ func TestIOBelowThresholdIsNotActive(t *testing.T) {
 
 	tr.BeginPoll()
 	got := tr.Evaluate(1, "Grok", "c", "?", 1000, 50000, false) // +50KB < 102400
-	if got == StatusActive {
-		t.Errorf("sub-threshold IO marked active: %q", got)
+	if got == StatusWorking {
+		t.Errorf("sub-threshold IO marked working: %q", got)
 	}
 }
 
@@ -166,8 +170,8 @@ func TestSnapshotSortedByPID(t *testing.T) {
 func TestEvaluateAuthoritativeRecordsStatusAndDetail(t *testing.T) {
 	tr := NewTracker(testOptions())
 	tr.BeginPoll()
-	if got := tr.EvaluateAuthoritative(1, "Grok", "code/tmon", "?", StatusActive, "phase:reasoning"); got != StatusActive {
-		t.Fatalf("status = %q, want active", got)
+	if got := tr.EvaluateAuthoritative(1, "Grok", "code/tmon", "?", StatusWorking, "phase:reasoning"); got != StatusWorking {
+		t.Fatalf("status = %q, want working", got)
 	}
 	snap := tr.Snapshot()
 	if len(snap) != 1 {
@@ -187,12 +191,12 @@ func TestEvaluateAuthoritativeRecordsStatusAndDetail(t *testing.T) {
 func TestEvaluateAuthoritativeResetsStreakOnChange(t *testing.T) {
 	tr := NewTracker(testOptions())
 	tr.BeginPoll()
-	tr.EvaluateAuthoritative(1, "Grok", "c", "?", StatusActive, "tool:Bash")
+	tr.EvaluateAuthoritative(1, "Grok", "c", "?", StatusWorking, "tool:Bash")
 	tr.EndPoll()
 
 	// Same status: streak must not reset (no flicker).
 	tr.BeginPoll()
-	tr.EvaluateAuthoritative(1, "Grok", "c", "?", StatusActive, "tool:Read")
+	tr.EvaluateAuthoritative(1, "Grok", "c", "?", StatusWorking, "tool:Read")
 	snap := tr.Snapshot()
 	if snap[0].IdleStreak != 0 {
 		t.Errorf("same-status poll: IdleStreak = %d, want 0", snap[0].IdleStreak)
@@ -216,12 +220,12 @@ func TestEvaluateAuthoritativePreservesBaseline(t *testing.T) {
 	// heuristic path has a baseline when it takes over.
 	tr := NewTracker(testOptions())
 	tr.BeginPoll()
-	tr.EvaluateAuthoritative(1, "Grok", "c", "?", StatusActive, "tool:Bash")
+	tr.EvaluateAuthoritative(1, "Grok", "c", "?", StatusWorking, "tool:Bash")
 	tr.EndPoll()
 
 	// Heuristic takeover: the authoritative record left CPU at 0, so this
-	// poll is a fresh baseline (running), then three quiet polls decay to
-	// paused (grace of 3).
+	// poll is a fresh baseline (idle), then quiet polls stay idle (grace of
+	// 3 keeps the previous status until the streak runs out).
 	tr.BeginPoll()
 	tr.Evaluate(1, "Grok", "c", "?", 1000, 0, false)
 	tr.EndPoll()
@@ -233,7 +237,7 @@ func TestEvaluateAuthoritativePreservesBaseline(t *testing.T) {
 	}
 
 	tr.BeginPoll()
-	if got := tr.Evaluate(1, "Grok", "c", "?", 1000, 0, false); got != StatusPaused {
-		t.Errorf("quiet polls after connector = %q, want paused", got)
+	if got := tr.Evaluate(1, "Grok", "c", "?", 1000, 0, false); got != StatusIdle {
+		t.Errorf("quiet polls after connector = %q, want idle", got)
 	}
 }

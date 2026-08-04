@@ -58,18 +58,18 @@ func TestGrokPhaseMapping(t *testing.T) {
 			`{"ts":"` + nowTS() + `","type":"permission_requested","tool_name":"write"}` + "\n",
 			agent.StatusBlocked, "permission:write"},
 		{"reasoning", `{"ts":"` + nowTS() + `","type":"phase_changed","phase":"streaming_reasoning"}` + "\n",
-			agent.StatusActive, "phase:reasoning"},
+			agent.StatusWorking, "phase:reasoning"},
 		{"responding", `{"ts":"` + nowTS() + `","type":"phase_changed","phase":"streaming_text"}` + "\n",
-			agent.StatusActive, "phase:responding"},
+			agent.StatusWorking, "phase:responding"},
 		{"tool running", `{"ts":"` + nowTS() + `","type":"phase_changed","phase":"tool_execution"}` + "\n" +
 			`{"ts":"` + nowTS() + `","type":"tool_started","tool_name":"read_file"}` + "\n",
-			agent.StatusActive, "tool:read_file"},
+			agent.StatusWorking, "tool:read_file"},
 		{"completed tool", `{"ts":"` + nowTS() + `","type":"phase_changed","phase":"tool_execution"}` + "\n" +
 			`{"ts":"` + nowTS() + `","type":"tool_started","tool_name":"read_file"}` + "\n" +
 			`{"ts":"` + nowTS() + `","type":"tool_completed","tool_name":"read_file"}` + "\n",
-			agent.StatusActive, "tool:running"},
+			agent.StatusWorking, "tool:running"},
 		{"waiting for model", `{"ts":"` + nowTS() + `","type":"phase_changed","phase":"waiting_for_model"}` + "\n",
-			agent.StatusActive, "phase:waiting-model"},
+			agent.StatusWorking, "phase:waiting-model"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -98,7 +98,7 @@ func TestGrokPhaseMapping(t *testing.T) {
 	}
 }
 
-func TestGrokSessionWithoutEventsIsRunning(t *testing.T) {
+func TestGrokSessionWithoutEventsIsIdle(t *testing.T) {
 	grokFixture(t, "", "2026-08-02T09:00:00Z")
 	recs, err := (Grok{}).Probe(config.Defaults())
 	if err != nil {
@@ -107,8 +107,8 @@ func TestGrokSessionWithoutEventsIsRunning(t *testing.T) {
 	if len(recs) != 1 {
 		t.Fatalf("records = %+v, want 1", recs)
 	}
-	if recs[0].Status != agent.StatusRunning || recs[0].Detail != "started" {
-		t.Errorf("record = %+v, want running started", recs[0])
+	if recs[0].Status != agent.StatusIdle || recs[0].Detail != "started" {
+		t.Errorf("record = %+v, want idle started", recs[0])
 	}
 }
 
@@ -154,8 +154,8 @@ func TestGrokMultipleSessions(t *testing.T) {
 	if len(recs) != 2 {
 		t.Fatalf("records = %+v, want 2 sessions", recs)
 	}
-	if recs[0].Status != agent.StatusActive || recs[1].Status != agent.StatusRunning {
-		t.Errorf("statuses = %q,%q want active,running", recs[0].Status, recs[1].Status)
+	if recs[0].Status != agent.StatusWorking || recs[1].Status != agent.StatusIdle {
+		t.Errorf("statuses = %q,%q want working,idle", recs[0].Status, recs[1].Status)
 	}
 }
 
@@ -176,7 +176,7 @@ func TestGrokFreshPhaseSurvivesCollect(t *testing.T) {
 	grokFixture(t, `{"ts":"`+nowTS()+`","type":"phase_changed","phase":"streaming_reasoning"}`+"\n", "2026-08-02T09:00:00Z")
 	stubGrokLive(t)
 	got := Collect(config.Defaults(), time.Now())
-	if len(got) != 1 || got[0].Status != agent.StatusActive {
+	if len(got) != 1 || got[0].Status != agent.StatusWorking {
 		t.Fatalf("collect = %+v, want one active record", got)
 	}
 }

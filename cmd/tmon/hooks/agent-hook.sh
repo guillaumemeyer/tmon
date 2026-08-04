@@ -42,18 +42,18 @@ else
   tool="$(field tool_name)"
   case "$event" in
     SessionEnd|sessionEnd) rm -f "$dir/$session.json"; exit 0 ;;
-    SessionStart|sessionStart) status=running; detail=started ;;
-    UserPromptSubmit|beforeSubmitPrompt|pre_user_prompt) status=running; detail=prompted ;;
-    PreToolUse|preToolUse|pre_run_command|pre_write_code|pre_mcp_tool_use) status=active; detail="tool:${tool:-running}" ;;
-    PostToolUse|postToolUse|afterShellExecution|afterFileEdit|beforeMCPExecution) status=active; detail="done:${tool:-running}" ;;
-    PostToolUseFailure|postToolUseFailure) status=active; detail="failed:${tool:-running}" ;;
+    SessionStart|sessionStart) status=idle; detail=started ;;
+    UserPromptSubmit|beforeSubmitPrompt|pre_user_prompt) status=idle; detail=prompted ;;
+    PreToolUse|preToolUse|pre_run_command|pre_write_code|pre_mcp_tool_use) status=working; detail="tool:${tool:-running}" ;;
+    PostToolUse|postToolUse|afterShellExecution|afterFileEdit|beforeMCPExecution) status=working; detail="done:${tool:-running}" ;;
+    PostToolUseFailure|postToolUseFailure) status=working; detail="failed:${tool:-running}" ;;
     PermissionRequest|permissionRequest|PermissionDenied|permissionDenied) status=blocked; detail="permission:${tool:-unknown}" ;;
-    Stop|stop|agentStop) status=paused; detail=turn-complete ;;
-    post_cascade_response) status=paused; detail=responded ;;
-    post_cascade_response_with_transcript) status=active; detail=transcript ;;
-    SubagentStart|SubagentStop) status=active; detail=subagent ;;
-    PreCompact|PostCompact) status=active; detail=compacting ;;
-    *) status=running; detail=started ;;
+    Stop|stop|agentStop) status=idle; detail=turn-complete ;;
+    post_cascade_response) status=idle; detail=responded ;;
+    post_cascade_response_with_transcript) status=working; detail=transcript ;;
+    SubagentStart|SubagentStop) status=working; detail=subagent ;;
+    PreCompact|PostCompact) status=working; detail=compacting ;;
+    *) status=idle; detail=started ;;
   esac
 fi
 

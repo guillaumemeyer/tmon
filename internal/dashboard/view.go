@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -136,7 +137,11 @@ func (m Model) previewLines(w, n int) []string {
 
 // headerLine is the title with the key-hint aligned right.
 func (m Model) headerLine(w int) string {
-	title := styleCyan.Bold(true).Render("[@] TMON")
+	app := "[@]"
+	if !m.ascii {
+		app = "🤖"
+	}
+	title := styleCyan.Bold(true).Render(app + " TMON")
 	hint := styleDim.Render("[/] search  [g] group  [d] preview  [esc/q] quit")
 	pad := w - ansi.StringWidth(title) - ansi.StringWidth(hint)
 	if pad < 1 {
@@ -159,11 +164,11 @@ func (m Model) renderItem(di int, it item, w int) string {
 		}
 		return styleDim.Render("    " + name)
 	case itemStatus:
-		return "  " + statusHeader(it.status)
+		return "  " + statusHeader(it.status, m.ascii)
 	case itemAgent:
 		r := m.rows[it.rowIdx]
 		line := fmt.Sprintf("      [%s] %s %s  %s",
-			r.PaneIndex, animatedStatusChar(r.Status, m.frame), agentFullName(r.Label), r.CWD)
+			r.PaneIndex, animatedStatusChar(r.Status, m.ascii), agentFullName(r.Label), displayCWD(r.CWD))
 		if r.BlockedReason != "" {
 			line += "  " + styleOrange.Render(r.BlockedReason)
 		}
@@ -182,18 +187,46 @@ func (m Model) renderItem(di int, it item, w int) string {
 	return ""
 }
 
+// displayCWD renders an agent's working directory for the popup: absolute
+// paths under $HOME are shown home-relative ("~/code/tmon", "~" for the
+// home dir itself); anything else (short forms, "?", root) passes through
+// unchanged.
+func displayCWD(cwd string) string {
+	if !strings.HasPrefix(cwd, "/") {
+		return cwd
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return cwd
+	}
+	if cwd == home {
+		return "~"
+	}
+	if rest, ok := strings.CutPrefix(cwd, home+"/"); ok {
+		return "~/" + rest
+	}
+	return cwd
+}
+
 // statusHeader renders a group-by-status header with its status character
 // and name, colored like the status bar.
-func statusHeader(st agent.Status) string {
+func statusHeader(st agent.Status, ascii bool) string {
 	switch st {
 	case agent.StatusBlocked:
-		return styleOrange.Bold(true).Render("? Blocked")
-	case agent.StatusActive:
-		return styleGreen.Bold(true).Render("● Active")
-	case agent.StatusRunning:
-		return styleGreen.Bold(true).Render("● Running")
-	case agent.StatusPaused:
-		return styleBlue.Bold(true).Render("‖ Paused")
+		if ascii {
+			return styleOrange.Bold(true).Render("B Blocked")
+		}
+		return styleOrange.Bold(true).Render("🛑 Blocked")
+	case agent.StatusWorking:
+		if ascii {
+			return styleGreen.Bold(true).Render("W Working")
+		}
+		return styleGreen.Bold(true).Render("⚡️ Working")
+	case agent.StatusIdle:
+		if ascii {
+			return styleBlue.Bold(true).Render("I Idle")
+		}
+		return styleBlue.Bold(true).Render("💤 Idle")
 	}
 	return string(st)
 }
@@ -228,43 +261,51 @@ func (m Model) filterLabel() string {
 	switch m.filterStatus {
 	case agent.StatusBlocked:
 		return "b:blocked"
-	case agent.StatusActive:
-		return "a:active"
-	case agent.StatusRunning:
-		return "w:running"
-	case agent.StatusPaused:
-		return "p:paused"
+	case agent.StatusWorking:
+		return "w:working"
+	case agent.StatusIdle:
+		return "i:idle"
 	}
 	return ""
 }
 
 // statusCounts tallies the filtered agents by status (index order: blocked,
-// active, running, idle).
-func (m Model) statusCounts() [4]int {
-	var c [4]int
+// working, idle).
+func (m Model) statusCounts() [3]int {
+	var c [3]int
 	for _, fi := range m.filtered {
 		switch m.rows[fi].Status {
 		case agent.StatusBlocked:
 			c[0]++
-		case agent.StatusActive:
+		case agent.StatusWorking:
 			c[1]++
-		case agent.StatusRunning:
+		case agent.StatusIdle:
 			c[2]++
-		case agent.StatusPaused:
-			c[3]++
 		}
 	}
 	return c
 }
 
-// countString renders the status-bar-style counts: ? blocked, ● active
-// (including running), ‖ paused — over the filtered set.
+// countString renders the status-bar-style counts over the filtered set,
+// with the same visibility rule as the status bar: a segment (icon + count)
+// is only shown when its count is non-zero.
 func (m Model) countString() string {
 	c := m.statusCounts()
-	return fmt.Sprintf("%s %d  %s %d  %s %d",
-		styleOrange.Render("?"), c[0],
-		styleGreen.Render("●"), c[1]+c[2],
-		styleBlue.Render("‖"), c[3])
+	bIcon, wIcon, iIcon := "B", "W", "I"
+	if !m.ascii {
+		bIcon, wIcon, iIcon = "🛑", "⚡️", "💤"
+	}
+	segs := make([]string, 0, 3)
+	add := func(icon string, style lipgloss.Style, n int) {
+		if n <= 0 {
+			return
+		}
+		segs = append(segs, fmt.Sprintf("%s %d", style.Render(icon), n))
+	}
+	add(bIcon, styleOrange, c[0])
+	add(wIcon, styleGreen, c[1])
+	add(iIcon, styleBlue, c[2])
+	return strings.Join(segs, "  ")
 }
 
 // twoSided lays out left and right strings on one line, right-aligned.
@@ -276,23 +317,25 @@ func (m Model) twoSided(left, right string, w int) string {
 	return left + strings.Repeat(" ", pad) + right
 }
 
-// animatedStatusChar returns the per-agent status character, toggling ?/●
-// between "!" on odd frames exactly like the bash popup.
-func animatedStatusChar(status agent.Status, frame int) string {
-	odd := frame%2 != 0
+// animatedStatusChar returns the per-agent status character. Icons are
+// static — there is no pulse animation.
+func animatedStatusChar(status agent.Status, ascii bool) string {
 	switch status {
 	case agent.StatusBlocked:
-		if odd {
-			return styleOrange.Render("!")
+		if ascii {
+			return styleOrange.Render("B")
 		}
-		return styleOrange.Render("?")
-	case agent.StatusActive, agent.StatusRunning:
-		if odd {
-			return styleGreen.Render("!")
+		return styleOrange.Render("🛑")
+	case agent.StatusWorking:
+		if ascii {
+			return styleGreen.Render("W")
 		}
-		return styleGreen.Render("●")
-	case agent.StatusPaused:
-		return styleBlue.Render("‖")
+		return styleGreen.Render("⚡️")
+	case agent.StatusIdle:
+		if ascii {
+			return styleBlue.Render("I")
+		}
+		return styleBlue.Render("💤")
 	default:
 		return styleDim.Render("·")
 	}

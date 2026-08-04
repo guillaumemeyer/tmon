@@ -8,14 +8,12 @@ import (
 	"github.com/guillaumemeyer/tmon/internal/agent"
 )
 
-// fakeLoader records the modes it was called with and returns fixed data.
+// fakeLoader returns fixed data on every load.
 type fakeLoader struct {
-	modes []Mode
-	data  Data
+	data Data
 }
 
-func (f *fakeLoader) load(mode Mode) (Data, error) {
-	f.modes = append(f.modes, mode)
+func (f *fakeLoader) load() (Data, error) {
 	return f.data, nil
 }
 
@@ -23,11 +21,11 @@ func (f *fakeLoader) load(mode Mode) (Data, error) {
 // scenarios in the bash popup tests.
 func testRows() []Row {
 	return []Row{
-		{PID: 10, Label: "Grok", Status: agent.StatusActive, CWD: "code/tmon",
+		{PID: 10, Label: "Grok", Status: agent.StatusWorking, CWD: "code/tmon",
 			Pane: "main:0.0", SessionID: "1", SessionName: "main", WindowIndex: "0", WindowName: "shell", PaneIndex: "0"},
 		{PID: 11, Label: "Claude", Status: agent.StatusBlocked, CWD: "site",
 			Pane: "main:0.1", SessionID: "1", SessionName: "main", WindowIndex: "0", WindowName: "shell", PaneIndex: "1"},
-		{PID: 12, Label: "Codex", Status: agent.StatusPaused, CWD: "blog",
+		{PID: 12, Label: "Codex", Status: agent.StatusIdle, CWD: "blog",
 			Pane: "side:3.0", SessionID: "2", SessionName: "side", WindowIndex: "3", WindowName: "code", PaneIndex: "0"},
 	}
 }
@@ -46,59 +44,35 @@ func key(r rune) tea.KeyMsg {
 }
 
 func TestInitialLoadIsFull(t *testing.T) {
-	f := &fakeLoader{data: Data{Rows: testRows(), Frame: 2}}
-	m := New(f.load)
+	f := &fakeLoader{data: Data{Rows: testRows()}}
+	m := New(f.load, true)
 
 	if len(m.rows) != 0 {
 		t.Fatalf("expected no rows before the initial load, got %d", len(m.rows))
 	}
 
 	m = applyMsg(t, m, initMsg{})
-	if len(f.modes) != 1 || f.modes[0] != ModeFull {
-		t.Fatalf("initial load modes = %v, want [full]", f.modes)
-	}
 	if len(m.rows) != 3 {
 		t.Fatalf("rows after initial load = %d, want 3", len(m.rows))
 	}
-	if m.frame != 2 {
-		t.Fatalf("frame = %d, want 2", m.frame)
-	}
 }
 
-func TestTickModeProgression(t *testing.T) {
+func TestTickReloadsRows(t *testing.T) {
 	f := &fakeLoader{data: Data{Rows: testRows()}}
-	m := New(f.load)
-
-	// Ticks 1-3 are light frame refreshes, tick 4 is a full reload, then the
-	// cycle repeats — matching the bash popup's refresh every 4 ticks.
-	for _, want := range []Mode{ModeLight, ModeLight, ModeLight, ModeFull, ModeLight} {
-		m = applyMsg(t, m, tickMsg{})
-		got := f.modes[len(f.modes)-1]
-		if got != want {
-			t.Fatalf("tick mode = %v, want %v (all modes: %v)", got, want, f.modes)
-		}
-	}
-}
-
-func TestLightRefreshKeepsRowsAndUpdatesFrame(t *testing.T) {
-	f := &fakeLoader{data: Data{Rows: testRows(), Frame: 0}}
-	m := New(f.load)
+	m := New(f.load, true)
 	m = applyMsg(t, m, initMsg{})
 
-	// A light refresh returns only a new frame; rows stay cached.
-	f.data = Data{Frame: 7}
+	// Every tick is a full reload: rows are refreshed from the loader.
+	f.data = Data{Rows: testRows()[:2]}
 	m = applyMsg(t, m, tickMsg{})
-	if m.frame != 7 {
-		t.Fatalf("frame after light refresh = %d, want 7", m.frame)
-	}
-	if len(m.rows) != 3 {
-		t.Fatalf("rows lost on light refresh: %d", len(m.rows))
+	if len(m.rows) != 2 {
+		t.Fatalf("rows after tick reload = %d, want 2", len(m.rows))
 	}
 }
 
 func TestGrouping(t *testing.T) {
 	f := &fakeLoader{data: Data{Rows: testRows()}}
-	m := New(f.load)
+	m := New(f.load, true)
 	m = applyMsg(t, m, initMsg{})
 
 	// main → 0:shell → 2 agents; side → 3:code → 1 agent.
@@ -120,7 +94,7 @@ func TestGrouping(t *testing.T) {
 
 func TestFilterMatchesNameSessionWindow(t *testing.T) {
 	f := &fakeLoader{data: Data{Rows: testRows()}}
-	m := New(f.load)
+	m := New(f.load, true)
 	m = applyMsg(t, m, initMsg{})
 
 	cases := []struct {
@@ -157,7 +131,7 @@ func TestFilterMatchesNameSessionWindow(t *testing.T) {
 
 func TestSearchModeKeys(t *testing.T) {
 	f := &fakeLoader{data: Data{Rows: testRows()}}
-	m := New(f.load)
+	m := New(f.load, true)
 	m = applyMsg(t, m, initMsg{})
 
 	// "/" enters search mode.
@@ -206,7 +180,7 @@ func TestSearchModeKeys(t *testing.T) {
 
 func TestNavigationWraps(t *testing.T) {
 	f := &fakeLoader{data: Data{Rows: testRows()}}
-	m := New(f.load)
+	m := New(f.load, true)
 	m = applyMsg(t, m, initMsg{})
 
 	if m.selected != 0 {
@@ -235,7 +209,7 @@ func TestNavigationWraps(t *testing.T) {
 
 func TestSelectionClampsOnFilter(t *testing.T) {
 	f := &fakeLoader{data: Data{Rows: testRows()}}
-	m := New(f.load)
+	m := New(f.load, true)
 	m = applyMsg(t, m, initMsg{})
 
 	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyDown})
@@ -258,7 +232,7 @@ func TestSelectionClampsOnFilter(t *testing.T) {
 
 func TestFocusSwitchesToSelectedPane(t *testing.T) {
 	f := &fakeLoader{data: Data{Rows: testRows()}}
-	m := New(f.load)
+	m := New(f.load, true)
 	m = applyMsg(t, m, initMsg{})
 
 	var focused string
@@ -292,7 +266,7 @@ func TestFocusSwitchesToSelectedPane(t *testing.T) {
 }
 
 func TestFocusWithNothingSelectable(t *testing.T) {
-	m := New(func(Mode) (Data, error) { return Data{}, nil })
+	m := New(func() (Data, error) { return Data{}, nil }, true)
 	m = applyMsg(t, m, initMsg{})
 
 	nm, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
@@ -306,7 +280,7 @@ func TestFocusWithNothingSelectable(t *testing.T) {
 
 func TestQuitKeys(t *testing.T) {
 	f := &fakeLoader{data: Data{Rows: testRows()}}
-	m := New(f.load)
+	m := New(f.load, true)
 	m = applyMsg(t, m, initMsg{})
 
 	for _, k := range []tea.KeyMsg{{Type: tea.KeyEsc}, key('q')} {
@@ -358,7 +332,7 @@ func pidsOf(rows []Row) []int {
 }
 
 func TestViewEmptyState(t *testing.T) {
-	m := New(func(Mode) (Data, error) { return Data{}, nil })
+	m := New(func() (Data, error) { return Data{}, nil }, true)
 	m = applyMsg(t, m, initMsg{})
 	m.width, m.height = 80, 24
 
@@ -371,7 +345,7 @@ func TestViewEmptyState(t *testing.T) {
 }
 
 func TestViewEmptyStateWithFilter(t *testing.T) {
-	m := New(func(Mode) (Data, error) { return Data{}, nil })
+	m := New(func() (Data, error) { return Data{}, nil }, true)
 	m = applyMsg(t, m, initMsg{})
 	m.width, m.height = 80, 24
 
@@ -387,8 +361,8 @@ func TestViewEmptyStateWithFilter(t *testing.T) {
 }
 
 func TestViewRendersGroupedList(t *testing.T) {
-	f := &fakeLoader{data: Data{Rows: testRows(), Frame: 2}}
-	m := New(f.load)
+	f := &fakeLoader{data: Data{Rows: testRows()}}
+	m := New(f.load, true)
 	m = applyMsg(t, m, initMsg{})
 	m.width, m.height = 80, 24
 

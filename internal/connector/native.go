@@ -124,7 +124,7 @@ func nativeSessionRecord(cfg config.Config, label string, dirs []string, detail 
 		return []Record{{
 			PID:    pid,
 			Label:  label,
-			Status: agent.StatusRunning,
+			Status: agent.StatusIdle,
 			Detail: detail,
 			At:     at,
 		}}, nil

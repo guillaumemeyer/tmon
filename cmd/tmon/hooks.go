@@ -106,7 +106,7 @@ var claudeTarget = hookTarget{
 		{event: "PermissionRequest"},
 		{event: "PermissionDenied"},
 		{event: "Notification", matcher: "permission_prompt", status: "blocked", detail: "waiting:permission"},
-		{event: "Notification", matcher: "idle_prompt", status: "paused", detail: "paused"},
+		{event: "Notification", matcher: "idle_prompt", status: "idle", detail: "idle"},
 		{event: "Notification", matcher: "agent_needs_input", status: "blocked", detail: "needs:input"},
 		{event: "Stop"},
 		{event: "SubagentStart"},

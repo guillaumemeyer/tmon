@@ -5,7 +5,7 @@
 // JSONC-tolerant settings merging). Without hooks, the newest session file
 // under ~/.copilot/ (sessions under ~/.copilot/sessions/ when present) is a
 // weaker fallback: a running Copilot process plus a freshly touched file
-// means the agent is at least "running". Missing paths emit nothing, so
+// means the agent is at least "idle". Missing paths emit nothing, so
 // Copilot keeps the CPU/IO heuristic path.
 package connector
 

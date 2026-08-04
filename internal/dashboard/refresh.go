@@ -11,23 +11,15 @@ import (
 	"github.com/guillaumemeyer/tmon/internal/config"
 	"github.com/guillaumemeyer/tmon/internal/detect"
 	"github.com/guillaumemeyer/tmon/internal/pane"
+	"github.com/guillaumemeyer/tmon/internal/proc"
 	"github.com/guillaumemeyer/tmon/internal/tmux"
 )
 
-// DefaultLoader builds the real data loader. A full reload re-scans /proc,
+// DefaultLoader builds the real data loader. Every reload re-scans /proc,
 // re-snapshots the pane map, re-checks blocked state per agent and reads the
-// shared state file (statuses + animation frame); a light refresh only reads
-// the state file for the frame so the popup animates in lockstep with the
-// status bar between reloads.
+// shared state file for the delta-based statuses and connector detail.
 func DefaultLoader(cfg config.Config) Loader {
-	return func(mode Mode) (Data, error) {
-		if mode == ModeLight {
-			sf, err := agent.LoadState(cfg.StateFilePath())
-			if err != nil {
-				return Data{}, err
-			}
-			return Data{Frame: sf.Frame}, nil
-		}
+	return func() (Data, error) {
 		return loadFull(cfg)
 	}
 }
@@ -35,9 +27,9 @@ func DefaultLoader(cfg config.Config) Loader {
 // loadFull performs the complete dashboard refresh: fresh /proc detection,
 // fresh pane mapping, a live blocked check per agent (via the shared package
 // — the bash dashboard had its own stale copy of the pattern list), and the
-// state file for the delta-based statuses, connector detail, and animation
-// frame. Agents present in the state file but missed by the /proc signature
-// table (connector-only PIDs like the Hermes gateway) are merged in so the
+// state file for the delta-based statuses and connector detail. Agents
+// present in the state file but missed by the /proc signature table
+// (connector-only PIDs like the Hermes gateway) are merged in so the
 // dashboard never shows fewer agents than the status bar.
 func loadFull(cfg config.Config) (Data, error) {
 	sf, err := agent.LoadState(cfg.StateFilePath())
@@ -79,7 +71,7 @@ func loadFull(cfg config.Config) (Data, error) {
 			PaneIndex:   "?",
 		}
 		if r.Status == "" {
-			r.Status = agent.StatusRunning // first detection: show it immediately
+			r.Status = agent.StatusIdle // first detection: show it immediately
 		}
 
 		if paneMap != nil {
@@ -119,8 +111,25 @@ func loadFull(cfg config.Config) (Data, error) {
 		rows = append(rows, r)
 	}
 
+	for i := range rows {
+		resolveFullCWD(&rows[i])
+	}
 	sortRows(rows)
-	return Data{Rows: rows, Frame: sf.Frame}, nil
+	return Data{Rows: rows}, nil
+}
+
+// resolveFullCWD upgrades a short-form CWD ("code/tmon") to the agent's
+// current absolute working directory, so the popup can render it
+// home-relative ("~/code/tmon"). It re-resolves via /proc so detected and
+// connector-only agents get the full path uniformly; on failure (process
+// gone, unreadable) the stored value is kept as a fallback.
+func resolveFullCWD(r *Row) {
+	if r.PID <= 0 || strings.HasPrefix(r.CWD, "/") {
+		return
+	}
+	if cwd, err := proc.ReadCWD(r.PID); err == nil && cwd != "" {
+		r.CWD = cwd
+	}
 }
 
 // applyBlockedCheck re-checks the pane live so the popup never shows a stale
@@ -150,7 +159,7 @@ func rowFromAgentState(s agent.AgentState) Row {
 		SessionID: "?",
 	}
 	if r.Status == "" {
-		r.Status = agent.StatusRunning
+		r.Status = agent.StatusIdle
 	}
 	if s.Pane != "" && s.Pane != "?" {
 		session, win, paneIdx, ok := parsePaneTarget(s.Pane)

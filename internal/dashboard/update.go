@@ -12,8 +12,7 @@ import (
 // initMsg requests the initial full load.
 type initMsg struct{}
 
-// tickMsg fires every refreshInterval; every fullReloadTicks-th tick does a
-// full data reload instead of the cheap frame refresh.
+// tickMsg fires every refreshInterval and triggers a full data reload.
 type tickMsg struct{}
 
 func tickCmd() tea.Cmd {
@@ -31,15 +30,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(msg)
 
 	case initMsg:
-		return m.doLoad(ModeFull)
+		return m.doLoad()
 
 	case tickMsg:
-		m.ticks++
-		mode := ModeLight
-		if m.ticks%fullReloadTicks == 0 {
-			mode = ModeFull
-		}
-		return m.doLoad(mode)
+		return m.doLoad()
 
 	default:
 		return m, nil
@@ -48,22 +42,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // doLoad runs a refresh and applies the result; on failure the previous data
 // is kept so the popup never blanks out.
-func (m Model) doLoad(mode Mode) (Model, tea.Cmd) {
+func (m Model) doLoad() (Model, tea.Cmd) {
 	if m.loader == nil {
 		return m, nil
 	}
-	data, err := m.loader(mode)
+	data, err := m.loader()
 	if err != nil {
 		return m, nil
 	}
-	if data.Rows != nil {
-		m.rows = data.Rows
-		m.rebuildFilter()
-		// The list changed: re-capture the preview for the (possibly moved)
-		// selection even if the pane target is unchanged.
-		m.refreshPreview(true)
-	}
-	m.frame = data.Frame
+	m.rows = data.Rows
+	m.rebuildFilter()
+	// The list changed: re-capture the preview for the (possibly moved)
+	// selection even if the pane target is unchanged.
+	m.refreshPreview(true)
 	return m, nil
 }
 
@@ -114,7 +105,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		m.cycleGroup()
 	case "d":
 		m.togglePreview()
-	case "b", "w", "p", "a":
+	case "b", "w", "i":
 		m.toggleStatusFilter(statusKey(msg.String()))
 	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
 		m.jumpTo(msg.String())
@@ -122,18 +113,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	return m, nil
 }
 
-// statusKey maps a filter key to its status: b=blocked, w=working (running),
-// p=paused, a=active.
+// statusKey maps a filter key to its status: b=blocked, w=working, i=idle.
 func statusKey(k string) agent.Status {
 	switch k {
 	case "b":
 		return agent.StatusBlocked
 	case "w":
-		return agent.StatusRunning
-	case "p":
-		return agent.StatusPaused
-	case "a":
-		return agent.StatusActive
+		return agent.StatusWorking
+	case "i":
+		return agent.StatusIdle
 	}
 	return ""
 }
@@ -307,7 +295,7 @@ func (m *Model) groupBySession() {
 }
 
 // groupByStatus groups agents under a status header per state, most urgent
-// first (blocked, active, running, paused).
+// first (blocked, working, idle).
 func (m *Model) groupByStatus() {
 	for _, st := range statusOrder {
 		started := false

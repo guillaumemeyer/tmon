@@ -34,7 +34,7 @@ func TestCollectDropsStaleRecords(t *testing.T) {
 	conns := []Connector{fakeConn{
 		name: "grok", enabled: true,
 		recs: []Record{
-			{PID: 1, Label: "Grok", Status: agent.StatusActive, Detail: "tool:Bash", At: now.Add(-10 * time.Second)},  // fresh (30s gate)
+			{PID: 1, Label: "Grok", Status: agent.StatusWorking, Detail: "tool:Bash", At: now.Add(-10 * time.Second)}, // fresh (30s gate)
 			{PID: 2, Label: "Grok", Status: agent.StatusBlocked, Detail: "permission", At: now.Add(-2 * time.Minute)}, // stale
 		},
 	}}
@@ -56,8 +56,8 @@ func TestCollectDropsDeadPIDs(t *testing.T) {
 	conns := []Connector{fakeConn{
 		name: "grok", enabled: true,
 		recs: []Record{
-			{PID: 1, Label: "Grok", Status: agent.StatusActive, At: now},
-			{PID: 2, Label: "Grok", Status: agent.StatusActive, At: now},
+			{PID: 1, Label: "Grok", Status: agent.StatusWorking, At: now},
+			{PID: 2, Label: "Grok", Status: agent.StatusWorking, At: now},
 		},
 	}}
 	got := collect(testConfig(), now, conns)
@@ -70,7 +70,7 @@ func TestCollectNewestWinsOnDuplicatePID(t *testing.T) {
 	now := time.Now()
 	conns := []Connector{
 		fakeConn{name: "grok", enabled: true, recs: []Record{
-			{PID: 1, Label: "Grok", Status: agent.StatusActive, Detail: "old", At: now.Add(-5 * time.Second)},
+			{PID: 1, Label: "Grok", Status: agent.StatusWorking, Detail: "old", At: now.Add(-5 * time.Second)},
 		}},
 		fakeConn{name: "claude", enabled: true, recs: []Record{
 			{PID: 1, Label: "Claude", Status: agent.StatusBlocked, Detail: "new", At: now},
@@ -90,7 +90,7 @@ func TestCollectToleratesConnectorErrors(t *testing.T) {
 	conns := []Connector{
 		fakeConn{name: "broken", enabled: true, err: errBoom},
 		fakeConn{name: "grok", enabled: true, recs: []Record{
-			{PID: 1, Label: "Grok", Status: agent.StatusActive, At: now},
+			{PID: 1, Label: "Grok", Status: agent.StatusWorking, At: now},
 		}},
 	}
 	got := collect(testConfig(), now, conns)
