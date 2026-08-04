@@ -247,7 +247,7 @@ func (m Model) headerLine(w int) string {
 }
 
 // fleetCounts renders the per-status agent counts for the header — e.g.
-// " 🛑1 ⚡️2 💤1" — showing only non-zero statuses in their status colors.
+// " 🚨1 ⚡️2 💤1" — showing only non-zero statuses in their status colors.
 // Empty when no agents have a known status.
 func (m Model) fleetCounts() string {
 	var blocked, working, idle int

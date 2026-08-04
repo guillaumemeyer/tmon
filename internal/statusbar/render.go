@@ -15,7 +15,7 @@ const (
 	reset  = "#[default]"
 )
 
-// Render builds the indicator line — "🤖-🛑1-⚡️2-💤3 " in emoji mode or
+// Render builds the indicator line — "🤖-🚨1-⚡️2-💤3 " in emoji mode or
 // "[@]-B1-W2-I3 " in ASCII mode — colored by the theme palette. Each status
 // segment (icon + count) appears only when that status has at least one
 // agent, so an empty fleet renders as just the app icon. Icons and colors

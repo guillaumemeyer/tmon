@@ -16,7 +16,7 @@ func TestResolveDefault(t *testing.T) {
 		t.Fatalf("default palette changed: %+v", tm.Palette)
 	}
 	// Emoji icons by default.
-	if tm.Icons.App != "🤖" || tm.Icons.Working != "⚡️" || tm.Icons.Idle != "💤" || tm.Icons.Blocked != "🛑" || tm.Icons.Warn != "⚠️" {
+	if tm.Icons.App != "🤖" || tm.Icons.Working != "⚡️" || tm.Icons.Idle != "💤" || tm.Icons.Blocked != "🚨" || tm.Icons.Warn != "⚠️" {
 		t.Fatalf("default icons = %+v, want emoji", tm.Icons)
 	}
 }
@@ -139,8 +139,8 @@ func TestDefaultMatchesClassicColors(t *testing.T) {
 
 func TestForStatus(t *testing.T) {
 	ic := emojiIcons
-	if got := ic.ForStatus(agent.StatusBlocked); got != "🛑" {
-		t.Fatalf("ForStatus(blocked) = %q, want 🛑", got)
+	if got := ic.ForStatus(agent.StatusBlocked); got != "🚨" {
+		t.Fatalf("ForStatus(blocked) = %q, want 🚨", got)
 	}
 	if got := ic.ForStatus(agent.StatusWorking); got != "⚡️" {
 		t.Fatalf("ForStatus(working) = %q, want ⚡️", got)

@@ -130,7 +130,7 @@ var presets = map[string]Theme{
 }
 
 var (
-	emojiIcons = Icons{App: "🤖", Blocked: "🛑", Working: "⚡️", Idle: "💤", Warn: "⚠️"}
+	emojiIcons = Icons{App: "🤖", Blocked: "🚨", Working: "⚡️", Idle: "💤", Warn: "⚠️"}
 	asciiIcons = Icons{App: "[@]", Blocked: "B", Working: "W", Idle: "I", Warn: "!"}
 )
 

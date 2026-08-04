@@ -5,7 +5,7 @@
    │ ◉ ◉ │     │ ◉ ◉ │     │ ◉ ◉ │
    │  ⌣  │     │  ⌣  │     │  ◠  │
    └─────┘     └─────┘     └─────┘
-   ⚡ working   🛑 blocked   💤 idle
+   ⚡ working   🚨 blocked   💤 idle
 ```
 
 You've got Grok Build crunching through a refactor in one pane, Claude Code
@@ -38,7 +38,7 @@ currently on stage:
 
 | Status | Icon | What it means | Personality |
 |--------|------|---------------|-------------|
-| **blocked** | 🛑 | Waiting for a user action: a permission prompt, a plan approval, a y/n question. Overrides everything — a waiting agent is waiting even if it's burning CPU. | *"Waiting for you. It has opinions."* |
+| **blocked** | 🚨 | Waiting for a user action: a permission prompt, a plan approval, a y/n question. Overrides everything — a waiting agent is waiting even if it's burning CPU. | *"Waiting for you. It has opinions."* |
 | **working** | ⚡️ | Actively thinking, writing, or running tools. | *"In flow. Do not disturb (unless it's been 40 minutes)."* |
 | **idle** | 💤 | Session alive, but not thinking and not waiting on you. | *"Napping between thoughts. Wakes at the first hint of an API call."* |
 

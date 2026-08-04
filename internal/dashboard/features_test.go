@@ -659,7 +659,7 @@ func TestHeaderFleetCounts(t *testing.T) {
 	m = applyMsg(t, m, initMsg{})
 	m.width, m.height = 80, 24
 
-	// ASCII theme: one of each status — 🛑→B, ⚡️→W, 💤→I.
+	// ASCII theme: one of each status — 🚨→B, ⚡️→W, 💤→I.
 	raw := m.View()
 	if !strings.Contains(raw, m.st.cyan.Bold(true).Render(" [@] tmon")) {
 		t.Fatalf("header missing the title:\n%s", raw)
@@ -673,7 +673,7 @@ func TestHeaderFleetCounts(t *testing.T) {
 	// The emoji theme renders the same counts with emoji glyphs.
 	m3 := m.WithTheme(theme.Default)
 	raw3 := ansi.Strip(m3.View())
-	for _, want := range []string{"🛑1", "⚡️1", "💤1"} {
+	for _, want := range []string{"🚨1", "⚡️1", "💤1"} {
 		if !strings.Contains(raw3, want) {
 			t.Fatalf("emoji header missing %q in:\n%s", want, raw3)
 		}
@@ -713,8 +713,8 @@ func TestCwdLineShowsStatusAge(t *testing.T) {
 		list := strings.SplitN(ln, "│", 2)[0]
 		switch {
 		case strings.Contains(list, "Claude Code"):
-			if !strings.Contains(lines[i+1], "🛑 now") {
-				t.Fatalf("blocked cwd line = %q, want 🛑 now", lines[i+1])
+			if !strings.Contains(lines[i+1], "🚨 now") {
+				t.Fatalf("blocked cwd line = %q, want 🚨 now", lines[i+1])
 			}
 		case strings.Contains(list, "Codex CLI"):
 			if !strings.Contains(lines[i+1], "💤 1m") {

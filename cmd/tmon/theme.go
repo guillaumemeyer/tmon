@@ -79,7 +79,7 @@ func previewTheme(name string) int {
 	return 0
 }
 
-// sampleStatusLine renders one indicator line ("🤖-🛑1-⚡️2-💤1") in the
+// sampleStatusLine renders one indicator line ("🤖-🚨1-⚡️2-💤1") in the
 // theme's actual colors, so `tmon theme preview` shows real terminal colors
 // rather than raw tmux directives.
 func sampleStatusLine(t theme.Theme, ic theme.Icons) string {
