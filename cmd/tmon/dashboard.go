@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/guillaumemeyer/tmon/internal/config"
@@ -20,8 +21,9 @@ func cmdDashboard(args []string) int {
 	}
 
 	cfg := config.FromEnv()
-	m := dashboard.New(dashboard.DefaultLoader(cfg), cfg.ASCII)
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	m := dashboard.New(dashboard.DefaultLoader(cfg), cfg.ASCII).
+		WithSettingsPath(filepath.Join(cfg.StateDir, "dashboard.json"))
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "tmon: dashboard:", err)
 		return 1

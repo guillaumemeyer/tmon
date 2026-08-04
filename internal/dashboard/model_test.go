@@ -18,10 +18,11 @@ func (f *fakeLoader) load() (Data, error) {
 }
 
 // testRows: two sessions, two windows, three agents, matching the grouping
-// scenarios in the bash popup tests.
+// scenarios in the bash popup tests. Grok carries a session title (like a
+// Grok generated_title); the others have none.
 func testRows() []Row {
 	return []Row{
-		{PID: 10, Label: "Grok", Status: agent.StatusWorking, CWD: "code/tmon",
+		{PID: 10, Label: "Grok", Title: "Popup preview scroll", Status: agent.StatusWorking, CWD: "code/tmon",
 			Pane: "main:0.0", SessionID: "1", SessionName: "main", WindowIndex: "0", WindowName: "shell", PaneIndex: "0"},
 		{PID: 11, Label: "Claude", Status: agent.StatusBlocked, CWD: "site",
 			Pane: "main:0.1", SessionID: "1", SessionName: "main", WindowIndex: "0", WindowName: "shell", PaneIndex: "1"},
@@ -92,33 +93,60 @@ func TestGrouping(t *testing.T) {
 	}
 }
 
-func TestFilterMatchesNameSessionWindow(t *testing.T) {
+func TestFilterFuzzyNameAndCWD(t *testing.T) {
+	old := capturePane
+	capturePane = func(p string) string { return "" }
+	t.Cleanup(func() { capturePane = old })
+
 	f := &fakeLoader{data: Data{Rows: testRows()}}
 	m := New(f.load, true)
 	m = applyMsg(t, m, initMsg{})
 
 	cases := []struct {
-		query string
-		want  []string // labels in order
+		query   string
+		want    []string // exact labels in score order (nil wantAny)
+		wantAny []string // unordered set of labels (when ranking is flexible)
+		wantN   int      // if > 0, only check count + membership via wantAny
 	}{
-		{"grok", []string{"Grok"}},            // full name "Grok Build"
-		{"SHELL", []string{"Grok", "Claude"}}, // window name, case-insensitive
-		{"side", []string{"Codex"}},           // session name
-		{"code", []string{"Claude", "Codex"}}, // "Claude Code" and "Codex CLI" both contain "code"
-		{"blog", nil},                         // cwd is deliberately not searched
-		{"", []string{"Grok", "Claude", "Codex"}},
+		{query: "grok", want: []string{"Grok"}},   // full name "Grok Build"
+		{query: "gb", want: []string{"Grok"}},     // fuzzy subsequence of "Grok Build"
+		{query: "blog", want: []string{"Codex"}},  // CWD is searched
+		{query: "site", want: []string{"Claude"}}, // CWD
+		{query: "popup", want: []string{"Grok"}},  // session title is searched
+		{query: "SHELL"},                          // window name is not a search field
+		{query: "main"},                           // session name is not a search field
+		{query: "", want: []string{"Grok", "Claude", "Codex"}},
+		// "code" hits Claude/Codex names and Grok's cwd "code/tmon".
+		{query: "code", wantAny: []string{"Grok", "Claude", "Codex"}, wantN: 3},
 	}
 	for _, c := range cases {
 		m = applyMsg(t, m, key('/')) // filtering happens in search mode
 		for _, r := range []rune(c.query) {
 			m = applyMsg(t, m, key(r))
 		}
-		if len(m.filtered) != len(c.want) {
-			t.Fatalf("query %q: filtered = %d, want %d", c.query, len(m.filtered), len(c.want))
-		}
-		for i, label := range c.want {
-			if got := m.rows[m.filtered[i]].Label; got != label {
-				t.Fatalf("query %q: filtered[%d] = %s, want %s", c.query, i, got, label)
+		got := labelsOf(m)
+		switch {
+		case c.wantN > 0:
+			if len(got) != c.wantN {
+				t.Fatalf("query %q: filtered = %v (len %d), want %d", c.query, got, len(got), c.wantN)
+			}
+			set := map[string]bool{}
+			for _, l := range got {
+				set[l] = true
+			}
+			for _, l := range c.wantAny {
+				if !set[l] {
+					t.Fatalf("query %q: filtered = %v, missing %s", c.query, got, l)
+				}
+			}
+		default:
+			if len(got) != len(c.want) {
+				t.Fatalf("query %q: filtered = %v, want %v", c.query, got, c.want)
+			}
+			for i, label := range c.want {
+				if got[i] != label {
+					t.Fatalf("query %q: filtered[%d] = %s, want %s", c.query, i, got[i], label)
+				}
 			}
 		}
 		// Clear the query and leave search mode for the next case.
@@ -127,6 +155,55 @@ func TestFilterMatchesNameSessionWindow(t *testing.T) {
 		}
 		m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyEsc})
 	}
+}
+
+func TestFilterFuzzyPreviewContent(t *testing.T) {
+	old := capturePane
+	capturePane = func(p string) string {
+		switch p {
+		case "main:0.0":
+			return "running tests in package dashboard"
+		case "main:0.1":
+			return "waiting for user approval [y/N]"
+		case "side:3.0":
+			return "refactoring the auth middleware"
+		default:
+			return ""
+		}
+	}
+	t.Cleanup(func() { capturePane = old })
+
+	f := &fakeLoader{data: Data{Rows: testRows()}}
+	m := New(f.load, true)
+	m = applyMsg(t, m, initMsg{})
+
+	// Fuzzy match against content that is not the selected agent's preview.
+	m = applyMsg(t, m, key('/'))
+	for _, r := range []rune("middleware") {
+		m = applyMsg(t, m, key(r))
+	}
+	if len(m.filtered) != 1 || m.rows[m.filtered[0]].Label != "Codex" {
+		t.Fatalf("preview search: filtered = %v, want only Codex", labelsOf(m))
+	}
+
+	// Subsequence across preview text.
+	for range "middleware" {
+		m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyBackspace})
+	}
+	for _, r := range []rune("aprvl") { // approval
+		m = applyMsg(t, m, key(r))
+	}
+	if len(m.filtered) != 1 || m.rows[m.filtered[0]].Label != "Claude" {
+		t.Fatalf("fuzzy preview search: filtered = %v, want only Claude", labelsOf(m))
+	}
+}
+
+func labelsOf(m Model) []string {
+	out := make([]string, len(m.filtered))
+	for i, fi := range m.filtered {
+		out[i] = m.rows[fi].Label
+	}
+	return out
 }
 
 func TestSearchModeKeys(t *testing.T) {
@@ -140,15 +217,15 @@ func TestSearchModeKeys(t *testing.T) {
 		t.Fatal("expected search mode after /")
 	}
 
-	// Printable runes append to the query and re-filter. "co" matches
-	// "Claude Code" and "Codex CLI".
+	// Printable runes append to the query and re-filter. "co" is a fuzzy
+	// hit on Claude/Codex names and Grok's "code/tmon" cwd.
 	m = applyMsg(t, m, key('c'))
 	m = applyMsg(t, m, key('o'))
 	if m.query != "co" {
 		t.Fatalf("query = %q, want \"co\"", m.query)
 	}
-	if len(m.filtered) != 2 {
-		t.Fatalf("filtered = %d, want 2", len(m.filtered))
+	if len(m.filtered) != 3 {
+		t.Fatalf("filtered = %v, want all 3 agents", labelsOf(m))
 	}
 
 	// Continue typing to "codex" — narrows to Codex only.
@@ -159,7 +236,7 @@ func TestSearchModeKeys(t *testing.T) {
 		t.Fatalf("query = %q, want \"codex\"", m.query)
 	}
 	if len(m.filtered) != 1 || m.rows[m.filtered[0]].Label != "Codex" {
-		t.Fatalf("filtered = %v, want only Codex", m.filtered)
+		t.Fatalf("filtered = %v, want only Codex", labelsOf(m))
 	}
 
 	// Non-printable keys (e.g. function keys) are ignored in search mode.
@@ -220,8 +297,9 @@ func TestSelectionClampsOnFilter(t *testing.T) {
 
 	// Filtering down to one agent clamps the selection to 0.
 	m = applyMsg(t, m, key('/'))
-	m = applyMsg(t, m, key('s'))
-	m = applyMsg(t, m, key('i'))
+	for _, r := range []rune("aud") { // matches only "Claude Code"
+		m = applyMsg(t, m, key(r))
+	}
 	if len(m.filtered) != 1 {
 		t.Fatalf("filtered = %d, want 1", len(m.filtered))
 	}
@@ -258,10 +336,72 @@ func TestFocusSwitchesToSelectedPane(t *testing.T) {
 		t.Fatalf("focused %q, want main:0.1", focused)
 	}
 
-	// Right arrow focuses too.
+	// Right arrow resizes the preview — it must not focus.
+	focused = ""
 	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyRight})
-	if focused != "main:0.1" {
-		t.Fatalf("focused %q, want main:0.1", focused)
+	if focused != "" {
+		t.Fatalf("right arrow focused %q; want resize only", focused)
+	}
+	if m.previewPct == defaultPreviewPct {
+		t.Fatalf("previewPct after right = %d, want a resize", m.previewPct)
+	}
+}
+
+func TestPreviewResizeKeys(t *testing.T) {
+	f := &fakeLoader{data: Data{Rows: testRows()}}
+	m := New(f.load, true)
+	m = applyMsg(t, m, initMsg{})
+	if m.previewPct != defaultPreviewPct {
+		t.Fatalf("default previewPct = %d, want %d", m.previewPct, defaultPreviewPct)
+	}
+
+	// Left grows the preview, right shrinks it.
+	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyLeft})
+	if m.previewPct != defaultPreviewPct+previewResizeStep {
+		t.Fatalf("after left: previewPct = %d, want %d", m.previewPct, defaultPreviewPct+previewResizeStep)
+	}
+
+	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyRight})
+	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyRight})
+	if m.previewPct != defaultPreviewPct-previewResizeStep {
+		t.Fatalf("after right×2: previewPct = %d, want %d", m.previewPct, defaultPreviewPct-previewResizeStep)
+	}
+
+	// Clamp at max (reached by pressing left repeatedly).
+	for i := 0; i < 30; i++ {
+		m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyLeft})
+	}
+	if m.previewPct != maxPreviewPct {
+		t.Fatalf("previewPct at max = %d, want %d", m.previewPct, maxPreviewPct)
+	}
+
+	// Clamp at min (reached by pressing right repeatedly).
+	for i := 0; i < 30; i++ {
+		m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyRight})
+	}
+	if m.previewPct != minPreviewPct {
+		t.Fatalf("previewPct at min = %d, want %d", m.previewPct, minPreviewPct)
+	}
+}
+
+func TestPreviewPctPersists(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/dashboard.json"
+
+	f := &fakeLoader{data: Data{Rows: testRows()}}
+	m := New(f.load, true).WithSettingsPath(path)
+	m = applyMsg(t, m, initMsg{})
+	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyLeft})
+	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyLeft})
+	want := defaultPreviewPct + 2*previewResizeStep
+	if m.previewPct != want {
+		t.Fatalf("previewPct = %d, want %d", m.previewPct, want)
+	}
+
+	// New model with the same settings path reloads the saved width.
+	m2 := New(f.load, true).WithSettingsPath(path)
+	if m2.previewPct != want {
+		t.Fatalf("reloaded previewPct = %d, want %d", m2.previewPct, want)
 	}
 }
 
@@ -275,6 +415,111 @@ func TestFocusWithNothingSelectable(t *testing.T) {
 	}
 	if _, ok := nm.(Model); !ok {
 		t.Fatal("expected a Model back")
+	}
+}
+
+// click builds a left-button press at cell (x, y) in the popup viewport.
+func click(x, y int) tea.MouseMsg {
+	return tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: x, Y: y}
+}
+
+func TestMouseClickFocusesAgent(t *testing.T) {
+	old := capturePane
+	capturePane = func(p string) string { return "x" }
+	t.Cleanup(func() { capturePane = old })
+
+	f := &fakeLoader{data: Data{Rows: testRows()}}
+	m := New(f.load, true)
+	m = applyMsg(t, m, initMsg{})
+	m.width, m.height = 100, 24
+
+	var focused string
+	m.focusCmd = func(r Row) tea.Cmd {
+		focused = r.Pane
+		return nil
+	}
+
+	// Body rows: 0=session, 1=window, 2=Grok, 3=Claude, 4=session, 5=window,
+	// 6=Codex. Clicking an agent row selects it and focuses its pane.
+	m = applyMsg(t, m, click(2, 4))
+	if focused != "main:0.0" {
+		t.Fatalf("click Grok: focused %q, want main:0.0", focused)
+	}
+
+	m = applyMsg(t, m, click(2, 5))
+	if focused != "main:0.1" {
+		t.Fatalf("click Claude: focused %q, want main:0.1", focused)
+	}
+
+	m = applyMsg(t, m, click(2, 8))
+	if focused != "side:3.0" {
+		t.Fatalf("click Codex: focused %q, want side:3.0", focused)
+	}
+}
+
+func TestMouseClickIgnoresHeadersAndChrome(t *testing.T) {
+	f := &fakeLoader{data: Data{Rows: testRows()}}
+	m := New(f.load, true)
+	m = applyMsg(t, m, initMsg{})
+	m.width, m.height = 100, 24
+
+	var focused string
+	m.focusCmd = func(r Row) tea.Cmd {
+		focused = r.Pane
+		return nil
+	}
+
+	// Session header (row 0 of body) and window header (row 1) do nothing.
+	m = applyMsg(t, m, click(2, 2))
+	if focused != "" {
+		t.Fatalf("click on session header focused %q", focused)
+	}
+	m = applyMsg(t, m, click(2, 3))
+	if focused != "" {
+		t.Fatalf("click on window header focused %q", focused)
+	}
+	// Chrome rows: header (y=0), divider (y=1), footer (y=23).
+	for _, y := range []int{0, 1, 23} {
+		m = applyMsg(t, m, click(2, y))
+		if focused != "" {
+			t.Fatalf("click on chrome row y=%d focused %q", y, focused)
+		}
+	}
+	// Click on the preview panel (right of the separator) does nothing.
+	m = applyMsg(t, m, click(60, 4))
+	if focused != "" {
+		t.Fatalf("click on preview panel focused %q", focused)
+	}
+	// A release event is never an action.
+	m = applyMsg(t, m, tea.MouseMsg{Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft, X: 2, Y: 4})
+	if focused != "" {
+		t.Fatalf("mouse release focused %q", focused)
+	}
+}
+
+func TestMouseClickFocusesInSearchFlatList(t *testing.T) {
+	f := &fakeLoader{data: Data{Rows: testRows()}}
+	m := New(f.load, true)
+	m = applyMsg(t, m, initMsg{})
+	m.width, m.height = 100, 24
+
+	var focused string
+	m.focusCmd = func(r Row) tea.Cmd {
+		focused = r.Pane
+		return nil
+	}
+
+	// Narrow to a single agent: the flat list has one row at body row 0.
+	m = applyMsg(t, m, key('/'))
+	for _, r := range []rune{'c', 'o', 'd', 'e', 'x'} {
+		m = applyMsg(t, m, key(r))
+	}
+	if len(m.items) != 1 {
+		t.Fatalf("filtered items = %d, want 1", len(m.items))
+	}
+	m = applyMsg(t, m, click(2, 2))
+	if focused != "side:3.0" {
+		t.Fatalf("click in search list: focused %q, want side:3.0", focused)
 	}
 }
 
@@ -337,7 +582,7 @@ func TestViewEmptyState(t *testing.T) {
 	m.width, m.height = 80, 24
 
 	v := m.View()
-	for _, want := range []string{"[@] tmon", "No agents detected.", "▌ / to search"} {
+	for _, want := range []string{"[@] tmon", "No agents detected."} {
 		if !strings.Contains(v, want) {
 			t.Fatalf("view missing %q:\n%s", want, v)
 		}
@@ -364,14 +609,16 @@ func TestViewRendersGroupedList(t *testing.T) {
 	f := &fakeLoader{data: Data{Rows: testRows()}}
 	m := New(f.load, true)
 	m = applyMsg(t, m, initMsg{})
-	m.width, m.height = 80, 24
+	// Wide enough that the long session title does not truncate the cwd.
+	m.width, m.height = 140, 24
 
 	v := m.View()
 	for _, want := range []string{
 		"[@] tmon",
-		"main",    // session header
-		"0:shell", // window sub-header
-		"Grok Build", "Claude Code", "Codex CLI",
+		"main",                              // session header
+		"0:shell",                           // window sub-header
+		"Popup preview scroll (Grok Build)", // session title + name
+		"Claude Code", "Codex CLI",
 		"side", "3:code",
 		"code/tmon", // cwd
 	} {

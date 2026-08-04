@@ -170,6 +170,13 @@ func enrichGrok(rec *Record, dir string) {
 	if sig := readGrokSignals(dir); sig.PrimaryModel != "" {
 		rec.Detail += fmt.Sprintf(" · model:%s · ctx:%d%%", sig.PrimaryModel, sig.ContextUsage)
 	}
+
+	// Session title: summary.json carries the generated conversation title
+	// (also mirrored in session_summary), which the dashboard shows as
+	// "Title (Grok Build)".
+	if t := readGrokTitle(dir); t != "" {
+		rec.Title = t
+	}
 }
 
 // mapGrokPhase maps a Grok phase_changed value to the tmon status machine.
@@ -208,6 +215,32 @@ func readGrokSignals(dir string) grokSignals {
 	var s grokSignals
 	_ = json.Unmarshal(b, &s) // best-effort enrichment
 	return s
+}
+
+// grokSummary is the subset of ~/.grok/sessions/.../summary.json used for
+// the session title. generated_title is the conversation's AI-generated
+// title; session_summary carries the same text in practice.
+type grokSummary struct {
+	GeneratedTitle string `json:"generated_title"`
+	SessionSummary string `json:"session_summary"`
+}
+
+// readGrokTitle returns the session's title from summary.json, preferring
+// generated_title with session_summary as a fallback. Empty when the file
+// is missing or carries no title (brand-new sessions).
+func readGrokTitle(dir string) string {
+	b, err := os.ReadFile(filepath.Join(dir, "summary.json"))
+	if err != nil {
+		return ""
+	}
+	var s grokSummary
+	if json.Unmarshal(b, &s) != nil {
+		return ""
+	}
+	if s.GeneratedTitle != "" {
+		return s.GeneratedTitle
+	}
+	return s.SessionSummary
 }
 
 // tailEvents returns the complete lines from the end of path, bounded by

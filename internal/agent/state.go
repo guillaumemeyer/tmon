@@ -31,6 +31,7 @@ type AgentState struct {
 	Pane       string `json:"pane,omitempty"`
 	CWD        string `json:"cwd,omitempty"`
 	Detail     string `json:"detail,omitempty"` // connector detail, e.g. "tool:Bash"
+	Title      string `json:"title,omitempty"`  // session/conversation title from a connector
 	LastTs     int64  `json:"lastTs,omitempty"` // unix seconds of last status change
 }
 
@@ -142,10 +143,11 @@ func (t *Tracker) Evaluate(pid int, label, cwd, pane string, cpuNow, ioNow int64
 // EvaluateAuthoritative records a status supplied by a connector — the
 // agent's own state surface (native phase files or installed hooks) — instead
 // of the CPU/IO heuristic. Detail is carried into the snapshot for the
-// dashboard. The idle streak resets and LastTs is stamped on status changes;
-// otherwise previous CPU/IO values are preserved so a later fallback to the
-// heuristic path has a baseline.
-func (t *Tracker) EvaluateAuthoritative(pid int, label, cwd, pane string, st Status, detail string) Status {
+// dashboard. title is the optional session/conversation title shown by the
+// dashboard as "Title (Name)". The idle streak resets and LastTs is stamped
+// on status changes; otherwise previous CPU/IO values are preserved so a
+// later fallback to the heuristic path has a baseline.
+func (t *Tracker) EvaluateAuthoritative(pid int, label, cwd, pane string, st Status, detail, title string) Status {
 	oldStatus := StatusIdle
 	oldLastTs := int64(0)
 	prev := t.prev[pid]
@@ -154,7 +156,7 @@ func (t *Tracker) EvaluateAuthoritative(pid int, label, cwd, pane string, st Sta
 		oldLastTs = prev.LastTs
 	}
 
-	next := &AgentState{PID: pid, Label: label, Status: st, Pane: pane, CWD: cwd, Detail: detail}
+	next := &AgentState{PID: pid, Label: label, Status: st, Pane: pane, CWD: cwd, Detail: detail, Title: title}
 	if prev != nil {
 		next.CPU = prev.CPU
 		next.IO = prev.IO

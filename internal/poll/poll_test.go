@@ -126,6 +126,7 @@ func TestStateFilePersistedWithConnectorDetail(t *testing.T) {
 	cfg := testConfig(t)
 	records := []connector.Record{{
 		PID: 7777, Label: "Hermes", Status: agent.StatusWorking, Detail: "phase:reasoning", At: time.Now(),
+		Title: "gateway session",
 	}}
 	if _, err := run(cfg, nil, false, records); err != nil {
 		t.Fatal(err)
@@ -136,6 +137,9 @@ func TestStateFilePersistedWithConnectorDetail(t *testing.T) {
 	}
 	if len(sf.Agents) != 1 || sf.Agents[0].Detail != "phase:reasoning" {
 		t.Fatalf("state file agents = %+v, want detail persisted", sf.Agents)
+	}
+	if sf.Agents[0].Title != "gateway session" {
+		t.Fatalf("state file agents = %+v, want title persisted", sf.Agents)
 	}
 }
 

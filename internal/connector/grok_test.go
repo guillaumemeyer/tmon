@@ -135,6 +135,61 @@ func TestGrokSignalsEnrichment(t *testing.T) {
 	}
 }
 
+func TestGrokSessionTitle(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, ".grok")
+	writeFile(t, filepath.Join(home, "active_sessions.json"),
+		fmt.Sprintf(`[{"session_id":%q,"pid":4242,"cwd":%q,"opened_at":"2026-08-02T09:00:00Z"}]`, grokSessionID, grokCWD))
+	writeFile(t, filepath.Join(home, "sessions", url.PathEscape(grokCWD), grokSessionID, "summary.json"),
+		`{"generated_title":"Extract Agent Session Titles","session_summary":"same text"}`)
+	old := grokHome
+	grokHome = func() string { return home }
+	t.Cleanup(func() { grokHome = old })
+
+	recs, err := (Grok{}).Probe(config.Defaults())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("records = %+v, want 1", recs)
+	}
+	if recs[0].Title != "Extract Agent Session Titles" {
+		t.Errorf("Title = %q, want generated_title", recs[0].Title)
+	}
+}
+
+func TestGrokSessionTitleFallsBackToSummary(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, ".grok")
+	writeFile(t, filepath.Join(home, "active_sessions.json"),
+		fmt.Sprintf(`[{"session_id":%q,"pid":4242,"cwd":%q,"opened_at":"2026-08-02T09:00:00Z"}]`, grokSessionID, grokCWD))
+	// summary.json without generated_title: session_summary is used.
+	writeFile(t, filepath.Join(home, "sessions", url.PathEscape(grokCWD), grokSessionID, "summary.json"),
+		`{"session_summary":"fallback title"}`)
+	old := grokHome
+	grokHome = func() string { return home }
+	t.Cleanup(func() { grokHome = old })
+
+	recs, err := (Grok{}).Probe(config.Defaults())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 || recs[0].Title != "fallback title" {
+		t.Errorf("records = %+v, want title from session_summary", recs)
+	}
+}
+
+func TestGrokSessionWithoutSummaryHasNoTitle(t *testing.T) {
+	grokFixture(t, "", "2026-08-02T09:00:00Z")
+	recs, err := (Grok{}).Probe(config.Defaults())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 || recs[0].Title != "" {
+		t.Errorf("records = %+v, want no title without summary.json", recs)
+	}
+}
+
 func TestGrokMultipleSessions(t *testing.T) {
 	root := t.TempDir()
 	home := filepath.Join(root, ".grok")

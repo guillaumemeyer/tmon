@@ -17,6 +17,7 @@ const refreshInterval = 1500 * time.Millisecond // between auto-refresh ticks
 type Row struct {
 	PID           int
 	Label         string
+	Title         string // session/conversation title, e.g. Grok's generated_title; "" if unknown
 	Cmdline       string
 	CWD           string
 	Status        agent.Status
@@ -70,8 +71,15 @@ type Model struct {
 
 	filterStatus agent.Status // "" = no status filter
 
-	previewText string // pane capture of the selected pane (colors preserved)
-	previewPane string // pane target the preview currently shows
+	previewText   string            // pane capture of the selected pane (colors preserved)
+	previewPane   string            // pane target the preview currently shows
+	previewOffset int               // lines scrolled up from the bottom (0 = pin to end)
+	paneCache     map[string]string // pane target → full capture (for search + preview)
+	previewPct    int               // preview panel width as % of popup (default 50)
+
+	// settingsPath is where UI prefs (e.g. preview width) are persisted.
+	// Empty disables load/save (tests and ad-hoc construction).
+	settingsPath string
 
 	query     string
 	searching bool
@@ -89,7 +97,20 @@ type Model struct {
 // the dashboard stays empty (safe zero value for direct construction).
 // ascii renders the status icons as ASCII (B/W/I) instead of emoji.
 func New(loader Loader, ascii bool) Model {
-	return Model{loader: loader, ascii: ascii, focusCmd: defaultFocusCmd}
+	return Model{
+		loader:     loader,
+		ascii:      ascii,
+		focusCmd:   defaultFocusCmd,
+		previewPct: defaultPreviewPct,
+	}
+}
+
+// WithSettingsPath sets the JSON file used to persist UI preferences
+// (preview width) and loads any existing values.
+func (m Model) WithSettingsPath(path string) Model {
+	m.settingsPath = path
+	m.loadSettings()
+	return m
 }
 
 // Init kicks off the initial full load and the auto-refresh ticker.

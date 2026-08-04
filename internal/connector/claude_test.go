@@ -136,3 +136,82 @@ func TestClaudeStaleHookFileDroppedByCollect(t *testing.T) {
 		t.Fatalf("collect = %+v, want none (stale hook state dropped)", got)
 	}
 }
+
+// ─── session-title enrichment ────────────────────────────────────────────────
+
+// stubClaudeHome points the Claude config dir at a temp dir for the test.
+func stubClaudeHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	old := claudeHome
+	claudeHome = func() string { return home }
+	t.Cleanup(func() { claudeHome = old })
+	return home
+}
+
+// TestClaudeProbeEnrichesSessionName verifies the hook-paired records pick
+// up the session name from Claude's own registry (~/.claude/sessions).
+func TestClaudeProbeEnrichesSessionName(t *testing.T) {
+	cfg := claudeCfg(t)
+	writeClaudeHook(t, cfg, "s1", "working", "tool:Bash", "/home/guillaume/code/tmon")
+	stubClaudeAgents(t, map[string]int{"code/tmon": 4242})
+
+	home := stubClaudeHome(t)
+	// Claude's own registry, keyed by PID.
+	writeFile(t, filepath.Join(home, "sessions", "4242.json"),
+		`{"pid":4242,"sessionId":"s1","name":"tmon-0b","status":"working"}`)
+
+	recs, err := (Claude{}).Probe(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("records = %+v, want 1", recs)
+	}
+	if recs[0].Title != "tmon-0b" {
+		t.Errorf("Title = %q, want tmon-0b", recs[0].Title)
+	}
+	if recs[0].Status != agent.StatusWorking || recs[0].Detail != "tool:Bash" {
+		t.Errorf("record = %+v, want working tool:Bash preserved", recs[0])
+	}
+}
+
+// TestClaudeProbeWithoutRegistryKeepsRecords verifies a missing session
+// registry (e.g. an agent version that does not write it) never drops or
+// breaks hook records — the title is simply absent.
+func TestClaudeProbeWithoutRegistryKeepsRecords(t *testing.T) {
+	cfg := claudeCfg(t)
+	writeClaudeHook(t, cfg, "s1", "idle", "started", "/home/guillaume/code/tmon")
+	stubClaudeAgents(t, map[string]int{"code/tmon": 4242})
+	stubClaudeHome(t) // no sessions registry written
+
+	recs, err := (Claude{}).Probe(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 || recs[0].Title != "" {
+		t.Fatalf("records = %+v, want 1 record without a title", recs)
+	}
+}
+
+// TestClaudeSessionNamesSkipsUnnamedAndMalformed verifies the registry
+// reader tolerates bad files and unnamed sessions.
+func TestClaudeSessionNamesSkipsUnnamedAndMalformed(t *testing.T) {
+	home := stubClaudeHome(t)
+	dir := filepath.Join(home, "sessions")
+	writeFile(t, filepath.Join(dir, "1.json"), `{"pid":1,"name":"alpha"}`)
+	writeFile(t, filepath.Join(dir, "2.json"), `{"pid":2}`)                  // unnamed
+	writeFile(t, filepath.Join(dir, "3.json"), `not json`)                   // malformed
+	writeFile(t, filepath.Join(dir, "notapid.json"), `{"pid":9,"name":"x"}`) // non-numeric name
+
+	names := claudeSessionNames()
+	if names[1] != "alpha" {
+		t.Errorf("names[1] = %q, want alpha", names[1])
+	}
+	if _, ok := names[2]; ok {
+		t.Error("unnamed session should be skipped")
+	}
+	if _, ok := names[9]; ok {
+		t.Error("non-numeric filename should be skipped")
+	}
+}

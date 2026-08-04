@@ -51,8 +51,8 @@ func refreshFixture(t *testing.T, states []agent.AgentState, blocked map[string]
 
 func TestLoadFullMergesConnectorOnlyAgents(t *testing.T) {
 	cfg, _ := refreshFixture(t, []agent.AgentState{
-		{PID: 10, Label: "Grok", Status: agent.StatusWorking, Detail: "tool:Bash", CWD: "code/tmon", Pane: "main:0.0", LastTs: 1700000000},
-		{PID: 999, Label: "Hermes", Status: agent.StatusBlocked, Detail: "3 active agents", CWD: "code/tmon", Pane: "main:0.2"},
+		{PID: 10, Label: "Grok", Status: agent.StatusWorking, Detail: "tool:Bash", CWD: "code/tmon", Pane: "main:0.0", LastTs: 1700000000, Title: "Refactor login"},
+		{PID: 999, Label: "Hermes", Status: agent.StatusBlocked, Detail: "3 active agents", CWD: "code/tmon", Pane: "main:0.2", Title: "gateway"},
 	}, nil)
 
 	data, err := loadFull(cfg)
@@ -76,11 +76,17 @@ func TestLoadFullMergesConnectorOnlyAgents(t *testing.T) {
 	if grok == nil || grok.Detail != "tool:Bash" || grok.Status != agent.StatusWorking || grok.LastTs != 1700000000 {
 		t.Errorf("Grok row = %+v, want detail/lastTs overlay from state", grok)
 	}
+	if grok.Title != "Refactor login" {
+		t.Errorf("Grok row Title = %q, want Refactor login from state", grok.Title)
+	}
 	if hermes == nil {
 		t.Fatal("connector-only Hermes agent missing from rows")
 	}
 	if hermes.Label != "Hermes" || hermes.Status != agent.StatusBlocked || hermes.Detail != "3 active agents" {
 		t.Errorf("Hermes row = %+v, want state-derived Hermes blocked", hermes)
+	}
+	if hermes.Title != "gateway" {
+		t.Errorf("Hermes row Title = %q, want gateway from state", hermes.Title)
 	}
 	// The connector-only row is parsed back into pane components and groups
 	// under the same session id as the detected agent.

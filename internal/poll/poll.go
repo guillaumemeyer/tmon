@@ -70,7 +70,7 @@ func run(cfg config.Config, prevStatus map[int]agent.Status, notify bool, record
 			if rec.CWD != "" {
 				cwd = rec.CWD
 			}
-			st = tracker.EvaluateAuthoritative(a.PID, a.Label, cwd, paneTarget, rec.Status, rec.Detail)
+			st = tracker.EvaluateAuthoritative(a.PID, a.Label, cwd, paneTarget, rec.Status, rec.Detail, rec.Title)
 		} else {
 			cpu, _ := proc.ReadCPUTicks(a.PID)
 			io, _ := proc.ReadIOBytes(a.PID)
@@ -93,7 +93,7 @@ func run(cfg config.Config, prevStatus map[int]agent.Status, notify bool, record
 				cwd = proc.CWDShort(c)
 			}
 		}
-		st := tracker.EvaluateAuthoritative(rec.PID, rec.Label, cwd, paneTarget, rec.Status, rec.Detail)
+		st := tracker.EvaluateAuthoritative(rec.PID, rec.Label, cwd, paneTarget, rec.Status, rec.Detail, rec.Title)
 		statuses = append(statuses, st)
 	}
 

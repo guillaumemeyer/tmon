@@ -57,6 +57,7 @@ func loadFull(cfg config.Config) (Data, error) {
 		r := Row{
 			PID:         a.PID,
 			Label:       a.Label,
+			Title:       st.Title,
 			Cmdline:     a.Cmdline,
 			CWD:         a.CWD,
 			Status:      st.Status,
@@ -150,6 +151,7 @@ func rowFromAgentState(s agent.AgentState) Row {
 	r := Row{
 		PID:       s.PID,
 		Label:     s.Label,
+		Title:     s.Title,
 		CWD:       s.CWD,
 		Status:    s.Status,
 		Detail:    s.Detail,

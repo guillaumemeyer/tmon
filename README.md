@@ -51,41 +51,52 @@ window, with a live pane preview on the right:
 
 ```
 ┌──────────────────────────────────┬───────────────────┐
-│  🤖 tmon      [/] search [esc/q] │ Grok Build        │
+│  🤖 tmon  [/] search [esc/q] quit │ Extract Agent Ses…│
 │ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━│───────────────────│
 │  main                            │ $ tmon dashboard  │
 │    0:code                        │ … pane content …  │
-│      [0] ⚡️ Grok Build  ~/code   │                   │
+│      [0] ⚡️ Extract Agent Sessions (Grok Build) ~/code │
 │      [1] 🛑 Claude Code ~/docs   │                   │
 │  side                            │                   │
 │    0:research                    │                   │
 │      [2] 💤 Windsurf    ~/res    │                   │
-│ ▌ / to search   🛑 1  ⚡️ 1  💤 1 │                   │
+│                   [←/→] resize … │                   │
 └──────────────────────────────────┴───────────────────┘
 ```
 
-Each agent line shows its name, status, pane index, and working directory —
-plus, when available, why it's blocked (e.g. `[y/N]`), what it's doing
-(e.g. `tool:Bash`), and how long ago its status last changed. The footer
-shows live status counts for the current filter.
+Each agent line shows its status, pane index, and working directory —
+plus, when available, the agent's **session title** (Grok's generated
+conversation title, Claude's session name) as `Title (Name)`, why it's
+blocked (e.g. `[y/N]`), what it's doing (e.g. `tool:Bash`), and how long
+ago its status last changed. Agents without a title (or a brand-new session
+that has not earned one yet) show just the name. The footer shows
+`[←/→] resize` for the preview split (persisted across opens) and, when an
+agent with a pane is selected, `[C-u/C-d] scroll` for the preview.
 
 Filter by status with `b` (blocked), `w` (working), `i` (idle); press the
-key again to clear. `1`–`9` jumps to the Nth agent. Hit `Enter` or `→` to
-jump to that agent's pane.
+key again to clear. `1`–`9` jumps to the Nth agent. Hit `Enter` or **click
+an agent line** to jump to that agent's pane.
 
-**Type to filter** — press `/`, then type to narrow by agent name, session,
-or window. `Esc` clears the filter; `Esc` again closes the popup.
+**Fuzzy search** — press `/`, then type a Telescope/fzy-style query. Matches
+are subsequences (not substrings) over the session title, agent name,
+working directory, and the full pane capture (including content not
+currently visible in the preview). Space-separated terms are ANDed. Results
+are ranked by match quality. `Esc` leaves search mode (the filter stays);
+`Esc` again closes the popup.
 
-| Key | Action |
+| Key / Mouse | Action |
 |-----|--------|
 | `↑` `↓` / `j` `k` | Navigate the list |
+| `←` / `→` | Grow / shrink the preview pane (persisted) |
+| `Ctrl-u` / `Ctrl-d` | Scroll the preview up / down |
 | `1`–`9` | Jump to the Nth agent in the list |
 | `b` / `w` / `i` | Filter by status: blocked / working / idle (press again to clear) |
-| `Enter` / `→` / `l` / `Space` | Jump to the selected agent's pane |
-| `/` | Start filtering (agent name, session, window) |
+| `Enter` / `l` / `Space` | Jump to the selected agent's pane |
+| Click on an agent line | Select and jump to that agent's pane |
+| `/` | Start fuzzy search (session title, name, directory, pane content) |
 | Type | Filter the list |
 | `Backspace` | Remove last character from filter |
-| `Esc` | Clear filter; if already clear, close popup |
+| `Esc` | Leave search mode; if not searching, close popup |
 | `q` / `Ctrl-c` | Close popup |
 
 ### Supported agents

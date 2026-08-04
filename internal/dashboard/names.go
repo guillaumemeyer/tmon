@@ -30,3 +30,14 @@ func agentFullName(label string) string {
 		return label
 	}
 }
+
+// agentDisplayName renders the agent's name in the popup: when the agent's
+// session has a title it is shown as "Title (Name)", otherwise just the
+// name. The title comes from the connector (Grok's generated_title, Claude's
+// session name) and falls back to the plain name when unknown.
+func agentDisplayName(r Row) string {
+	if r.Title == "" {
+		return agentFullName(r.Label)
+	}
+	return r.Title + " (" + agentFullName(r.Label) + ")"
+}
