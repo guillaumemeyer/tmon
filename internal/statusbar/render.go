@@ -16,27 +16,27 @@ const (
 	reset    = "#[default]"
 )
 
-// Render builds the indicator line, e.g. "[@] ? 2 - ● 3 - ‖ 1".
+// Render builds the indicator line, e.g. "[@]? 2-● 3-‖ 1 ".
 // frame toggles the animated characters on odd values. The empty state is
-// the fixed-width "[@] ? 0 - ● 0 - ‖ 0" so the status bar never jumps.
+// the fixed-width "[@]? 0-● 0-‖ 0 " so the status bar never jumps.
 func Render(statuses []agent.Status, frame int) string {
-	var blocked, active, idle int
+	var blocked, active, paused int
 	for _, s := range statuses {
 		switch s {
 		case agent.StatusBlocked:
 			blocked++
 		case agent.StatusActive, agent.StatusRunning:
 			active++ // the green bucket includes both
-		case agent.StatusIdle:
-			idle++
+		case agent.StatusPaused:
+			paused++
 		}
 	}
 
 	if len(statuses) == 0 {
-		return fgCyan + "[@]" + reset + " " +
-			fgOrange + "?" + " 0" + reset + " - " +
-			fgGreen + "●" + " 0" + reset + " - " +
-			fgBlue + "‖" + " 0" + reset
+		return fgCyan + "[@]" + reset +
+			fgOrange + "?" + " 0" + reset + "-" +
+			fgGreen + "●" + " 0" + reset + "-" +
+			fgBlue + "‖" + " 0" + reset + " "
 	}
 
 	odd := frame%2 != 0
@@ -48,8 +48,8 @@ func Render(statuses []agent.Status, frame int) string {
 		aChar = "!"
 	}
 
-	return fgCyan + "[@]" + reset + " " +
-		fgOrange + bChar + fmt.Sprintf("%2d", blocked) + reset + " - " +
-		fgGreen + aChar + fmt.Sprintf("%2d", active) + reset + " - " +
-		fgBlue + "‖" + fmt.Sprintf("%2d", idle) + reset
+	return fgCyan + "[@]" + reset +
+		fgOrange + bChar + fmt.Sprintf("%2d", blocked) + reset + "-" +
+		fgGreen + aChar + fmt.Sprintf("%2d", active) + reset + "-" +
+		fgBlue + "‖" + fmt.Sprintf("%2d", paused) + reset + " "
 }

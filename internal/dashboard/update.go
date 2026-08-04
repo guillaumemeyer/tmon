@@ -114,7 +114,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		m.cycleGroup()
 	case "d":
 		m.togglePreview()
-	case "b", "w", "i", "a":
+	case "b", "w", "p", "a":
 		m.toggleStatusFilter(statusKey(msg.String()))
 	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
 		m.jumpTo(msg.String())
@@ -123,15 +123,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 }
 
 // statusKey maps a filter key to its status: b=blocked, w=working (running),
-// i=idle, a=active.
+// p=paused, a=active.
 func statusKey(k string) agent.Status {
 	switch k {
 	case "b":
 		return agent.StatusBlocked
 	case "w":
 		return agent.StatusRunning
-	case "i":
-		return agent.StatusIdle
+	case "p":
+		return agent.StatusPaused
 	case "a":
 		return agent.StatusActive
 	}
@@ -307,7 +307,7 @@ func (m *Model) groupBySession() {
 }
 
 // groupByStatus groups agents under a status header per state, most urgent
-// first (blocked, active, running, idle).
+// first (blocked, active, running, paused).
 func (m *Model) groupByStatus() {
 	for _, st := range statusOrder {
 		started := false

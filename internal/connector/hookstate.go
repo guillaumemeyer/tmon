@@ -98,7 +98,9 @@ func readHookSessionFiles(dir string) ([]hookSessionFile, error) {
 		}
 		status := agent.Status(hs.Status)
 		switch status {
-		case agent.StatusRunning, agent.StatusActive, agent.StatusBlocked, agent.StatusIdle:
+		case agent.StatusRunning, agent.StatusActive, agent.StatusBlocked, agent.StatusPaused:
+		case "idle": // legacy state written by pre-paused hook installs
+			status = agent.StatusPaused
 		default:
 			continue // unknown status string: not one of ours
 		}

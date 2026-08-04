@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/guillaumemeyer/tmon/internal/config"
@@ -32,6 +34,8 @@ func cmdHooks(args []string) int {
 			return 2
 		}
 		return hooksInstall(args[1])
+	case "auto":
+		return hooksAuto()
 	case "remove":
 		if len(args) != 2 {
 			fmt.Fprint(os.Stderr, hooksUsage)
@@ -56,6 +60,9 @@ strictly opt-in: installing edits the agent's own config file.
 Usage:
   tmon hooks install <agent>   Install hooks (backup + merge config)
   tmon hooks remove  <agent>   Strip tmon's hook entries from the config
+  tmon hooks auto              Install hooks for every supported agent found
+                               on this machine (run at plugin load unless
+                               @tmon-auto-hooks is off)
   tmon hooks status            Show which agents have hooks installed
 
 Supported agents: claude codex cursor copilot windsurf
@@ -69,6 +76,7 @@ type hookTarget struct {
 	scriptName string                 // embedded script filename
 	useMatcher bool                   // group objects carry a matcher
 	jsonc      bool                   // config is JSONC (strip comments)
+	binaries   []string               // CLI names used to detect the agent on this machine
 }
 
 // hookEvent is one hook entry to install. For Notification entries the
@@ -85,6 +93,7 @@ var claudeTarget = hookTarget{
 	name:       "claude",
 	scriptName: "agent-hook.sh",
 	useMatcher: true,
+	binaries:   []string{"claude"},
 	settings: func() (string, error) {
 		return homeFile(".claude", "settings.json")
 	},
@@ -97,7 +106,7 @@ var claudeTarget = hookTarget{
 		{event: "PermissionRequest"},
 		{event: "PermissionDenied"},
 		{event: "Notification", matcher: "permission_prompt", status: "blocked", detail: "waiting:permission"},
-		{event: "Notification", matcher: "idle_prompt", status: "idle", detail: "idle"},
+		{event: "Notification", matcher: "idle_prompt", status: "paused", detail: "paused"},
 		{event: "Notification", matcher: "agent_needs_input", status: "blocked", detail: "needs:input"},
 		{event: "Stop"},
 		{event: "SubagentStart"},
@@ -115,6 +124,7 @@ var codexTarget = hookTarget{
 	name:       "codex",
 	scriptName: "agent-hook.sh",
 	useMatcher: false,
+	binaries:   []string{"codex"},
 	settings: func() (string, error) {
 		return homeFile(".codex", "hooks.json")
 	},
@@ -133,6 +143,7 @@ var cursorTarget = hookTarget{
 	name:       "cursor",
 	scriptName: "agent-hook.sh",
 	useMatcher: true,
+	binaries:   []string{"cursor-agent", "cursor"},
 	settings: func() (string, error) {
 		return homeFile(".cursor", "hooks.json")
 	},
@@ -156,6 +167,7 @@ var copilotTarget = hookTarget{
 	scriptName: "agent-hook.sh",
 	useMatcher: true,
 	jsonc:      true,
+	binaries:   []string{"copilot"},
 	settings: func() (string, error) {
 		return homeFile(".copilot", "settings.json")
 	},
@@ -174,6 +186,7 @@ var windsurfTarget = hookTarget{
 	name:       "windsurf",
 	scriptName: "agent-hook.sh",
 	useMatcher: false,
+	binaries:   []string{"windsurf"},
 	settings: func() (string, error) {
 		return homeFile(".codeium", "windsurf", "hooks.json")
 	},
@@ -307,6 +320,60 @@ func hooksStatus() int {
 		}
 	}
 	return 0
+}
+
+// hooksAuto installs hooks for every supported agent found on this machine —
+// a binary on PATH, or the agent's config file already present. It is the
+// startup path: tmon.tmux runs it at plugin load unless @tmon-auto-hooks is
+// off. Idempotent: agents already configured are skipped silently, so a
+// steady-state tmux reload prints nothing.
+func hooksAuto() int {
+	names := make([]string, 0, len(hookTargets))
+	for n := range hookTargets {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+
+	var installed, skipped []string
+	for _, name := range names {
+		target := hookTargets[name]
+		if ok, err := hooksInstalled(target); err == nil && ok {
+			continue // already configured: silent
+		}
+		if !agentPresent(target) {
+			skipped = append(skipped, name)
+			continue
+		}
+		if hooksInstall(name) != 0 {
+			skipped = append(skipped, name) // hooksInstall already printed the error
+			continue
+		}
+		installed = append(installed, name)
+	}
+
+	if len(installed) > 0 {
+		fmt.Printf("tmon: hooks auto: installed %s\n", strings.Join(installed, ", "))
+	} else if len(skipped) == len(names) {
+		fmt.Println("tmon: hooks auto: no agents found (install manually with `tmon hooks install <agent>`)")
+	}
+	return 0
+}
+
+// agentPresent reports whether the agent is installed on this machine: any of
+// its CLI binaries resolvable on PATH, or its config file already on disk
+// (a fallback for agents whose launcher lives outside PATH).
+func agentPresent(target *hookTarget) bool {
+	for _, b := range target.binaries {
+		if p, err := exec.LookPath(b); err == nil && p != "" {
+			return true
+		}
+	}
+	if settings, err := target.settings(); err == nil {
+		if _, err := os.Stat(settings); err == nil {
+			return true
+		}
+	}
+	return false
 }
 
 func hooksInstalled(target *hookTarget) (bool, error) {

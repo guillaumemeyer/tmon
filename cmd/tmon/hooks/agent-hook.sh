@@ -48,8 +48,8 @@ else
     PostToolUse|postToolUse|afterShellExecution|afterFileEdit|beforeMCPExecution) status=active; detail="done:${tool:-running}" ;;
     PostToolUseFailure|postToolUseFailure) status=active; detail="failed:${tool:-running}" ;;
     PermissionRequest|permissionRequest|PermissionDenied|permissionDenied) status=blocked; detail="permission:${tool:-unknown}" ;;
-    Stop|stop|agentStop) status=idle; detail=turn-complete ;;
-    post_cascade_response) status=idle; detail=responded ;;
+    Stop|stop|agentStop) status=paused; detail=turn-complete ;;
+    post_cascade_response) status=paused; detail=responded ;;
     post_cascade_response_with_transcript) status=active; detail=transcript ;;
     SubagentStart|SubagentStop) status=active; detail=subagent ;;
     PreCompact|PostCompact) status=active; detail=compacting ;;

@@ -162,8 +162,8 @@ func (m Model) renderItem(di int, it item, w int) string {
 		return "  " + statusHeader(it.status)
 	case itemAgent:
 		r := m.rows[it.rowIdx]
-		line := fmt.Sprintf("      [%s] %s %s %s  %s",
-			r.PaneIndex, animatedStatusChar(r.Status, m.frame), agentIcon(r.Label), agentFullName(r.Label), r.CWD)
+		line := fmt.Sprintf("      [%s] %s %s  %s",
+			r.PaneIndex, animatedStatusChar(r.Status, m.frame), agentFullName(r.Label), r.CWD)
 		if r.BlockedReason != "" {
 			line += "  " + styleOrange.Render(r.BlockedReason)
 		}
@@ -192,8 +192,8 @@ func statusHeader(st agent.Status) string {
 		return styleGreen.Bold(true).Render("● Active")
 	case agent.StatusRunning:
 		return styleGreen.Bold(true).Render("● Running")
-	case agent.StatusIdle:
-		return styleBlue.Bold(true).Render("‖ Idle")
+	case agent.StatusPaused:
+		return styleBlue.Bold(true).Render("‖ Paused")
 	}
 	return string(st)
 }
@@ -232,8 +232,8 @@ func (m Model) filterLabel() string {
 		return "a:active"
 	case agent.StatusRunning:
 		return "w:running"
-	case agent.StatusIdle:
-		return "i:idle"
+	case agent.StatusPaused:
+		return "p:paused"
 	}
 	return ""
 }
@@ -250,7 +250,7 @@ func (m Model) statusCounts() [4]int {
 			c[1]++
 		case agent.StatusRunning:
 			c[2]++
-		case agent.StatusIdle:
+		case agent.StatusPaused:
 			c[3]++
 		}
 	}
@@ -258,7 +258,7 @@ func (m Model) statusCounts() [4]int {
 }
 
 // countString renders the status-bar-style counts: ? blocked, ● active
-// (including running), ‖ idle — over the filtered set.
+// (including running), ‖ paused — over the filtered set.
 func (m Model) countString() string {
 	c := m.statusCounts()
 	return fmt.Sprintf("%s %d  %s %d  %s %d",
@@ -291,7 +291,7 @@ func animatedStatusChar(status agent.Status, frame int) string {
 			return styleGreen.Render("!")
 		}
 		return styleGreen.Render("●")
-	case agent.StatusIdle:
+	case agent.StatusPaused:
 		return styleBlue.Render("‖")
 	default:
 		return styleDim.Render("·")
@@ -320,7 +320,7 @@ func ageString(lastTs int64) string {
 }
 
 // fit truncates s to at most w cells without breaking ANSI codes and while
-// accounting for wide characters (emoji icons).
+// accounting for wide characters.
 func fit(s string, w int) string {
 	return ansi.Truncate(s, w, "")
 }

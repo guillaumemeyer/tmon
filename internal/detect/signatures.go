@@ -22,7 +22,7 @@ var Signatures = []Signature{
 	{"Grok", re(`^grok( |$)`)},
 	{"Grok", re(`/grok[-_]build`)},
 	{"Grok", re(`grok[-_](build|agent|chat|run)`)},
-	{"Claude", re(`^claude( |$)`)},
+	{"Claude", re(`(^|/)claude( |$)`)},
 	{"Claude", re(`claude( |-)(code|agent|chat|run)`)},
 	{"Claude", re(`claude-code`)},
 	{"Claude", re(`/claude-code/`)},

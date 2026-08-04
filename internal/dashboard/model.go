@@ -88,7 +88,7 @@ var statusOrder = []agent.Status{
 	agent.StatusBlocked,
 	agent.StatusActive,
 	agent.StatusRunning,
-	agent.StatusIdle,
+	agent.StatusPaused,
 }
 
 // Model is the bubbletea state for the dashboard popup.

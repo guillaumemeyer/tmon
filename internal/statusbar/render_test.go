@@ -8,7 +8,7 @@ import (
 
 func TestRenderEmpty(t *testing.T) {
 	got := Render(nil, 0)
-	want := "#[fg=cyan][@]#[default] #[fg=colour208]? 0#[default] - #[fg=green]● 0#[default] - #[fg=blue]‖ 0#[default]"
+	want := "#[fg=cyan][@]#[default]#[fg=colour208]? 0#[default]-#[fg=green]● 0#[default]-#[fg=blue]‖ 0#[default] "
 	if got != want {
 		t.Errorf("Render(empty) =\n  %q\nwant:\n  %q", got, want)
 	}
@@ -20,11 +20,11 @@ func TestRenderCounts(t *testing.T) {
 		agent.StatusBlocked,
 		agent.StatusActive,
 		agent.StatusRunning,
-		agent.StatusIdle,
+		agent.StatusPaused,
 	}
-	// 2 blocked, 2 active (active + running), 1 idle.
+	// 2 blocked, 2 active (active + running), 1 paused.
 	got := Render(statuses, 0)
-	want := "#[fg=cyan][@]#[default] #[fg=colour208]? 2#[default] - #[fg=green]● 2#[default] - #[fg=blue]‖ 1#[default]"
+	want := "#[fg=cyan][@]#[default]#[fg=colour208]? 2#[default]-#[fg=green]● 2#[default]-#[fg=blue]‖ 1#[default] "
 	if got != want {
 		t.Errorf("Render =\n  %q\nwant:\n  %q", got, want)
 	}
@@ -46,9 +46,9 @@ func TestRenderAnimationToggles(t *testing.T) {
 
 func TestRenderNoAnimationWhenSingleStateEmpty(t *testing.T) {
 	// Animation only toggles when there are agents in that bucket.
-	onlyIdle := []agent.Status{agent.StatusIdle}
-	if got := Render(onlyIdle, 1); !contains(got, "‖ 1") || contains(got, "! 1") {
-		t.Errorf("idle-only render wrong: %q", got)
+	onlyPaused := []agent.Status{agent.StatusPaused}
+	if got := Render(onlyPaused, 1); !contains(got, "‖ 1") || contains(got, "! 1") {
+		t.Errorf("paused-only render wrong: %q", got)
 	}
 }
 

@@ -18,6 +18,7 @@ Usage:
   tmon hooks <cmd>       Install/remove agent lifecycle hooks:
                            tmon hooks install <agent>   (claude|codex|cursor|copilot|windsurf)
                            tmon hooks remove  <agent>
+                           tmon hooks auto             Install for agents found on this machine
                            tmon hooks status
   tmon version           Print the installed version
 
@@ -27,7 +28,7 @@ Environment (set by tmon.tmux from the @tmon-* tmux options):
   TMON_POLL_INTERVAL_MS       Poll interval in ms (default 3000)
   TMON_ACTIVITY_THRESHOLD_MS  CPU floor for "active" in ms/s (default 500)
   TMON_IO_ACTIVITY_THRESHOLD  Min IO bytes/poll for "active" (default 102400)
-  TMON_IDLE_DECAY_POLLS       Idle grace period in polls (default 3)
+  TMON_IDLE_DECAY_POLLS       Grace polls before flagging "paused" (default 3)
   TMON_CONNECTORS             Connector selection: "auto" or a comma list
                               (default auto; agents' own state sources)
   TMON_CONNECTOR_FRESHNESS    Seconds a connector signal stays valid (default 30)

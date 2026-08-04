@@ -192,6 +192,81 @@ func TestHooksStatusShowsAllTargets(t *testing.T) {
 	}
 }
 
+// fakeBinary drops an executable named name into dir and returns dir.
+func fakeBinary(t *testing.T, dir, name string) {
+	t.Helper()
+	p := filepath.Join(dir, name)
+	writeTestFile(t, p, "#!/bin/sh\n")
+	if err := os.Chmod(p, 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestHooksAutoInstallsPresentAgents(t *testing.T) {
+	home, _ := testHooksEnv(t)
+
+	// Only this dir is on PATH, so the test machine's real agents (e.g. a
+	// claude on the user's PATH) can't leak into the assertions.
+	bin := t.TempDir()
+	fakeBinary(t, bin, "claude")
+	t.Setenv("PATH", bin)
+
+	// copilot has no binary here but its config file exists.
+	writeTestFile(t, filepath.Join(home, ".copilot", "settings.json"), "{}\n")
+
+	if code := hooksAuto(); code != 0 {
+		t.Fatalf("hooksAuto = %d, want 0", code)
+	}
+	if ok, _ := hooksInstalled(&claudeTarget); !ok {
+		t.Error("claude hooks not installed by auto (binary on PATH)")
+	}
+	if ok, _ := hooksInstalled(&copilotTarget); !ok {
+		t.Error("copilot hooks not installed by auto (config file present)")
+	}
+	for name, target := range map[string]*hookTarget{
+		"codex":    &codexTarget,
+		"cursor":   &cursorTarget,
+		"windsurf": &windsurfTarget,
+	} {
+		if ok, _ := hooksInstalled(target); ok {
+			t.Errorf("%s hooks installed despite no binary or config", name)
+		}
+	}
+}
+
+func TestHooksAutoNothingFound(t *testing.T) {
+	testHooksEnv(t)
+	t.Setenv("PATH", t.TempDir()) // empty dir: no agents resolvable
+
+	if code := hooksAuto(); code != 0 {
+		t.Fatalf("hooksAuto = %d, want 0", code)
+	}
+	for name, target := range hookTargets {
+		if ok, _ := hooksInstalled(target); ok {
+			t.Errorf("%s hooks installed despite no agent present", name)
+		}
+	}
+}
+
+func TestHooksAutoSkipsInstalled(t *testing.T) {
+	home, plugin := testHooksEnv(t)
+	_ = home
+	if code := hooksInstall("claude"); code != 0 {
+		t.Fatalf("hooksInstall = %d, want 0", code)
+	}
+	settings := filepath.Join(home, ".claude", "settings.json")
+	script := filepath.Join(plugin, "hooks", "agent-hook.sh")
+	before, _ := os.ReadFile(settings)
+
+	if code := hooksAuto(); code != 0 {
+		t.Fatalf("hooksAuto = %d, want 0", code)
+	}
+	after, _ := os.ReadFile(settings)
+	if got, want := strings.Count(string(after), script), strings.Count(string(before), script); got != want {
+		t.Errorf("script references changed by auto: %d → %d, want unchanged", want, got)
+	}
+}
+
 func writeTestFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

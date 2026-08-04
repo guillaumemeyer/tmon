@@ -18,7 +18,7 @@ const (
 	StatusRunning Status = "running"
 	StatusActive  Status = "active"
 	StatusBlocked Status = "blocked"
-	StatusIdle    Status = "idle"
+	StatusPaused  Status = "paused"
 )
 
 // AgentState is the per-process tracked state, persisted in state.json.
@@ -40,7 +40,7 @@ type Options struct {
 	PollIntervalSec     int   // seconds between full scans
 	ActivityThresholdMs int   // CPU ms/s to consider "active"
 	IOThreshold         int64 // min IO bytes/poll to consider "active"
-	IdleDecayPolls      int   // consecutive idle polls before "idle"
+	IdleDecayPolls      int   // consecutive quiet polls before "paused"
 	CLKTicksPerSec      int   // kernel clock ticks per second
 }
 
@@ -122,8 +122,10 @@ func (t *Tracker) Evaluate(pid int, label, cwd, pane string, cpuNow, ioNow int64
 		return StatusActive
 	}
 
-	// No meaningful activity: apply the idle-decay grace period so agents
-	// between API calls don't flicker.
+	// No meaningful activity: apply the decay grace period so agents
+	// between API calls don't flicker, then flag the agent as paused —
+	// alive, but not actively thinking or writing. Agents expecting user
+	// action never reach here: blocked above overrides everything.
 	streak := oldStreak + 1
 	next.IdleStreak = streak
 	if streak < t.opts.IdleDecayPolls {
@@ -132,10 +134,10 @@ func (t *Tracker) Evaluate(pid int, label, cwd, pane string, cpuNow, ioNow int64
 		t.curr[pid] = next
 		return oldStatus
 	}
-	next.Status = StatusIdle
-	next.LastTs = stamp(oldStatus, StatusIdle, oldLastTs)
+	next.Status = StatusPaused
+	next.LastTs = stamp(oldStatus, StatusPaused, oldLastTs)
 	t.curr[pid] = next
-	return StatusIdle
+	return StatusPaused
 }
 
 // EvaluateAuthoritative records a status supplied by a connector — the

@@ -24,13 +24,13 @@ func TestGroupByStatus(t *testing.T) {
 		t.Fatalf("group mode after g = %d, want status", m.groupMode)
 	}
 
-	// testRows: Claude blocked, Grok active, Codex idle. Expect one header
-	// per present status in urgency order: blocked, active, idle.
+	// testRows: Claude blocked, Grok active, Codex paused. Expect one header
+	// per present status in urgency order: blocked, active, paused.
 	want := []itemKind{itemStatus, itemAgent, itemStatus, itemAgent, itemStatus, itemAgent}
 	if len(m.items) != len(want) {
 		t.Fatalf("items = %d, want %d: %+v", len(m.items), len(want), m.items)
 	}
-	wantStatus := []agent.Status{agent.StatusBlocked, agent.StatusActive, agent.StatusIdle}
+	wantStatus := []agent.Status{agent.StatusBlocked, agent.StatusActive, agent.StatusPaused}
 	pos := 0
 	for i, kind := range want {
 		if m.items[i].kind != kind {
@@ -101,10 +101,10 @@ func TestStatusFilters(t *testing.T) {
 		t.Fatalf("w filter: filtered = %v, want none", m.filtered)
 	}
 
-	// i → idle only (Codex).
-	m = applyMsg(t, m, key('i'))
+	// p → paused only (Codex).
+	m = applyMsg(t, m, key('p'))
 	if len(m.filtered) != 1 || m.rows[m.filtered[0]].Label != "Codex" {
-		t.Fatalf("i filter: filtered = %v, want only Codex", m.filtered)
+		t.Fatalf("p filter: filtered = %v, want only Codex", m.filtered)
 	}
 }
 
@@ -251,7 +251,7 @@ func TestFooterShowsStatusCounts(t *testing.T) {
 	m.width, m.height = 80, 24
 
 	v := ansi.Strip(m.View())
-	// testRows: 1 blocked, 1 active, 1 idle → ? 1  ● 1  ‖ 1.
+	// testRows: 1 blocked, 1 active, 1 paused → ? 1  ● 1  ‖ 1.
 	for _, want := range []string{"? 1", "● 1", "‖ 1", "[1-9] jump"} {
 		if !strings.Contains(v, want) {
 			t.Fatalf("footer missing %q in:\n%s", want, v)

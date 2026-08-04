@@ -18,7 +18,7 @@ type Config struct {
 	PollIntervalMs      int    // milliseconds between full scans
 	ActivityThresholdMs int    // CPU ms/s to consider "active"
 	IOThreshold         int64  // min IO bytes/poll to consider "active"
-	IdleDecayPolls      int    // consecutive idle polls before "idle"
+	IdleDecayPolls      int    // consecutive quiet polls before "paused"
 	CLKTicks            int    // kernel clock ticks per second (default 100)
 	Connectors          string // comma list or "auto" (enable every connector whose paths exist)
 	ConnectorFreshness  time.Duration

@@ -4,6 +4,7 @@
 
 # Runtime state (written inside the plugin dir by tmon itself)
 /state/
+/hooks/
 
 # Test/coverage output
 coverage.out

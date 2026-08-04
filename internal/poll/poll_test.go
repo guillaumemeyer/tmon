@@ -153,15 +153,15 @@ func TestNotifyTransitionsOnChangeOnly(t *testing.T) {
 	t.Cleanup(func() { announce = old })
 
 	prev := map[int]agent.Status{
-		1: agent.StatusIdle,
+		1: agent.StatusPaused,
 		2: agent.StatusActive,
 		3: agent.StatusRunning,
 	}
 	snap := []agent.AgentState{
-		{PID: 1, Label: "Grok", Status: agent.StatusRunning},   // idle→running: announce
+		{PID: 1, Label: "Grok", Status: agent.StatusRunning},   // paused→running: announce
 		{PID: 2, Label: "Claude", Status: agent.StatusActive},  // unchanged: silent
 		{PID: 3, Label: "Hermes", Status: agent.StatusBlocked}, // running→blocked: announce
-		{PID: 4, Label: "Codex", Status: agent.StatusIdle},     // new agent: silent
+		{PID: 4, Label: "Codex", Status: agent.StatusPaused},   // new agent: silent
 	}
 	notifyTransitions(prev, snap)
 	if len(got) != 2 {
@@ -174,10 +174,10 @@ func TestTransitionMessageFilter(t *testing.T) {
 		old, new agent.Status
 		want     string
 	}{
-		{agent.StatusIdle, agent.StatusRunning, "Grok started"},
+		{agent.StatusPaused, agent.StatusRunning, "Grok started"},
 		{agent.StatusRunning, agent.StatusActive, "Grok is now active"},
 		{agent.StatusActive, agent.StatusBlocked, ""}, // blocked is silent
-		{agent.StatusBlocked, agent.StatusIdle, ""},   // idling is silent
+		{agent.StatusBlocked, agent.StatusPaused, ""}, // pausing is silent
 		{agent.StatusActive, agent.StatusActive, ""},  // no transition
 	}
 	for _, c := range cases {
@@ -185,7 +185,7 @@ func TestTransitionMessageFilter(t *testing.T) {
 			t.Errorf("transitionMessage(%s->%s) = %q, want %q", c.old, c.new, got, c.want)
 		}
 	}
-	if got := transitionMessage("Grok", agent.StatusIdle, agent.StatusRunning, "code/tmon"); got != "Grok started in code/tmon" {
+	if got := transitionMessage("Grok", agent.StatusPaused, agent.StatusRunning, "code/tmon"); got != "Grok started in code/tmon" {
 		t.Errorf("with cwd = %q, want \"Grok started in code/tmon\"", got)
 	}
 }

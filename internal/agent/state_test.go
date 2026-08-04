@@ -28,7 +28,7 @@ func TestFirstSightingIsRunning(t *testing.T) {
 
 func TestZeroCPUStaysRunning(t *testing.T) {
 	// The bash plugin treats a zero previous CPU read as a first sighting;
-	// a just-forked process with no ticks yet must not be called "idle".
+	// a just-forked process with no ticks yet must not be called "paused".
 	tr := NewTracker(testOptions())
 	tr.BeginPoll()
 	tr.Evaluate(1, "Grok", "c", "?", 0, 0, false)
@@ -47,7 +47,7 @@ func TestIdleDecayGrace(t *testing.T) {
 	tr.EndPoll()
 
 	// Two quiet polls stay in grace (streak 1 and 2); the third quiet poll
-	// (streak 3, == IdleDecayPolls) flips to idle. README: "no meaningful
+	// (streak 3, == IdleDecayPolls) flips to paused. README: "no meaningful
 	// activity for 3 consecutive polls".
 	for i := 1; i <= 2; i++ {
 		tr.BeginPoll()
@@ -59,8 +59,8 @@ func TestIdleDecayGrace(t *testing.T) {
 	}
 
 	tr.BeginPoll()
-	if got := tr.Evaluate(1, "Grok", "c", "?", 1000, 0, false); got != StatusIdle {
-		t.Errorf("3rd quiet poll = %q, want idle", got)
+	if got := tr.Evaluate(1, "Grok", "c", "?", 1000, 0, false); got != StatusPaused {
+		t.Errorf("3rd quiet poll = %q, want paused", got)
 	}
 }
 
@@ -221,7 +221,7 @@ func TestEvaluateAuthoritativePreservesBaseline(t *testing.T) {
 
 	// Heuristic takeover: the authoritative record left CPU at 0, so this
 	// poll is a fresh baseline (running), then three quiet polls decay to
-	// idle (grace of 3).
+	// paused (grace of 3).
 	tr.BeginPoll()
 	tr.Evaluate(1, "Grok", "c", "?", 1000, 0, false)
 	tr.EndPoll()
@@ -233,7 +233,7 @@ func TestEvaluateAuthoritativePreservesBaseline(t *testing.T) {
 	}
 
 	tr.BeginPoll()
-	if got := tr.Evaluate(1, "Grok", "c", "?", 1000, 0, false); got != StatusIdle {
-		t.Errorf("quiet polls after connector = %q, want idle", got)
+	if got := tr.Evaluate(1, "Grok", "c", "?", 1000, 0, false); got != StatusPaused {
+		t.Errorf("quiet polls after connector = %q, want paused", got)
 	}
 }

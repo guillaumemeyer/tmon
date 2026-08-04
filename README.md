@@ -26,16 +26,16 @@ wires up the status bar, keybindings, and popup.
 ### Status bar
 
 ```
-[@] ? 2 - ● 3 - ‖ 1
- ↑    ↑      ↑      ↑
-icon blocked  active  idle
+[@]? 2-● 3-‖ 1
+ ↑  ↑   ↑   ↑
+ icon blocked active paused
 ```
 
 - **● cyan `[@]` prefix** — your personal fleet of AI agents
 - **? orange** — agent is blocked, waiting for you (permission prompt, plan approval, y/n question). Toggles to **!** every other poll as a visual nudge.
 - **● green** — agent is cooking (CPU or IO activity detected, or just booted up). Toggles to **!** every other poll as a visual pulse.
-- **‖ blue** — agent is idle (no meaningful activity for several polls)
-- **[@] ? 0 - ● 0 - ‖ 0** — no agents detected (peace and quiet)
+- **‖ blue** — agent is paused: the session is alive but the agent is not actively thinking or writing, and it isn't waiting on you
+- **[@]? 0-● 0-‖ 0** — no agents detected (peace and quiet)
 
 Every segment always renders at a fixed width, so your status bar won't
 dance around when counts change.
@@ -48,7 +48,7 @@ dance around when counts change.
 ### Dashboard (`prefix a a`)
 
 An 80%×80% popup that lists every running agent grouped by session and
-window, with its emoji icon, status, and exact tmux location:
+window, with its display name, status, and exact tmux location:
 
 ```
 ┌──────────────────────────────────────────────────────┐
@@ -57,28 +57,28 @@ window, with its emoji icon, status, and exact tmux location:
 │                                                      │
 │  main                                                │
 │    0:code                                            │
-│      [0] ● 🧠 Grok Build        ~/code/tmon          │
-│      [1] ? 🏛️ Claude Code       ~/docs/design   [y/N]│
+│      [0] ● Grok Build           ~/code/tmon          │
+│      [1] ? Claude Code          ~/docs/design   [y/N]│
 │  side                                                │
 │    0:research                                        │
-│      [2] ‖ 🏄 Windsurf           ~/research          │
+│      [2] ‖ Windsurf              ~/research          │
 │                                                      │
 │ ▌ / to search        ? 1  ● 1  ‖ 1      [1-9] jump  │
 └──────────────────────────────────────────────────────┘
 ```
 
-Each agent gets one line with its emoji icon, display name, animated status
+Each agent gets one line with its display name, animated status
 character, pane index, and working directory — plus, when available, the
 reason it's blocked (e.g. `[y/N]`), the connector detail (e.g. `tool:Bash`),
 and how long ago its status last changed. The selected row is highlighted
 with a dim background. The footer always shows the live status counts
-(`? blocked · ● active · ‖ idle`) for the current filter.
+(`? blocked · ● active · ‖ paused`) for the current filter.
 
 Press `d` for a **preview panel** on the right: the selected agent's pane,
 captured live and ANSI-stripped, re-captured whenever the selection changes
 or the data reloads. Press `g` to cycle the grouping: by session, by status
-(blocked → active → running → idle), or as a flat list. Filter by status
-with `b` (blocked), `w` (running), `a` (active), `i` (idle); press the key
+(blocked → active → running → paused), or as a flat list. Filter by status
+with `b` (blocked), `w` (running), `a` (active), `p` (paused); press the key
 again to clear. `1`–`9` jumps straight to the Nth agent.
 
 **Status is always accurate** — the dashboard reads the same state file that
@@ -101,7 +101,7 @@ data reload every ~6 seconds.
 | `↑` `↓` / `j` `k` | Navigate the list |
 | `1`–`9` | Jump to the Nth agent in the list |
 | `g` | Cycle grouping: session → status → flat list |
-| `b` / `w` / `a` / `i` | Filter by status: blocked / running / active / idle (press again to clear) |
+| `b` / `w` / `a` / `p` | Filter by status: blocked / running / active / paused (press again to clear) |
 | `d` | Toggle the right-side pane preview panel |
 | `Enter` / `→` / `l` / `Space` | Jump to the selected agent's pane |
 | `/` | Start filtering (agent name, session, window) |
@@ -332,6 +332,24 @@ set -g @tmon-connectors "grok,hermes"   # only these two connectors
 set -g @tmon-connector-freshness "60"   # keep connector state longer
 ```
 
+### `@tmon-auto-hooks`
+
+> Auto-install lifecycle hooks at plugin load for every supported agent found
+> on this machine (Claude Code, Codex, Cursor, Copilot, Windsurf). "Found"
+> means the agent's CLI binary is on `PATH`, or its config file already
+> exists. Install is idempotent — agents already configured are skipped, and
+> each config is backed up once (`.tmon.bak`) before the first merge — so
+> reloads are silent no-ops. Set `off` to manage hooks by hand.
+
+| | |
+|---|---|
+| **Default** | `on` |
+| **Options** | `on` or `off` |
+
+```tmux
+set -g @tmon-auto-hooks off   # manage hooks manually
+```
+
 ### Advanced: environment variables
 
 These are exported by `tmon.tmux` from the tmux options above (and pushed
@@ -343,7 +361,7 @@ actually see them). They can also be overridden directly for custom setups:
 | `TMON_POLL_INTERVAL_MS` | `@tmon-poll-interval` | Poll interval in ms |
 | `TMON_ACTIVITY_THRESHOLD_MS` | `@tmon-activity-threshold` | CPU threshold in ms/s |
 | `TMON_IO_ACTIVITY_THRESHOLD` | `@tmon-io-threshold` | IO threshold in bytes |
-| `TMON_IDLE_DECAY_POLLS` | *(no tmux option)* | Consecutive idle polls before "idle" (default: 3) |
+| `TMON_IDLE_DECAY_POLLS` | *(no tmux option)* | Consecutive quiet polls before "paused" (default: 3) |
 | `TMON_CONNECTORS` | `@tmon-connectors` | Connector selection: `auto` or a comma list |
 | `TMON_CONNECTOR_FRESHNESS` | `@tmon-connector-freshness` | Seconds a connector signal stays valid (default: 30) |
 | `TMON_HOOK_STATE_DIR` | *(set by tmon.tmux)* | Where installed hooks write session state, default `<state>/hooks` |
@@ -376,9 +394,11 @@ Agents transition through a **4-state machine**:
 3. **blocked** — Overrides everything. If the pane content matches any blocked-state
    pattern (permission prompts, y/n questions, approval wait), the agent is stuck
    waiting for you.
-4. **idle** — No meaningful CPU or IO activity for 3 consecutive polls (9 seconds
+4. **paused** — The agent is alive but not actively thinking or writing: no
+   meaningful CPU or IO activity for 3 consecutive polls (9 seconds
    at default 3s interval). The grace period prevents flickering for agents
-   between API calls.
+   between API calls. An agent expecting your input never lands here — the
+   blocked state above overrides it.
 
 ### Blocked state detection
 
@@ -447,8 +467,8 @@ only make state more accurate, never less:
 | Agent | Source of authoritative state | Status granularity |
 |-------|------------------------------|--------------------|
 | **Grok Build** | `~/.grok/active_sessions.json` + `events.jsonl` phases | blocked (permission prompt, names the tool), active (reasoning / responding / tool / waiting on model), running |
-| **Hermes Agent** | `~/.hermes/gateway_state.json` (heartbeat) | blocked n/a — active (n agents), running (gateway), idle |
-| **Claude Code** | lifecycle hooks (`tmon hooks install claude`) | blocked (permission prompt), active (tool running / compacting / subagent), idle (turn complete) |
+| **Hermes Agent** | `~/.hermes/gateway_state.json` (heartbeat) | blocked n/a — active (n agents), running (gateway), paused |
+| **Claude Code** | lifecycle hooks (`tmon hooks install claude`) | blocked (permission prompt), active (tool running / compacting / subagent), paused (turn complete) |
 | **Codex CLI** | lifecycle hooks (`tmon hooks install codex`) | same event set as Claude |
 | **Cursor** | lifecycle hooks (`tmon hooks install cursor`), else `~/.cursor` session files | hook events, else running |
 | **Copilot** | lifecycle hooks (`tmon hooks install copilot`), else `~/.copilot` session files | hook events, else running |
@@ -458,11 +478,15 @@ only make state more accurate, never less:
 | **CodeBuddy** | `~/.codebuddy/sessions/<pid>.json` | running (session live) |
 | **OpenClaw** | *(stretch: SQLite/WS API not read yet)* | — (heuristic only) |
 
-### Hooks (`tmon hooks install`)
+### Hooks (`tmon hooks`)
 
 Claude Code, Codex, Cursor, Copilot and Windsurf have no readable live state
 file, so tmon installs **lifecycle hooks** for them — the agent's own
-extension point. Run once per agent:
+extension point. By default this happens automatically: at plugin load,
+`tmon hooks auto` installs hooks for every supported agent found on the
+machine (binary on `PATH` or config file present), so nothing needs to be
+run by hand. Disable with `set -g @tmon-auto-hooks off`, or install
+manually once per agent:
 
 ```bash
 ~/.tmux/plugins/tmon/bin/tmon hooks install claude
@@ -521,7 +545,7 @@ Three small edits, then `make build`:
 
 1. **Detection** — add a signature (a label + regex matched against the
    process command line) to the table in `internal/detect/signatures.go`.
-2. **Display name + icon** — add them to `internal/dashboard/names.go`.
+2. **Display name** — add it to `internal/dashboard/names.go`.
 3. **Tests** — add rows to the signature test matrix in
    `internal/detect/signatures_test.go` and rebuild.
 

@@ -68,13 +68,13 @@ func TestHermesActiveAgents(t *testing.T) {
 	}
 }
 
-func TestHermesNonRunningStateIsIdle(t *testing.T) {
+func TestHermesNonRunningStateIsPaused(t *testing.T) {
 	hermesFixture(t, `{"pid":4242,"gateway_state":"stopped","active_agents":0,"updated_at":"`+freshTS()+`"}`)
 	recs, err := (Hermes{}).Probe(config.Defaults())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if recs[0].Status != agent.StatusIdle || recs[0].Detail != "gateway:stopped" {
+	if recs[0].Status != agent.StatusPaused || recs[0].Detail != "gateway:stopped" {
 		t.Errorf("record = %+v, want idle gateway:stopped", recs[0])
 	}
 }

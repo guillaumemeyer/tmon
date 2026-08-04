@@ -21,6 +21,9 @@
 #   @tmon-connector-freshness 30 (default) — seconds a connector's status
 #                            signal stays authoritative before the /proc
 #                            heuristic takes over again
+#   @tmon-auto-hooks        "on" (default) — auto-install lifecycle hooks at
+#                            plugin load for every supported agent found on
+#                            this machine (set "off" to disable)
 #
 # Everything else is internal and self-contained: the binary is downloaded on
 # first load into <plugin>/bin (scripts/bootstrap.sh, pinned + checksummed to
@@ -51,6 +54,7 @@ IO_THRESHOLD=$(get_tmux_option "@tmon-io-threshold" "102400")
 DASHBOARD_KEY=$(get_tmux_option "@tmon-dashboard-key" "a")
 CONNECTORS=$(get_tmux_option "@tmon-connectors" "auto")
 CONNECTOR_FRESHNESS=$(get_tmux_option "@tmon-connector-freshness" "30")
+AUTO_HOOKS=$(get_tmux_option "@tmon-auto-hooks" "on")
 
 # ─── Runtime environment ──────────────────────────────────────────────────────
 
@@ -67,9 +71,12 @@ tmux set-environment -g TMON_CONNECTORS "$CONNECTORS"
 tmux set-environment -g TMON_CONNECTOR_FRESHNESS "$CONNECTOR_FRESHNESS"
 tmux set-environment -g TMON_HOOK_STATE_DIR "$STATE_DIR/hooks"
 
-# The bootstrap subprocess reads TMON_BIN_DIR from the environment; the
-# set-environment above only affects tmux's own environment.
+# Subprocesses spawned from this sourcing shell (bootstrap, hooks auto) read
+# the TMON_* variables from the environment; set-environment above only
+# affects tmux's own environment.
 export TMON_BIN_DIR="$BIN_DIR"
+export TMON_STATE_DIR="$STATE_DIR"
+export TMON_HOOK_STATE_DIR="$STATE_DIR/hooks"
 
 # ─── Plugin Entrypoint ────────────────────────────────────────────────────────
 
@@ -80,6 +87,13 @@ main() {
   # below never runs bootstrap logic — `tmon status` stays instant.
   if [ -f "$BOOTSTRAP" ]; then
     "$BOOTSTRAP" || true
+  fi
+
+  # Auto-install lifecycle hooks for supported agents found on this machine
+  # (opt out with @tmon-auto-hooks off). Idempotent: a no-op once configured,
+  # so reloads stay silent.
+  if [ "$AUTO_HOOKS" = "on" ] && [ -x "$BINARY" ]; then
+    "$BINARY" hooks auto
   fi
 
   # Status-bar widget. The binary path is inlined because #() commands run

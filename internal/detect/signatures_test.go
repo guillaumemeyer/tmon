@@ -16,6 +16,7 @@ func TestMatchLabel(t *testing.T) {
 		"claude":          "Claude",
 		"claude code":     "Claude",
 		"claude --resume": "Claude",
+		"/home/me/.local/bin/claude": "Claude", // path-invoked claude binary
 		"node /usr/lib/node_modules/@anthropic-ai/claude-code/cli.js": "Claude",
 		"/opt/claude-code/cli.js":                                     "Claude",
 		"claude-agent":                                                "Claude",
@@ -77,7 +78,7 @@ func TestMatchLabel(t *testing.T) {
 		"claudecode",                // no hyphen, no anchors
 		"codex-cli",                 // bare word: /codex-cli/ needs slashes
 		"/usr/bin/grok run",         // "grok run" isn't a hyphenated form
-		"grep claude",               // anchors prevent substring matches
+		"grep claude", // no start/slash anchor before "claude"
 		"node server.js",            // unrelated node process
 		"tmux",                      // obviously not an agent
 		"CLAUDE",                    // detection is case-sensitive, like bash

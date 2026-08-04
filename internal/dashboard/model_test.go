@@ -27,7 +27,7 @@ func testRows() []Row {
 			Pane: "main:0.0", SessionID: "1", SessionName: "main", WindowIndex: "0", WindowName: "shell", PaneIndex: "0"},
 		{PID: 11, Label: "Claude", Status: agent.StatusBlocked, CWD: "site",
 			Pane: "main:0.1", SessionID: "1", SessionName: "main", WindowIndex: "0", WindowName: "shell", PaneIndex: "1"},
-		{PID: 12, Label: "Codex", Status: agent.StatusIdle, CWD: "blog",
+		{PID: 12, Label: "Codex", Status: agent.StatusPaused, CWD: "blog",
 			Pane: "side:3.0", SessionID: "2", SessionName: "side", WindowIndex: "3", WindowName: "code", PaneIndex: "0"},
 	}
 }
