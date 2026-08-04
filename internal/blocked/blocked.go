@@ -41,6 +41,12 @@ var patterns = []string{
 	`\[approve\]`,
 	`\[confirm\]`,
 	`\[reject\]`,
+	// Hermes dangerous-command approval panel (CLI/TUI)
+	`Approve Once`,
+	`Always Approve`,
+	`dangerous command`,
+	`/approve`,
+	`Use /approve`,
 	// Chat questions (agent asked a question and is waiting)
 	`Waiting for input`,
 	`Waiting for your`,

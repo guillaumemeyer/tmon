@@ -11,17 +11,21 @@ import (
 	"strings"
 
 	"github.com/guillaumemeyer/tmon/internal/config"
+	"gopkg.in/yaml.v3"
 )
 
 //go:embed hooks/agent-hook.sh
 var agentHookScript string
 
+//go:embed hooks/hermes-approval.sh
+var hermesApprovalScript string
+
 // cmdHooks manages opt-in hook installation for HOOKS-tier agents. Hooks
 // give tmon authoritative state for agents that do not expose a readable
-// state file (Claude Code, Codex, Cursor, Copilot, Windsurf). Installing
-// modifies the agent's own config, so it is strictly opt-in:
-// `tmon hooks install <agent>` with a backup, `tmon hooks remove <agent>`
-// to strip, `tmon hooks status` to inspect.
+// state file (Claude Code, Codex, Cursor, Copilot, Windsurf, Hermes
+// approvals). Installing modifies the agent's own config, so it is
+// strictly opt-in: `tmon hooks install <agent>` with a backup,
+// `tmon hooks remove <agent>` to strip, `tmon hooks status` to inspect.
 func cmdHooks(args []string) int {
 	if len(args) < 1 {
 		fmt.Fprint(os.Stderr, hooksUsage)
@@ -33,6 +37,9 @@ func cmdHooks(args []string) int {
 			fmt.Fprint(os.Stderr, hooksUsage)
 			return 2
 		}
+		if args[1] == "hermes" {
+			return hermesHooksInstall()
+		}
 		return hooksInstall(args[1])
 	case "auto":
 		return hooksAuto()
@@ -40,6 +47,9 @@ func cmdHooks(args []string) int {
 		if len(args) != 2 {
 			fmt.Fprint(os.Stderr, hooksUsage)
 			return 2
+		}
+		if args[1] == "hermes" {
+			return hermesHooksRemove()
 		}
 		return hooksRemove(args[1])
 	case "status":
@@ -65,7 +75,7 @@ Usage:
                                @tmon-auto-hooks is off)
   tmon hooks status            Show which agents have hooks installed
 
-Supported agents: claude codex cursor copilot windsurf
+Supported agents: claude codex cursor copilot windsurf hermes
 `
 
 // hookTarget describes one installable agent's hook wiring.
@@ -307,7 +317,22 @@ func hooksRemove(name string) int {
 
 // hooksStatus reports which agents have tmon hooks installed.
 func hooksStatus() int {
-	for name, target := range hookTargets {
+	names := make([]string, 0, len(hookTargets)+1)
+	for n := range hookTargets {
+		names = append(names, n)
+	}
+	names = append(names, "hermes")
+	sort.Strings(names)
+	for _, name := range names {
+		if name == "hermes" {
+			if hermesHooksInstalled() {
+				fmt.Printf("%-8s installed\n", name)
+			} else {
+				fmt.Printf("%-8s not installed\n", name)
+			}
+			continue
+		}
+		target := hookTargets[name]
 		installed, err := hooksInstalled(target)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "tmon: hooks status: %s: %v\n", name, err)
@@ -328,14 +353,30 @@ func hooksStatus() int {
 // off. Idempotent: agents already configured are skipped silently, so a
 // steady-state tmux reload prints nothing.
 func hooksAuto() int {
-	names := make([]string, 0, len(hookTargets))
+	names := make([]string, 0, len(hookTargets)+1)
 	for n := range hookTargets {
 		names = append(names, n)
 	}
+	names = append(names, "hermes")
 	sort.Strings(names)
 
 	var installed, skipped []string
 	for _, name := range names {
+		if name == "hermes" {
+			if hermesHooksInstalled() {
+				continue
+			}
+			if !hermesAgentPresent() {
+				skipped = append(skipped, name)
+				continue
+			}
+			if hermesHooksInstall() != 0 {
+				skipped = append(skipped, name)
+				continue
+			}
+			installed = append(installed, name)
+			continue
+		}
 		target := hookTargets[name]
 		if ok, err := hooksInstalled(target); err == nil && ok {
 			continue // already configured: silent
@@ -357,6 +398,305 @@ func hooksAuto() int {
 		fmt.Println("tmon: hooks auto: no agents found (install manually with `tmon hooks install <agent>`)")
 	}
 	return 0
+}
+
+// ─── Hermes shell hooks (YAML config.yaml) ───────────────────────────────────
+
+func hermesRoot() string {
+	h, err := userHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(h, ".hermes")
+}
+
+func hermesAgentPresent() bool {
+	if p, err := exec.LookPath("hermes"); err == nil && p != "" {
+		return true
+	}
+	if _, err := os.Stat(filepath.Join(hermesRoot(), "config.yaml")); err == nil {
+		return true
+	}
+	return false
+}
+
+func hermesConfigHomes() []string {
+	root := hermesRoot()
+	if root == "" {
+		return nil
+	}
+	out := []string{root}
+	entries, err := os.ReadDir(filepath.Join(root, "profiles"))
+	if err != nil {
+		return out
+	}
+	for _, e := range entries {
+		if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
+			out = append(out, filepath.Join(root, "profiles", e.Name()))
+		}
+	}
+	return out
+}
+
+func hermesHooksInstalled() bool {
+	for _, home := range hermesConfigHomes() {
+		b, err := os.ReadFile(filepath.Join(home, "config.yaml"))
+		if err != nil {
+			continue
+		}
+		if strings.Contains(string(b), "hermes-approval.sh") {
+			return true
+		}
+	}
+	return false
+}
+
+func hermesHooksInstall() int {
+	cfg := config.FromEnv()
+	pluginDir := filepath.Dir(cfg.BinDir)
+	scriptPath := filepath.Join(pluginDir, "hooks", "hermes-approval.sh")
+	stateDir := filepath.Join(cfg.HookStateDir, "hermes")
+
+	if err := os.MkdirAll(filepath.Dir(scriptPath), 0o755); err != nil {
+		fmt.Fprintln(os.Stderr, "tmon: hooks install hermes:", err)
+		return 1
+	}
+	if err := os.WriteFile(scriptPath, []byte(hermesApprovalScript), 0o755); err != nil {
+		fmt.Fprintln(os.Stderr, "tmon: hooks install hermes:", err)
+		return 1
+	}
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		fmt.Fprintln(os.Stderr, "tmon: hooks install hermes:", err)
+		return 1
+	}
+
+	cmd := scriptPath + " " + stateDir
+	homes := hermesConfigHomes()
+	if len(homes) == 0 {
+		fmt.Fprintln(os.Stderr, "tmon: hooks install hermes: no ~/.hermes found")
+		return 1
+	}
+	var touched []string
+	for _, home := range homes {
+		cfgPath := filepath.Join(home, "config.yaml")
+		if _, err := os.Stat(cfgPath); err != nil {
+			continue // profile without config yet
+		}
+		backup := cfgPath + ".tmon.bak"
+		if _, err := os.Stat(backup); os.IsNotExist(err) {
+			if data, err := os.ReadFile(cfgPath); err == nil {
+				_ = os.WriteFile(backup, data, 0o644)
+			}
+		}
+		if err := mergeHermesHooks(cfgPath, cmd); err != nil {
+			fmt.Fprintf(os.Stderr, "tmon: hooks install hermes: %s: %v\n", cfgPath, err)
+			return 1
+		}
+		touched = append(touched, cfgPath)
+	}
+	if len(touched) == 0 {
+		fmt.Fprintln(os.Stderr, "tmon: hooks install hermes: no config.yaml found under ~/.hermes")
+		return 1
+	}
+	fmt.Printf("tmon: installed hermes approval hooks\n  script:  %s\n  state:   %s\n  configs: %s\n",
+		scriptPath, stateDir, strings.Join(touched, ", "))
+	fmt.Println("Restart Hermes CLI/gateway for the hooks to take effect.")
+	fmt.Println("Hermes may prompt once to allowlist the shell hook; accept it or set hooks_auto_accept: true.")
+	return 0
+}
+
+func hermesHooksRemove() int {
+	cmdNeedle := "hermes-approval.sh"
+	removedAny := false
+	for _, home := range hermesConfigHomes() {
+		cfgPath := filepath.Join(home, "config.yaml")
+		ok, err := stripHermesHooks(cfgPath, cmdNeedle)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "tmon: hooks remove hermes: %s: %v\n", cfgPath, err)
+			return 1
+		}
+		if ok {
+			removedAny = true
+			fmt.Printf("tmon: removed hermes hooks from %s\n", cfgPath)
+		}
+	}
+	if !removedAny {
+		fmt.Println("tmon: no hermes hooks were installed")
+	}
+	return 0
+}
+
+// mergeHermesHooks adds pre/post approval shell hooks to config.yaml.
+func mergeHermesHooks(configPath, command string) error {
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return err
+	}
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		return err
+	}
+	if root.Kind != yaml.DocumentNode || len(root.Content) == 0 {
+		return fmt.Errorf("empty yaml document")
+	}
+	doc := root.Content[0]
+	if doc.Kind != yaml.MappingNode {
+		return fmt.Errorf("config root is not a mapping")
+	}
+
+	hooksNode := yamlMapGet(doc, "hooks")
+	if hooksNode == nil {
+		hooksNode = &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+		yamlMapSet(doc, "hooks", hooksNode)
+	}
+	if hooksNode.Kind != yaml.MappingNode {
+		return fmt.Errorf("hooks: is not a mapping")
+	}
+
+	for _, event := range []string{"pre_approval_request", "post_approval_response"} {
+		list := yamlMapGet(hooksNode, event)
+		if list == nil {
+			list = &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+			yamlMapSet(hooksNode, event, list)
+		}
+		if list.Kind != yaml.SequenceNode {
+			return fmt.Errorf("hooks.%s is not a sequence", event)
+		}
+		if hermesHookListHasCommand(list, command) {
+			continue
+		}
+		entry := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+		yamlMapSet(entry, "command", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: command})
+		yamlMapSet(entry, "timeout", &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!int", Value: "5"})
+		list.Content = append(list.Content, entry)
+	}
+
+	out, err := yaml.Marshal(&root)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(configPath, out, 0o600)
+}
+
+func stripHermesHooks(configPath, needle string) (bool, error) {
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if !strings.Contains(string(data), needle) {
+		return false, nil
+	}
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		return false, err
+	}
+	if root.Kind != yaml.DocumentNode || len(root.Content) == 0 {
+		return false, nil
+	}
+	doc := root.Content[0]
+	hooksNode := yamlMapGet(doc, "hooks")
+	if hooksNode == nil || hooksNode.Kind != yaml.MappingNode {
+		return false, nil
+	}
+	removed := false
+	for _, event := range []string{"pre_approval_request", "post_approval_response"} {
+		list := yamlMapGet(hooksNode, event)
+		if list == nil || list.Kind != yaml.SequenceNode {
+			continue
+		}
+		kept := list.Content[:0]
+		for _, item := range list.Content {
+			if hermesEntryReferences(item, needle) {
+				removed = true
+				continue
+			}
+			kept = append(kept, item)
+		}
+		list.Content = kept
+		if len(list.Content) == 0 {
+			yamlMapDelete(hooksNode, event)
+		}
+	}
+	if !removed {
+		return false, nil
+	}
+	// Drop empty hooks: map
+	if len(hooksNode.Content) == 0 {
+		yamlMapDelete(doc, "hooks")
+	}
+	out, err := yaml.Marshal(&root)
+	if err != nil {
+		return false, err
+	}
+	return true, os.WriteFile(configPath, out, 0o600)
+}
+
+func hermesHookListHasCommand(list *yaml.Node, command string) bool {
+	for _, item := range list.Content {
+		if cmd := yamlMapGet(item, "command"); cmd != nil && cmd.Value == command {
+			return true
+		}
+		// Also match by script name for idempotency across path changes.
+		if cmd := yamlMapGet(item, "command"); cmd != nil && strings.Contains(cmd.Value, "hermes-approval.sh") {
+			return true
+		}
+	}
+	return false
+}
+
+func hermesEntryReferences(item *yaml.Node, needle string) bool {
+	if item == nil || item.Kind != yaml.MappingNode {
+		return false
+	}
+	if cmd := yamlMapGet(item, "command"); cmd != nil && strings.Contains(cmd.Value, needle) {
+		return true
+	}
+	return false
+}
+
+func yamlMapGet(m *yaml.Node, key string) *yaml.Node {
+	if m == nil || m.Kind != yaml.MappingNode {
+		return nil
+	}
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			return m.Content[i+1]
+		}
+	}
+	return nil
+}
+
+func yamlMapSet(m *yaml.Node, key string, val *yaml.Node) {
+	if m == nil || m.Kind != yaml.MappingNode {
+		return
+	}
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			m.Content[i+1] = val
+			return
+		}
+	}
+	m.Content = append(m.Content,
+		&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key},
+		val,
+	)
+}
+
+func yamlMapDelete(m *yaml.Node, key string) {
+	if m == nil || m.Kind != yaml.MappingNode {
+		return
+	}
+	out := m.Content[:0]
+	for i := 0; i+1 < len(m.Content); i += 2 {
+		if m.Content[i].Value == key {
+			continue
+		}
+		out = append(out, m.Content[i], m.Content[i+1])
+	}
+	m.Content = out
 }
 
 // agentPresent reports whether the agent is installed on this machine: any of

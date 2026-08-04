@@ -19,10 +19,11 @@ import (
 )
 
 // Result carries one poll's output: the statuses for the status bar and the
-// persisted snapshot.
+// persisted snapshot. The json tags make `tmon status --json` (and the
+// README's jq examples) read naturally.
 type Result struct {
-	Statuses []agent.Status
-	Agents   []agent.AgentState
+	Statuses []agent.Status     `json:"statuses"`
+	Agents   []agent.AgentState `json:"agents"`
 }
 
 // Run performs one full poll: load the previous snapshot, detect baseline

@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/guillaumemeyer/tmon/internal/agent"
 	"github.com/guillaumemeyer/tmon/internal/config"
@@ -150,6 +151,18 @@ func firstRunningPID(label string) int {
 		return 0
 	}
 	return pids[0]
+}
+
+// fileModTime returns the modification time of a hook state file — the
+// timestamp of its last event — used as the record's freshness. The zero
+// time is returned when the file cannot be stat'd (it may have been
+// cleaned up between read and stat).
+func fileModTime(path string) time.Time {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return time.Time{}
+	}
+	return fi.ModTime()
 }
 
 // homePath joins the user's home directory with the given components.

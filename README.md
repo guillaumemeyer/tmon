@@ -46,6 +46,46 @@ app B  W  I
 > **Note:** A brand-new agent shows as **💤 idle** until its first activity
 > sample.
 
+### Scripting with JSON (`tmon status --json`)
+
+For status bars that aren't tmux (polybar, i3blocks, a shell prompt),
+`tmon status --json` prints the full poll result: every agent with its
+status, pane, working directory, phase detail and token usage.
+
+```bash
+tmon status --json
+```
+
+```json
+{
+  "statuses": ["working", "idle"],
+  "agents": [
+    {
+      "pid": 12345,
+      "label": "Grok",
+      "status": "working",
+      "pane": "main:0.2",
+      "cwd": "code/tmon",
+      "detail": "tool:Bash",
+      "usage": { "tokensUsed": 52397, "windowTokens": 200000 }
+    }
+  ]
+}
+```
+
+Pipe it through `jq` for exactly what you need:
+
+```bash
+# All agents currently blocked on you:
+tmon status --json | jq '.agents[] | select(.status=="blocked")'
+
+# Total blocked count for a polybar module:
+tmon status --json | jq '[.agents[] | select(.status=="blocked")] | length'
+
+# Working directories of everything in flow:
+tmon status --json | jq -r '.agents[] | select(.status=="working") | .cwd'
+```
+
 ### Dashboard (`prefix a a`)
 
 An 80%×80% popup that lists every running agent grouped by session and
@@ -95,7 +135,7 @@ stays at two lines. What gets populated today:
 | Grok Build | tokens + window % (from `signals.json`) |
 | Claude Code | tokens + window % when the model's window is known (from the transcript) |
 | Codex CLI | tokens (from the session history) |
-| Hermes Agent | tokens (from `hermes insights`) |
+| Hermes Agent | tokens + window % (from CLI/TUI `state.db` session) |
 | Others | no stats line — no local usage source |
 
 Account-quota fields are plumbed through but no agent currently exposes
@@ -142,16 +182,17 @@ and OpenClaw.
 How closely tmon can track each one depends on the agent's own state
 surface. Agents that publish live state files (Grok, Hermes, Cline,
 CodeBuddy, Aider, OpenClaw) or accept lifecycle hooks (Claude Code, Codex,
-Cursor, Copilot, Windsurf) give tmon authoritative working / blocked / idle
-signals; everyone else falls back to the CPU/IO and pane-content heuristics.
-The matrix below shows which features each agent's connector provides:
+Cursor, Copilot, Windsurf, Hermes approvals) give tmon authoritative working
+/ blocked / idle signals; everyone else falls back to the CPU/IO and
+pane-content heuristics. The matrix below shows which features each agent's
+connector provides:
 
 | Agent | Connector | Status | Blocked | Detail | Title | Tokens |
 |-------|-----------|--------|:---:|--------|:---:|:---:|
 | Grok Build | native (`~/.grok`) | exact | ✓ | phase · tool · permission · model | ✓ | ✓ + window % |
 | Claude Code | hooks | exact | ✓ | tool · permission | ✓ | ✓ + window % |
 | Codex CLI | hooks (+ `/hooks` trust) | exact | ✓ | tool · permission | — | ✓ |
-| Hermes Agent | native (`~/.hermes`) | gateway | — | gateway · N active agents | — | ✓ |
+| Hermes Agent | native (`~/.hermes` + profiles) | CLI/TUI | ✓ (hooks) | model · approval | ✓ | ✓ + window % |
 | GitHub Copilot | hooks, else native fallback | exact | ✓ | tool · permission | — | — |
 | Cursor | hooks, else native fallback | exact | — | tool | — | — |
 | Windsurf | hooks | exact | — | tool | — | — |
@@ -162,11 +203,19 @@ The matrix below shows which features each agent's connector provides:
 
 **Status** is how precisely tmon knows the working / blocked / idle state:
 `exact` from the agent's own signals, a partial signal (`working`, `idle`,
-`gateway`), or `heuristic` (CPU/IO inference). **Blocked** marks connectors
-that detect a permission wait themselves; a — falls back to the pane-pattern
-heuristic (`[y/N]`, permission prompts, …). **Detail** is what the dashboard
-shows under the agent's name, **Title** the session name ("Title (Agent)"),
-and **Tokens** the stats line (tokens + context-window % when known).
+`gateway`, `CLI/TUI`), or `heuristic` (CPU/IO inference). **Blocked** marks
+connectors that detect a permission wait themselves; a — falls back to the
+pane-pattern heuristic (`[y/N]`, permission prompts, …). **Detail** is what
+the dashboard shows under the agent's name, **Title** the session name
+("Title (Agent)"), and **Tokens** the stats line (tokens + context-window %
+when known).
+
+**Hermes** lists only live **CLI/TUI** sessions (not the messaging gateway).
+The dashboard name is `Title (Hermes - <profile>)` when a profile is known
+(default home or `~/.hermes/profiles/<name>`). Session title, model, and
+token stats come from each home's `state.db`. Dangerous-command waits become
+**blocked** when approval hooks are installed (`tmon hooks install hermes`);
+Hermes may prompt once to allowlist the shell hook.
 
 Hooks install automatically at plugin load unless `@tmon-auto-hooks` is
 `off` — or by hand with `tmon hooks install <agent>`. Codex additionally
@@ -558,6 +607,16 @@ run-shell -b "~/.tmux/plugins/tmon/bin/tmon daemon --notify"
 ---
 
 ## Troubleshooting
+
+**Something's off? Run `tmon doctor` first** — it checks everything at once
+(tmux ≥ 3.2, downloader + checksum tools, binary vs. `VERSION`, writable
+state dir, running agents, connector and hook status) and prints a ✓/✗
+report with a non-zero exit code when anything fails:
+
+```bash
+~/.tmux/plugins/tmon/bin/tmon doctor        # text report
+~/.tmux/plugins/tmon/bin/tmon doctor --json # machine-readable, for CI
+```
 
 **Status bar is empty** — tmon only renders when agents are detected. Fire up
 an agent and it should appear. Still nothing? Run:

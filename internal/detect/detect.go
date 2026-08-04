@@ -2,6 +2,8 @@
 package detect
 
 import (
+	"strings"
+
 	"github.com/guillaumemeyer/tmon/internal/proc"
 )
 
@@ -52,6 +54,12 @@ func All() ([]Agent, error) {
 		if label == "" {
 			continue
 		}
+		// Hermes messaging gateway is not a local CLI/TUI session; the
+		// Hermes connector also ignores it. Skip so it never appears as an
+		// agent row in status/dashboard.
+		if label == "Hermes" && isHermesGatewayCmd(cmdline) {
+			continue
+		}
 		if len(cmdline) > CmdlineSnippetLimit {
 			cmdline = cmdline[:CmdlineSnippetLimit]
 		}
@@ -62,4 +70,19 @@ func All() ([]Agent, error) {
 		agents = append(agents, Agent{PID: pid, Label: label, Cmdline: cmdline, CWD: cwd})
 	}
 	return agents, nil
+}
+
+// isHermesGatewayCmd reports Hermes messaging-gateway processes.
+func isHermesGatewayCmd(cmdline string) bool {
+	c := strings.ToLower(cmdline)
+	if strings.Contains(c, "gateway run") {
+		return true
+	}
+	if strings.Contains(c, "hermes_cli.main") && strings.Contains(c, "gateway") {
+		return true
+	}
+	if strings.Contains(c, "hermes-gateway") {
+		return true
+	}
+	return false
 }

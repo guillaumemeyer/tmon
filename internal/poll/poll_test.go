@@ -74,12 +74,12 @@ func TestPaneBlockedFallbackWithoutConnector(t *testing.T) {
 }
 
 func TestConnectorOnlyInjection(t *testing.T) {
-	// A record whose PID the /proc signature table misses (e.g. the Hermes
-	// gateway) becomes a new agent.
+	// A record whose PID the /proc signature table misses becomes a new agent.
 	stubDetect(t, nil)
 	cfg := testConfig(t)
 	records := []connector.Record{{
-		PID: 7777, Label: "Hermes", Status: agent.StatusBlocked, Detail: "permission", At: time.Now(),
+		PID: 7777, Label: "Hermes", Status: agent.StatusBlocked, Detail: "approval:rm_rf", At: time.Now(),
+		Profile: "default", Title: "Fix build",
 	}}
 	res, err := run(cfg, nil, false, records)
 	if err != nil {
@@ -89,8 +89,11 @@ func TestConnectorOnlyInjection(t *testing.T) {
 		t.Fatalf("agents = %+v, want the connector-only agent injected", res.Agents)
 	}
 	a := res.Agents[0]
-	if a.PID != 7777 || a.Label != "Hermes" || a.Status != agent.StatusBlocked || a.Detail != "permission" {
-		t.Errorf("injected agent = %+v, want Hermes blocked permission", a)
+	if a.PID != 7777 || a.Label != "Hermes" || a.Status != agent.StatusBlocked || a.Detail != "approval:rm_rf" {
+		t.Errorf("injected agent = %+v, want Hermes blocked approval", a)
+	}
+	if a.Profile != "default" || a.Title != "Fix build" {
+		t.Errorf("profile/title = %q/%q, want default/Fix build", a.Profile, a.Title)
 	}
 	if len(res.Statuses) != 1 || res.Statuses[0] != agent.StatusBlocked {
 		t.Errorf("statuses = %+v, want [blocked]", res.Statuses)
@@ -104,7 +107,7 @@ func TestUsageRidesConnectorRecord(t *testing.T) {
 	cfg := testConfig(t)
 	records := []connector.Record{
 		{PID: 42, Label: "Grok", Status: agent.StatusWorking, Detail: "tool:Bash", At: time.Now(), Usage: agent.Usage{TokensUsed: 13025, WindowTokens: 262144}},
-		{PID: 7777, Label: "Hermes", Status: agent.StatusIdle, Detail: "gateway", At: time.Now(), Usage: agent.Usage{TokensUsed: 5000}},
+		{PID: 7777, Label: "Hermes", Status: agent.StatusIdle, Detail: "model:m", At: time.Now(), Profile: "coder", Usage: agent.Usage{TokensUsed: 5000, WindowTokens: 100000}},
 	}
 	res, err := run(cfg, nil, false, records)
 	if err != nil {
@@ -117,8 +120,11 @@ func TestUsageRidesConnectorRecord(t *testing.T) {
 	if u := byPID[42].Usage; u == nil || u.TokensUsed != 13025 || u.WindowTokens != 262144 {
 		t.Errorf("Grok usage = %+v, want tokens 13025 window 262144", u)
 	}
-	if u := byPID[7777].Usage; u == nil || u.TokensUsed != 5000 {
-		t.Errorf("Hermes usage = %+v, want tokens 5000", u)
+	if u := byPID[7777].Usage; u == nil || u.TokensUsed != 5000 || u.WindowTokens != 100000 {
+		t.Errorf("Hermes usage = %+v, want tokens 5000 window 100000", u)
+	}
+	if byPID[7777].Profile != "coder" {
+		t.Errorf("Hermes profile = %q, want coder", byPID[7777].Profile)
 	}
 
 	// A record with empty usage must not attach a zero-value pointer.
@@ -140,7 +146,7 @@ func TestMergeBaselineAndConnectorOnly(t *testing.T) {
 	cfg := testConfig(t)
 	records := []connector.Record{
 		{PID: 42, Label: "Grok", Status: agent.StatusWorking, Detail: "tool:Bash", At: time.Now()},
-		{PID: 7777, Label: "Hermes", Status: agent.StatusIdle, Detail: "gateway", At: time.Now()},
+		{PID: 7777, Label: "Hermes", Status: agent.StatusIdle, Detail: "model:m", At: time.Now(), Profile: "default"},
 	}
 	res, err := run(cfg, nil, false, records)
 	if err != nil {
@@ -156,8 +162,8 @@ func TestMergeBaselineAndConnectorOnly(t *testing.T) {
 	if a := byPID[42]; a.Detail != "tool:Bash" || a.Status != agent.StatusWorking {
 		t.Errorf("baseline agent = %+v, want working tool:Bash", a)
 	}
-	if a := byPID[7777]; a.Label != "Hermes" || a.Status != agent.StatusIdle || a.Detail != "gateway" {
-		t.Errorf("connector-only agent = %+v, want Hermes idle gateway", a)
+	if a := byPID[7777]; a.Label != "Hermes" || a.Status != agent.StatusIdle || a.Detail != "model:m" {
+		t.Errorf("connector-only agent = %+v, want Hermes idle model:m", a)
 	}
 }
 
@@ -165,8 +171,8 @@ func TestStateFilePersistedWithConnectorDetail(t *testing.T) {
 	stubDetect(t, nil)
 	cfg := testConfig(t)
 	records := []connector.Record{{
-		PID: 7777, Label: "Hermes", Status: agent.StatusWorking, Detail: "phase:reasoning", At: time.Now(),
-		Title: "gateway session",
+		PID: 7777, Label: "Hermes", Status: agent.StatusWorking, Detail: "model:m", At: time.Now(),
+		Title: "Root Cause", Profile: "default",
 	}}
 	if _, err := run(cfg, nil, false, records); err != nil {
 		t.Fatal(err)
@@ -175,11 +181,11 @@ func TestStateFilePersistedWithConnectorDetail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(sf.Agents) != 1 || sf.Agents[0].Detail != "phase:reasoning" {
+	if len(sf.Agents) != 1 || sf.Agents[0].Detail != "model:m" {
 		t.Fatalf("state file agents = %+v, want detail persisted", sf.Agents)
 	}
-	if sf.Agents[0].Title != "gateway session" {
-		t.Fatalf("state file agents = %+v, want title persisted", sf.Agents)
+	if sf.Agents[0].Title != "Root Cause" || sf.Agents[0].Profile != "default" {
+		t.Fatalf("state file agents = %+v, want title/profile persisted", sf.Agents)
 	}
 }
 

@@ -428,12 +428,13 @@ func (m *Model) rebuildFilter() {
 }
 
 // agentSearchScore returns the best fuzzy score for query against the
-// agent's session title, name, CWD (absolute and display forms), and pane
-// capture text. Returns -1 when nothing matches.
+// agent's session title, display name (includes Hermes profile), CWD
+// (absolute and display forms), and pane capture text. Returns -1 when
+// nothing matches.
 func (m *Model) agentSearchScore(r Row) int {
 	q := m.query
 	title := r.Title
-	name := agentFullName(r.Label)
+	name := agentDisplayName(r)
 	cwd := r.CWD
 	if disp := displayCWD(r.CWD); disp != "" && disp != cwd {
 		cwd = cwd + " " + disp
@@ -444,7 +445,7 @@ func (m *Model) agentSearchScore(r Row) int {
 	}
 
 	best := -1
-	for _, field := range []string{title, name, cwd, preview} {
+	for _, field := range []string{title, name, r.Profile, cwd, preview} {
 		if field == "" {
 			continue
 		}
@@ -455,7 +456,7 @@ func (m *Model) agentSearchScore(r Row) int {
 	// Also allow a term to hit across fields (e.g. name + path fragments)
 	// by scoring the concatenated haystack — but only if per-field failed,
 	// or if it scores higher.
-	hay := title + "\n" + name + "\n" + cwd + "\n" + preview
+	hay := title + "\n" + name + "\n" + r.Profile + "\n" + cwd + "\n" + preview
 	if s := fuzzyScoreTerms(q, hay); s > best {
 		best = s
 	}

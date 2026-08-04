@@ -38,6 +38,11 @@ func TestPatternsMatches(t *testing.T) {
 		"Can I proceed?",
 		"Should I continue?",
 		"Do you want me to create it?",
+		"Approve Once",
+		"Always Approve",
+		"flagged as dangerous command",
+		"Type /approve to continue",
+		"Use /approve",
 	}
 	for _, content := range representatives {
 		if !Matches(content) {
