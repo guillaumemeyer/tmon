@@ -411,7 +411,7 @@ func TestFooterOmitsStatusCountsShowsPreviewTip(t *testing.T) {
 			t.Fatalf("footer should not show status count %q in:\n%s", bad, v)
 		}
 	}
-	for _, want := range []string{"[←/→] resize", "[C-u/C-d] scroll", "[1-9] jump"} {
+	for _, want := range []string{"[↑/↓ j/k] navigate", "[←/→] resize", "[C-u/C-d] scroll", "[1-9] jump"} {
 		if !strings.Contains(v, want) {
 			t.Fatalf("footer missing %q in:\n%s", want, v)
 		}

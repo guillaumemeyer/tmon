@@ -325,15 +325,18 @@ func TestFocusSwitchesToSelectedPane(t *testing.T) {
 		t.Fatalf("focused %q, want main:0.0", focused)
 	}
 
-	// Space and l also focus; move the selection first.
+	// Space also focuses; move the selection first.
 	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyDown})
 	m = applyMsg(t, m, key(' '))
 	if focused != "main:0.1" {
 		t.Fatalf("focused %q, want main:0.1", focused)
 	}
+
+	// l must not focus — only Enter and Space select.
+	focused = ""
 	m = applyMsg(t, m, key('l'))
-	if focused != "main:0.1" {
-		t.Fatalf("focused %q, want main:0.1", focused)
+	if focused != "" {
+		t.Fatalf("l focused %q; want no selection", focused)
 	}
 
 	// Right arrow resizes the preview — it must not focus.

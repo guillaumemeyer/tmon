@@ -295,6 +295,7 @@ func (m Model) footerRight() string {
 	if m.query != "" || m.searching {
 		parts = append(parts, fmt.Sprintf("%d/%d", len(m.filtered), len(m.rows)))
 	}
+	parts = append(parts, "[↑/↓ j/k] navigate")
 	parts = append(parts, "[←/→] resize")
 	if m.previewNavTipVisible() {
 		parts = append(parts, "[C-u/C-d] scroll")

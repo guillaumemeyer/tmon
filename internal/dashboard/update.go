@@ -136,7 +136,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		m.scrollPreview(m.previewScrollStep())
 	case "ctrl+d":
 		m.scrollPreview(-m.previewScrollStep())
-	case "enter", " ", "l":
+	case "enter", " ":
 		return m.focusSelected()
 	case "b", "w", "i":
 		m.toggleStatusFilter(statusKey(msg.String()))

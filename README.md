@@ -60,7 +60,7 @@ window, with a live pane preview on the right:
 │  side                            │                   │
 │    0:research                    │                   │
 │      [2] 💤 Windsurf    ~/res    │                   │
-│                   [←/→] resize … │                   │
+│             [↑/↓ j/k] navigate … │                   │
 └──────────────────────────────────┴───────────────────┘
 ```
 
@@ -70,8 +70,9 @@ conversation title, Claude's session name) as `Title (Name)`, why it's
 blocked (e.g. `[y/N]`), what it's doing (e.g. `tool:Bash`), and how long
 ago its status last changed. Agents without a title (or a brand-new session
 that has not earned one yet) show just the name. The footer shows
-`[←/→] resize` for the preview split (persisted across opens) and, when an
-agent with a pane is selected, `[C-u/C-d] scroll` for the preview.
+`[↑/↓ j/k] navigate` to move the selection, `[←/→] resize` for the preview
+split (persisted across opens) and, when an agent with a pane is selected,
+`[C-u/C-d] scroll` for the preview.
 
 Filter by status with `b` (blocked), `w` (working), `i` (idle); press the
 key again to clear. `1`–`9` jumps to the Nth agent. Hit `Enter` or **click
@@ -91,7 +92,7 @@ are ranked by match quality. `Esc` leaves search mode (the filter stays);
 | `Ctrl-u` / `Ctrl-d` | Scroll the preview up / down |
 | `1`–`9` | Jump to the Nth agent in the list |
 | `b` / `w` / `i` | Filter by status: blocked / working / idle (press again to clear) |
-| `Enter` / `l` / `Space` | Jump to the selected agent's pane |
+| `Enter` / `Space` | Jump to the selected agent's pane |
 | Click on an agent line | Select and jump to that agent's pane |
 | `/` | Start fuzzy search (session title, name, directory, pane content) |
 | Type | Filter the list |
