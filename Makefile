@@ -26,6 +26,9 @@ cross: ## Cross-compile the release binaries into ./dist
 	@mkdir -p dist
 	GOOS=linux GOARCH=amd64 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o dist/tmon_$(VERSION)_linux_amd64 ./cmd/tmon
 	GOOS=linux GOARCH=arm64 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o dist/tmon_$(VERSION)_linux_arm64 ./cmd/tmon
+	GOOS=darwin GOARCH=amd64 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o dist/tmon_$(VERSION)_darwin_amd64 ./cmd/tmon
+	GOOS=darwin GOARCH=arm64 $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o dist/tmon_$(VERSION)_darwin_arm64 ./cmd/tmon
+
 
 bump: bump-patch ## Bump the version (default: patch)
 bump-patch: ## 0.3.0 -> 0.3.1

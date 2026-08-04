@@ -5,7 +5,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/charmbracelet/x/ansi"
 	"github.com/guillaumemeyer/tmon/internal/agent"
 	"github.com/guillaumemeyer/tmon/internal/blocked"
 	"github.com/guillaumemeyer/tmon/internal/config"
@@ -198,17 +197,18 @@ func sessionIDsByName(rows []Row) map[string]string {
 	return out
 }
 
-// capturePane grabs the pane's visible content, ANSI-stripped, for the
-// preview panel. A seam so tests can inject deterministic captures.
+// capturePane grabs the pane's visible content for the preview panel,
+// including SGR/color escape sequences (-e) so the preview matches the
+// live pane. A seam so tests can inject deterministic captures.
 var capturePane = func(paneTarget string) string {
 	if paneTarget == "" || paneTarget == "?" || !tmux.Available() {
 		return ""
 	}
-	out, err := tmux.Run("capture-pane", "-t", paneTarget, "-p")
+	out, err := tmux.Run("capture-pane", "-t", paneTarget, "-p", "-e")
 	if err != nil {
 		return ""
 	}
-	return ansi.Strip(out)
+	return out
 }
 
 // Test seams: the full reload touches live system state (process table,

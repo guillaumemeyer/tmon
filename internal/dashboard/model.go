@@ -47,34 +47,15 @@ const (
 	itemSession itemKind = iota // non-selectable session header
 	itemWindow                  // non-selectable window sub-header
 	itemAgent                   // selectable agent line
-	itemStatus                  // non-selectable status header (group-by-status)
 )
 
-// item is one line of the grouped list.
+// item is one line of the grouped list (session → window → agent).
 type item struct {
 	kind        itemKind
-	sessionName string       // itemSession
-	windowIdx   string       // itemWindow
-	windowName  string       // itemWindow
-	status      agent.Status // itemStatus
-	rowIdx      int          // itemAgent: index into Model.rows
-}
-
-// groupMode selects how filtered agents are grouped into the list.
-type groupMode int
-
-const (
-	groupSession groupMode = iota // session → window → agent (default)
-	groupStatus                   // status header → agents
-	groupAgent                    // flat agent list, no headers
-)
-
-// statusOrder is the fixed header order for group-by-status and the filter
-// toggle order: most urgent first.
-var statusOrder = []agent.Status{
-	agent.StatusBlocked,
-	agent.StatusWorking,
-	agent.StatusIdle,
+	sessionName string // itemSession
+	windowIdx   string // itemWindow
+	windowName  string // itemWindow
+	rowIdx      int    // itemAgent: index into Model.rows
 }
 
 // Model is the bubbletea state for the dashboard popup.
@@ -87,11 +68,9 @@ type Model struct {
 	selMap   []int  // item index per selectable position
 	selected int    // index into selMap
 
-	groupMode    groupMode
 	filterStatus agent.Status // "" = no status filter
 
-	preview     bool   // right-side pane preview panel
-	previewText string // ANSI-stripped capture of the selected pane
+	previewText string // pane capture of the selected pane (colors preserved)
 	previewPane string // pane target the preview currently shows
 
 	query     string

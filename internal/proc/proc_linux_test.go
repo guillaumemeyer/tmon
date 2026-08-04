@@ -1,3 +1,5 @@
+//go:build linux
+
 package proc
 
 import (
@@ -123,21 +125,6 @@ func TestDevTTYName(t *testing.T) {
 	for _, tc := range cases {
 		if got := DevTTYName(tc.tty); got != tc.want {
 			t.Errorf("DevTTYName(%d) = %q, want %q", tc.tty, got, tc.want)
-		}
-	}
-}
-
-func TestCWDShort(t *testing.T) {
-	cases := []struct{ in, want string }{
-		{"/a/b/c/d", "c/d"},
-		{"/a/b", "a/b"},
-		{"/a", "a"},
-		{"/", "/"},
-		{"", "/"},
-	}
-	for _, tc := range cases {
-		if got := CWDShort(tc.in); got != tc.want {
-			t.Errorf("CWDShort(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
 }

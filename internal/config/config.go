@@ -33,10 +33,14 @@ type Config struct {
 // these defaults only apply to standalone/debug invocations and deliberately
 // avoid the system cache and temp dirs.
 func Defaults() Config {
-	stateDir := filepath.Join(os.Getenv("HOME"), ".tmon", "state")
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		home = os.Getenv("HOME")
+	}
+	stateDir := filepath.Join(home, ".tmon", "state")
 	return Config{
 		StateDir:            stateDir,
-		BinDir:              filepath.Join(os.Getenv("HOME"), ".tmon", "bin"),
+		BinDir:              filepath.Join(home, ".tmon", "bin"),
 		PollIntervalMs:      3000,
 		ActivityThresholdMs: 500,
 		IOThreshold:         102400,

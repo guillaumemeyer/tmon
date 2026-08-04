@@ -10,65 +10,6 @@ import (
 	"github.com/guillaumemeyer/tmon/internal/agent"
 )
 
-func TestGroupByStatus(t *testing.T) {
-	f := &fakeLoader{data: Data{Rows: testRows()}}
-	m := New(f.load, true)
-	m = applyMsg(t, m, initMsg{})
-
-	if m.groupMode != groupSession {
-		t.Fatalf("initial group mode = %d, want session", m.groupMode)
-	}
-
-	m = applyMsg(t, m, key('g'))
-	if m.groupMode != groupStatus {
-		t.Fatalf("group mode after g = %d, want status", m.groupMode)
-	}
-
-	// testRows: Claude blocked, Grok working, Codex idle. Expect one header
-	// per present status in urgency order: blocked, working, idle.
-	want := []itemKind{itemStatus, itemAgent, itemStatus, itemAgent, itemStatus, itemAgent}
-	if len(m.items) != len(want) {
-		t.Fatalf("items = %d, want %d: %+v", len(m.items), len(want), m.items)
-	}
-	wantStatus := []agent.Status{agent.StatusBlocked, agent.StatusWorking, agent.StatusIdle}
-	pos := 0
-	for i, kind := range want {
-		if m.items[i].kind != kind {
-			t.Fatalf("item %d kind = %v, want %v", i, m.items[i].kind, kind)
-		}
-		if kind == itemStatus {
-			if m.items[i].status != wantStatus[pos] {
-				t.Fatalf("header %d status = %v, want %v", i, m.items[i].status, wantStatus[pos])
-			}
-			pos++
-		}
-	}
-	// selMap points at the three agent lines: items 1, 3, 5.
-	if got := m.selMap; len(got) != 3 || got[0] != 1 || got[1] != 3 || got[2] != 5 {
-		t.Fatalf("selMap = %v, want [1 3 5]", got)
-	}
-}
-
-func TestGroupByAgent(t *testing.T) {
-	f := &fakeLoader{data: Data{Rows: testRows()}}
-	m := New(f.load, true)
-	m = applyMsg(t, m, initMsg{})
-
-	m = applyMsg(t, m, key('g')) // status
-	m = applyMsg(t, m, key('g')) // agent
-	if m.groupMode != groupAgent {
-		t.Fatalf("group mode = %d, want agent", m.groupMode)
-	}
-	for i, it := range m.items {
-		if it.kind != itemAgent {
-			t.Fatalf("item %d kind = %v, want flat agent list", i, it.kind)
-		}
-	}
-	if len(m.selMap) != 3 {
-		t.Fatalf("selMap = %v, want 3 selectable", m.selMap)
-	}
-}
-
 func TestStatusFilters(t *testing.T) {
 	f := &fakeLoader{data: Data{Rows: testRows()}}
 	m := New(f.load, true)
@@ -135,11 +76,7 @@ func TestNumberJump(t *testing.T) {
 	}
 }
 
-func TestPreviewToggleCapturesSelection(t *testing.T) {
-	f := &fakeLoader{data: Data{Rows: testRows()}}
-	m := New(f.load, true)
-	m = applyMsg(t, m, initMsg{})
-
+func TestPreviewAlwaysCapturesSelection(t *testing.T) {
 	var captured []string
 	old := capturePane
 	capturePane = func(p string) string {
@@ -148,10 +85,11 @@ func TestPreviewToggleCapturesSelection(t *testing.T) {
 	}
 	t.Cleanup(func() { capturePane = old })
 
-	m = applyMsg(t, m, key('d'))
-	if !m.preview {
-		t.Fatal("d did not enable the preview")
-	}
+	f := &fakeLoader{data: Data{Rows: testRows()}}
+	m := New(f.load, true)
+	m = applyMsg(t, m, initMsg{})
+
+	// Preview is always on: initial load captures the first agent's pane.
 	if len(captured) != 1 || captured[0] != "main:0.0" {
 		t.Fatalf("captured = %v, want the first agent's pane main:0.0", captured)
 	}
@@ -164,27 +102,19 @@ func TestPreviewToggleCapturesSelection(t *testing.T) {
 	if len(captured) != 2 || captured[1] != "main:0.1" {
 		t.Fatalf("captured = %v, want second capture of main:0.1", captured)
 	}
-
-	// Toggling off clears the preview state.
-	m = applyMsg(t, m, key('d'))
-	if m.preview || m.previewText != "" || m.previewPane != "" {
-		t.Fatalf("preview state after toggle-off = %v/%q/%q, want cleared", m.preview, m.previewText, m.previewPane)
-	}
 }
 
 func TestPreviewRecapturesOnReload(t *testing.T) {
-	f := &fakeLoader{data: Data{Rows: testRows()}}
-	m := New(f.load, true)
-	m = applyMsg(t, m, initMsg{})
-
 	var captures []string
 	old := capturePane
 	capturePane = func(p string) string { captures = append(captures, p); return "x" }
 	t.Cleanup(func() { capturePane = old })
 
-	m = applyMsg(t, m, key('d'))
+	f := &fakeLoader{data: Data{Rows: testRows()}}
+	m := New(f.load, true)
+	m = applyMsg(t, m, initMsg{})
 	if len(captures) != 1 {
-		t.Fatalf("captures after toggle = %d, want 1", len(captures))
+		t.Fatalf("captures after init = %d, want 1", len(captures))
 	}
 	// Every auto-refresh tick is a full reload: rows refresh and the pane
 	// re-captures even though the selection's pane target is unchanged.
@@ -195,16 +125,15 @@ func TestPreviewRecapturesOnReload(t *testing.T) {
 }
 
 func TestPreviewViewShowsSeparatorAndContent(t *testing.T) {
+	old := capturePane
+	capturePane = func(p string) string { return "pane-content-line" }
+	t.Cleanup(func() { capturePane = old })
+
 	f := &fakeLoader{data: Data{Rows: testRows()}}
 	m := New(f.load, true)
 	m = applyMsg(t, m, initMsg{})
 	m.width, m.height = 120, 24
 
-	old := capturePane
-	capturePane = func(p string) string { return "pane-content-line" }
-	t.Cleanup(func() { capturePane = old })
-
-	m = applyMsg(t, m, key('d'))
 	v := m.View()
 	for _, want := range []string{"│", "pane-content-line", "Grok Build"} {
 		if !strings.Contains(v, want) {
@@ -213,6 +142,93 @@ func TestPreviewViewShowsSeparatorAndContent(t *testing.T) {
 	}
 	if strings.Count(v, "\n")+1 != 24 {
 		t.Fatalf("view has %d lines, want 24", strings.Count(v, "\n")+1)
+	}
+}
+
+// TestPreviewLayoutAlignment checks that every body row has the │ separator
+// in the same column and that list + sep + preview span the full width.
+func TestPreviewLayoutAlignment(t *testing.T) {
+	old := capturePane
+	capturePane = func(p string) string {
+		return "line one of pane\nline two is longer than the panel width should truncate\nline three"
+	}
+	t.Cleanup(func() { capturePane = old })
+
+	f := &fakeLoader{data: Data{Rows: testRows()}}
+	m := New(f.load, true)
+	m = applyMsg(t, m, initMsg{})
+	const w, h = 100, 20
+	m.width, m.height = w, h
+
+	v := ansi.Strip(m.View())
+	rows := strings.Split(v, "\n")
+	if len(rows) != h {
+		t.Fatalf("rows = %d, want %d", len(rows), h)
+	}
+
+	// Header + divider + body + footer: separator column only on body rows.
+	// Body starts at index 2, ends at h-2 inclusive. Preview is half width.
+	panelW := w / 2
+	listW := w - panelW - 1
+	sepCol := listW // 0-based index of │
+
+	for i := 2; i < h-1; i++ {
+		line := rows[i]
+		if got := ansi.StringWidth(line); got != w {
+			t.Fatalf("body row %d width = %d, want %d:\n%q", i, got, w, line)
+		}
+		// After Strip, list + preview are single-width ASCII so rune index
+		// matches display column; the separator must sit at listW.
+		runes := []rune(line)
+		if sepCol >= len(runes) || runes[sepCol] != '│' {
+			t.Fatalf("body row %d: expected │ at col %d, got %q\n%s", i, sepCol, line, v)
+		}
+	}
+}
+
+func TestPreviewPreservesColors(t *testing.T) {
+	old := capturePane
+	capturePane = func(p string) string {
+		return "\x1b[32mgreen text\x1b[0m\n\x1b[31mred line\x1b[0m"
+	}
+	t.Cleanup(func() { capturePane = old })
+
+	f := &fakeLoader{data: Data{Rows: testRows()}}
+	m := New(f.load, true)
+	m = applyMsg(t, m, initMsg{})
+	m.width, m.height = 80, 16
+
+	v := m.View()
+	if !strings.Contains(v, "\x1b[32m") || !strings.Contains(v, "green text") {
+		t.Fatalf("view lost green SGR / text:\n%q", v)
+	}
+	if !strings.Contains(v, "\x1b[31m") || !strings.Contains(v, "red line") {
+		t.Fatalf("view lost red SGR / text:\n%q", v)
+	}
+	// Each colored preview line ends with a reset so styles cannot bleed.
+	if !strings.Contains(v, "green text") || strings.Count(v, sgrReset) < 2 {
+		t.Fatalf("expected SGR resets after preview lines, got %d resets", strings.Count(v, sgrReset))
+	}
+}
+
+func TestPreviewIsHalfWidth(t *testing.T) {
+	old := capturePane
+	capturePane = func(p string) string { return "x" }
+	t.Cleanup(func() { capturePane = old })
+
+	f := &fakeLoader{data: Data{Rows: testRows()}}
+	m := New(f.load, true)
+	m = applyMsg(t, m, initMsg{})
+	const w = 80
+	m.width, m.height = w, 12
+
+	v := ansi.Strip(m.View())
+	body := strings.Split(v, "\n")[2]
+	// panelW = w/2, listW = w - panelW - 1 → separator column.
+	sepCol := w - w/2 - 1
+	runes := []rune(body)
+	if sepCol >= len(runes) || runes[sepCol] != '│' {
+		t.Fatalf("separator at col %d, want half-width split; line=%q", sepCol, body)
 	}
 }
 

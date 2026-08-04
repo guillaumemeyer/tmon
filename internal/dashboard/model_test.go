@@ -337,7 +337,7 @@ func TestViewEmptyState(t *testing.T) {
 	m.width, m.height = 80, 24
 
 	v := m.View()
-	for _, want := range []string{"[@] TMON", "No agents detected.", "▌ / to search"} {
+	for _, want := range []string{"[@] tmon", "No agents detected.", "▌ / to search"} {
 		if !strings.Contains(v, want) {
 			t.Fatalf("view missing %q:\n%s", want, v)
 		}
@@ -368,7 +368,7 @@ func TestViewRendersGroupedList(t *testing.T) {
 
 	v := m.View()
 	for _, want := range []string{
-		"[@] TMON",
+		"[@] tmon",
 		"main",    // session header
 		"0:shell", // window sub-header
 		"Grok Build", "Claude Code", "Codex CLI",
@@ -388,11 +388,16 @@ func TestFit(t *testing.T) {
 	if got := fit("hello world", 5); got != "hello" {
 		t.Fatalf("fit = %q, want \"hello\"", got)
 	}
-	if got := fit("short", 80); got != "short" {
-		t.Fatalf("fit = %q, want \"short\"", got)
+	// Short strings are padded to exactly w cells.
+	if got := fit("short", 10); got != "short     " {
+		t.Fatalf("fit = %q, want \"short     \"", got)
 	}
 	// Emoji are double-width: 🧠 + 1 char = 3 cells, truncate to 2 = the icon.
 	if got := fit("🧠x", 2); got != "🧠" {
 		t.Fatalf("fit = %q, want the icon alone", got)
+	}
+	// Empty input becomes w spaces.
+	if got := fit("", 4); got != "    " {
+		t.Fatalf("fit empty = %q, want 4 spaces", got)
 	}
 }

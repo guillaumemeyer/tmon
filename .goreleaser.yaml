@@ -1,7 +1,8 @@
 # goreleaser configuration — see https://goreleaser.com
 # Releases are produced automatically on every push to main by
 # .github/workflows/release.yml. Assets are raw binaries named
-# tmon_<VERSION>_linux_<arch>, which scripts/bootstrap.sh downloads.
+# tmon_<VERSION>_<os>_<arch>, which scripts/bootstrap.sh downloads
+# (linux and darwin; Windows users run the Linux build under WSL2).
 
 version: 2
 
@@ -13,11 +14,13 @@ builds:
     binary: tmon
     goos:
       - linux
+      - darwin
     goarch:
       - amd64
       - arm64
     ldflags:
       - -s -w -X main.version={{.Version}}
+
 
 archives:
   - id: tmon

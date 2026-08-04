@@ -1,12 +1,12 @@
 #!/bin/sh
 # tmon bootstrap — download the pinned tmon binary into the plugin's bin dir.
 #
-# Pure POSIX sh; the only external tools needed are curl and sha256sum. The
-# binary, the temp file and the lock all live inside the plugin directory
-# (default <plugin>/bin) — nothing is written to ~/.cache or /tmp. Safe to run
-# repeatedly: exits 0 immediately when the installed version matches the repo
-# VERSION file. Called by tmon.tmux at load time, never from the #() status
-# path.
+# Pure POSIX sh. External tools: a downloader (curl or wget) and a SHA-256
+# checker (sha256sum or shasum). The binary, the temp file and the lock all
+# live inside the plugin directory (default <plugin>/bin) — nothing is written
+# to ~/.cache or /tmp. Safe to run repeatedly: exits 0 immediately when the
+# installed version matches the repo VERSION file. Called by tmon.tmux at load
+# time, never from the #() status path.
 #
 # Environment:
 #   TMON_BIN_DIR        binary dir (default <plugin>/bin)
@@ -60,6 +60,15 @@ trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT INT TERM
 # Re-check under the lock: another process may have won the race.
 up_to_date && exit 0
 
+case "$(uname -s)" in
+  Linux) OS=linux ;;
+  Darwin) OS=darwin ;;
+  *)
+    echo "tmon: unsupported OS: $(uname -s) (use WSL2 on Windows)" >&2
+    exit 1
+    ;;
+esac
+
 case "$(uname -m)" in
   x86_64 | amd64) ARCH=amd64 ;;
   aarch64 | arm64) ARCH=arm64 ;;
@@ -69,7 +78,7 @@ case "$(uname -m)" in
     ;;
 esac
 
-ASSET="tmon_${VERSION}_linux_${ARCH}"
+ASSET="tmon_${VERSION}_${OS}_${ARCH}"
 TMP="$BIN_DIR/.${ASSET}.tmp.$$"
 
 fail() {
@@ -81,19 +90,44 @@ fail() {
   exit 1
 }
 
-command -v curl >/dev/null 2>&1 || fail "curl not found"
+# download URL OUT — curl preferred, wget fallback.
+download() {
+  url=$1
+  out=$2
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsSL -o "$out" "$url"
+  elif command -v wget >/dev/null 2>&1; then
+    wget -q -O "$out" "$url"
+  else
+    return 127
+  fi
+}
 
-curl -fsSL -o "$TMP" "$DOWNLOAD_BASE/v${VERSION}/$ASSET" || fail "network error downloading $ASSET"
-curl -fsSL -o "$TMP.sha256" "$DOWNLOAD_BASE/v${VERSION}/checksums.txt" || fail "network error downloading checksums.txt"
+# sha256_file PATH — print hex digest of file.
+sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    return 127
+  fi
+}
+
+command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1 || fail "curl or wget not found"
+command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1 || fail "sha256sum or shasum not found"
+
+download "$DOWNLOAD_BASE/v${VERSION}/$ASSET" "$TMP" || fail "network error downloading $ASSET"
+download "$DOWNLOAD_BASE/v${VERSION}/checksums.txt" "$TMP.sha256" || fail "network error downloading checksums.txt"
 
 EXPECTED=$(awk -v name="$ASSET" '$2 == name { print $1; exit }' "$TMP.sha256")
 [ -n "$EXPECTED" ] || fail "$ASSET not found in checksums.txt"
 
-ACTUAL=$(sha256sum "$TMP" | awk '{print $1}')
+ACTUAL=$(sha256_file "$TMP") || fail "checksum tool failed"
 [ "$ACTUAL" = "$EXPECTED" ] || fail "checksum mismatch (got $ACTUAL)"
 
 chmod +x "$TMP"
 mv "$TMP" "$BINARY"
 rm -f "$TMP.sha256"
 
-echo "tmon: installed v${VERSION} ($ARCH)"
+echo "tmon: installed v${VERSION} ($OS/$ARCH)"

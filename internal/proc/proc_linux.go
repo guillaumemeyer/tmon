@@ -1,4 +1,6 @@
-// Package proc reads process metadata from /proc (Linux only).
+//go:build linux
+
+// Package proc Linux implementation — process metadata from /proc.
 //
 // Field indices below refer to /proc/<pid>/stat after stripping the
 // "pid (comm) " prefix, which is the only robust way to parse it: the comm
@@ -20,7 +22,7 @@ import (
 var procRoot = "/proc"
 
 // SetProcRoot temporarily points the /proc mount at a fixture directory and
-// returns a restore function. Test seam only.
+// returns a restore function. Test seam only (Linux).
 func SetProcRoot(root string) func() {
 	old := procRoot
 	procRoot = root
@@ -101,6 +103,7 @@ func ParentPID(pid int) (int, error) {
 }
 
 // ReadCPUTicks returns utime+stime+cutime+cstime (fields 11-14) for pid.
+// Units are kernel jiffies (typically 100 Hz); see package docs.
 func ReadCPUTicks(pid int) (int64, error) {
 	fields, err := statFields(pid)
 	if err != nil {
@@ -178,18 +181,4 @@ func DevTTYName(ttyNr int64) string {
 	default:
 		return ""
 	}
-}
-
-// CWDShort returns the last two path components of cwd ("/a/b/c/d" -> "c/d"),
-// matching the display format of the bash plugin.
-func CWDShort(cwd string) string {
-	trimmed := strings.Trim(cwd, "/")
-	if trimmed == "" {
-		return "/"
-	}
-	parts := strings.Split(trimmed, "/")
-	if len(parts) > 2 {
-		parts = parts[len(parts)-2:]
-	}
-	return strings.Join(parts, "/")
 }

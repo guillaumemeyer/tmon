@@ -5,7 +5,7 @@
 #   2. Skip if a release for that version already exists (idempotent).
 #   3. Tag v<VERSION> and push the tag (the tag push does NOT re-trigger
 #      this workflow — it only listens to branch pushes).
-#   4. goreleaser builds linux/amd64 + linux/arm64 and uploads them with
+#   4. goreleaser builds linux+darwin / amd64+arm64 and uploads them with
 #      checksums.txt to GitHub Releases.
 #
 # Users update via TPM `prefix U` (git pull) + reload: bootstrap sees a new

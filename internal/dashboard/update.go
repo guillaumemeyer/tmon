@@ -101,10 +101,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		m.move(1)
 	case "enter", " ", "l", "right":
 		return m.focusSelected()
-	case "g":
-		m.cycleGroup()
-	case "d":
-		m.togglePreview()
 	case "b", "w", "i":
 		m.toggleStatusFilter(statusKey(msg.String()))
 	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
@@ -137,12 +133,6 @@ func (m *Model) toggleStatusFilter(st agent.Status) {
 	m.rebuildFilter()
 }
 
-// cycleGroup advances the grouping mode: session → status → agent → session.
-func (m *Model) cycleGroup() {
-	m.groupMode = (m.groupMode + 1) % 3
-	m.rebuildItems()
-}
-
 // jumpTo selects the Nth (1-based) agent in the filtered list.
 func (m *Model) jumpTo(n string) {
 	idx := int(n[0] - '1')
@@ -156,25 +146,11 @@ func (m *Model) jumpTo(n string) {
 	m.refreshPreview(false)
 }
 
-// togglePreview turns the pane preview panel on/off, capturing the selected
-// pane when it turns on.
-func (m *Model) togglePreview() {
-	m.preview = !m.preview
-	if m.preview {
-		m.refreshPreview(true)
-	} else {
-		m.previewText, m.previewPane = "", ""
-	}
-}
-
 // refreshPreview re-captures the selected agent's pane for the preview
 // panel. With force, the capture runs even if the pane target is unchanged
 // (a full reload may have new content); without it, an unchanged selection
 // keeps the existing capture.
 func (m *Model) refreshPreview(force bool) {
-	if !m.preview {
-		return
-	}
 	if len(m.selMap) == 0 {
 		m.previewText, m.previewPane = "", ""
 		return
@@ -252,32 +228,12 @@ func (m *Model) rebuildFilter() {
 	m.rebuildItems()
 }
 
-// rebuildItems groups the filtered agents according to the current group
-// mode, then clamps the selection to the new range.
+// rebuildItems groups the filtered agents by session → window → agent, then
+// clamps the selection to the new range.
 func (m *Model) rebuildItems() {
 	m.items = m.items[:0]
 	m.selMap = m.selMap[:0]
 
-	switch m.groupMode {
-	case groupStatus:
-		m.groupByStatus()
-	case groupAgent:
-		m.groupByAgent()
-	default:
-		m.groupBySession()
-	}
-
-	if len(m.selMap) == 0 {
-		m.selected = 0
-	} else if m.selected >= len(m.selMap) {
-		m.selected = len(m.selMap) - 1
-	}
-}
-
-// groupBySession groups agents into session and window headers with
-// selectable agent lines. Grouping keys on the session id and window index
-// (not their display names), matching the bash popup.
-func (m *Model) groupBySession() {
 	lastSession, lastWindow := noneID, noneID
 	for _, fi := range m.filtered {
 		r := m.rows[fi]
@@ -292,31 +248,10 @@ func (m *Model) groupBySession() {
 		m.selMap = append(m.selMap, len(m.items))
 		m.items = append(m.items, item{kind: itemAgent, rowIdx: fi})
 	}
-}
 
-// groupByStatus groups agents under a status header per state, most urgent
-// first (blocked, working, idle).
-func (m *Model) groupByStatus() {
-	for _, st := range statusOrder {
-		started := false
-		for _, fi := range m.filtered {
-			if m.rows[fi].Status != st {
-				continue
-			}
-			if !started {
-				m.items = append(m.items, item{kind: itemStatus, status: st})
-				started = true
-			}
-			m.selMap = append(m.selMap, len(m.items))
-			m.items = append(m.items, item{kind: itemAgent, rowIdx: fi})
-		}
-	}
-}
-
-// groupByAgent renders a flat agent list with no headers.
-func (m *Model) groupByAgent() {
-	for _, fi := range m.filtered {
-		m.selMap = append(m.selMap, len(m.items))
-		m.items = append(m.items, item{kind: itemAgent, rowIdx: fi})
+	if len(m.selMap) == 0 {
+		m.selected = 0
+	} else if m.selected >= len(m.selMap) {
+		m.selected = len(m.selMap) - 1
 	}
 }

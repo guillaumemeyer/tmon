@@ -1,4 +1,4 @@
-// Package detect scans /proc for running AI coding agents and labels them.
+// Package detect scans the process table for running AI coding agents and labels them.
 package detect
 
 import (

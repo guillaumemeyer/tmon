@@ -22,12 +22,9 @@ var (
 	styleHL     = lipgloss.NewStyle().Background(lipgloss.Color("236"))
 )
 
-// previewMaxWidth caps the right-side preview panel at 48 cells.
-const previewMaxWidth = 48
-
-// View renders the popup: header, divider, grouped list (plus the optional
-// preview panel), footer. It always emits exactly height lines so the footer
-// lands on the last row.
+// View renders the popup: header, divider, agent list with a always-on
+// right-side pane preview (half the popup width), and footer. It always
+// emits exactly height lines so the footer lands on the last row.
 func (m Model) View() string {
 	w, h := m.width, m.height
 	if w < 1 {
@@ -37,16 +34,14 @@ func (m Model) View() string {
 		h = 24
 	}
 
-	panelW, listW := 0, w
-	if m.preview {
-		panelW = min(previewMaxWidth, w/3)
-		if panelW < 1 {
-			panelW = 1
-		}
-		listW = w - panelW - 1 // 1 cell for the │ separator
-		if listW < 1 {
-			listW = 1
-		}
+	// Preview takes half the popup; the list gets the rest minus the │.
+	panelW := w / 2
+	if panelW < 1 {
+		panelW = 1
+	}
+	listW := w - panelW - 1
+	if listW < 1 {
+		listW = 1
 	}
 
 	lines := make([]string, 0, h)
@@ -59,13 +54,10 @@ func (m Model) View() string {
 	}
 
 	listLines := m.listLines(listW, bodyLines)
-	if m.preview {
-		prev := m.previewLines(panelW, bodyLines)
-		for i := range listLines {
-			lines = append(lines, listLines[i]+"│"+prev[i])
-		}
-	} else {
-		lines = append(lines, listLines...)
+	prev := m.previewLines(panelW, bodyLines)
+	for i := range listLines {
+		// Both sides are padded to fixed widths so the │ column stays aligned.
+		lines = append(lines, listLines[i]+"│"+prev[i])
 	}
 
 	for len(lines) < h-1 {
@@ -76,7 +68,8 @@ func (m Model) View() string {
 	return strings.Join(lines, "\n")
 }
 
-// listLines renders the filtered list into at most bodyLines lines.
+// listLines renders the filtered list into at most bodyLines lines, each
+// exactly w cells wide so the preview separator stays vertically aligned.
 func (m Model) listLines(w, bodyLines int) []string {
 	lines := make([]string, 0, bodyLines)
 	if len(m.filtered) == 0 {
@@ -94,26 +87,31 @@ func (m Model) listLines(w, bodyLines int) []string {
 		}
 	}
 	for len(lines) < bodyLines {
-		lines = append(lines, "")
+		lines = append(lines, fit("", w))
 	}
 	return lines
 }
 
+// sgrReset clears SGR attributes so preview colors cannot bleed into the
+// next list row (terminals carry style across newlines).
+const sgrReset = "\x1b[0m"
+
 // previewLines renders the right-side preview panel: a header line naming
-// the selected agent, then the ANSI-stripped pane capture.
+// the selected agent, then the pane capture with colors preserved. Every
+// line is exactly w cells so it joins cleanly with the list column.
 func (m Model) previewLines(w, n int) []string {
 	out := make([]string, 0, n)
 	header := ""
 	switch {
 	case len(m.selMap) == 0:
-		header = "no agents"
+		header = " no agents"
 	case m.previewPane == "" || m.previewPane == "?":
-		header = "no pane (headless)"
+		header = " no pane (headless)"
 	default:
 		it := m.items[m.selMap[m.selected]]
 		if it.kind == itemAgent {
 			r := m.rows[it.rowIdx]
-			header = agentFullName(r.Label)
+			header = " " + agentFullName(r.Label)
 			if r.Detail != "" {
 				header += " — " + r.Detail
 			}
@@ -127,10 +125,12 @@ func (m Model) previewLines(w, n int) []string {
 		if len(out) >= n {
 			break
 		}
-		out = append(out, fit(tl, w))
+		// Leading space keeps content off the separator; reset after the
+		// line so open SGR from the capture cannot color the next row.
+		out = append(out, fit(" "+tl, w)+sgrReset)
 	}
 	for len(out) < n {
-		out = append(out, "")
+		out = append(out, fit("", w))
 	}
 	return out
 }
@@ -141,8 +141,8 @@ func (m Model) headerLine(w int) string {
 	if !m.ascii {
 		app = "🤖"
 	}
-	title := styleCyan.Bold(true).Render(app + " TMON")
-	hint := styleDim.Render("[/] search  [g] group  [d] preview  [esc/q] quit")
+	title := styleCyan.Bold(true).Render(app + " tmon")
+	hint := styleDim.Render("[/] search  [esc/q] quit")
 	pad := w - ansi.StringWidth(title) - ansi.StringWidth(hint)
 	if pad < 1 {
 		return ansi.Truncate(title, w, "")
@@ -150,21 +150,19 @@ func (m Model) headerLine(w int) string {
 	return title + strings.Repeat(" ", pad) + hint
 }
 
-// renderItem renders one grouped line. The selected agent line gets the
-// background highlight padded across the full width, like the bash popup's
-// CSI K fill.
+// renderItem renders one grouped line, always exactly w cells wide. The
+// selected agent line gets a background highlight across the full list
+// column, like the bash popup's CSI K fill.
 func (m Model) renderItem(di int, it item, w int) string {
 	switch it.kind {
 	case itemSession:
-		return styleCyan.Bold(true).Render("  " + it.sessionName)
+		return fit(styleCyan.Bold(true).Render("  "+it.sessionName), w)
 	case itemWindow:
 		name := it.windowIdx
 		if it.windowName != "" && it.windowName != "?" {
 			name = it.windowIdx + ":" + it.windowName
 		}
-		return styleDim.Render("    " + name)
-	case itemStatus:
-		return "  " + statusHeader(it.status, m.ascii)
+		return fit(styleDim.Render("    "+name), w)
 	case itemAgent:
 		r := m.rows[it.rowIdx]
 		line := fmt.Sprintf("      [%s] %s %s  %s",
@@ -178,13 +176,13 @@ func (m Model) renderItem(di int, it item, w int) string {
 		if age := ageString(r.LastTs); age != "" {
 			line += "  " + styleDim.Render(age)
 		}
+		line = fit(line, w)
 		if len(m.selMap) > 0 && m.selMap[m.selected] == di {
-			line = fit(line, w)
-			return styleHL.Render(line + strings.Repeat(" ", w-ansi.StringWidth(line)))
+			return styleHL.Render(line)
 		}
-		return fit(line, w)
+		return line
 	}
-	return ""
+	return fit("", w)
 }
 
 // displayCWD renders an agent's working directory for the popup: absolute
@@ -206,29 +204,6 @@ func displayCWD(cwd string) string {
 		return "~/" + rest
 	}
 	return cwd
-}
-
-// statusHeader renders a group-by-status header with its status character
-// and name, colored like the status bar.
-func statusHeader(st agent.Status, ascii bool) string {
-	switch st {
-	case agent.StatusBlocked:
-		if ascii {
-			return styleOrange.Bold(true).Render("B Blocked")
-		}
-		return styleOrange.Bold(true).Render("🛑 Blocked")
-	case agent.StatusWorking:
-		if ascii {
-			return styleGreen.Bold(true).Render("W Working")
-		}
-		return styleGreen.Bold(true).Render("⚡️ Working")
-	case agent.StatusIdle:
-		if ascii {
-			return styleBlue.Bold(true).Render("I Idle")
-		}
-		return styleBlue.Bold(true).Render("💤 Idle")
-	}
-	return string(st)
 }
 
 // footerLine varies with the mode: search input, active filter, or the
@@ -362,8 +337,16 @@ func ageString(lastTs int64) string {
 	}
 }
 
-// fit truncates s to at most w cells without breaking ANSI codes and while
-// accounting for wide characters.
+// fit truncates s to at most w cells without breaking ANSI codes, accounting
+// for wide characters, then pads with spaces so the result is exactly w cells.
+// Fixed-width lines keep the list/preview columns aligned.
 func fit(s string, w int) string {
-	return ansi.Truncate(s, w, "")
+	if w <= 0 {
+		return ""
+	}
+	s = ansi.Truncate(s, w, "")
+	if pad := w - ansi.StringWidth(s); pad > 0 {
+		s += strings.Repeat(" ", pad)
+	}
+	return s
 }
