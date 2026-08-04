@@ -43,7 +43,16 @@ func writeFile(t *testing.T, path, content string) {
 	}
 }
 
-func nowTS() string { return time.Now().UTC().Format(time.RFC3339Nano) }
+// nowTS returns a strictly increasing RFC3339Nano timestamp. The tick
+// offset guarantees that consecutive calls order correctly even on clocks
+// with coarse granularity (e.g. macOS runners), which the phase-mapping
+// logic relies on (tool_completed must follow tool_started).
+var nowTick int64
+
+func nowTS() string {
+	nowTick++
+	return time.Now().UTC().Add(time.Duration(nowTick) * time.Microsecond).Format(time.RFC3339Nano)
+}
 
 func TestGrokPhaseMapping(t *testing.T) {
 	cases := []struct {

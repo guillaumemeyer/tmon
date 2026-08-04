@@ -100,6 +100,10 @@ func TestCollectToleratesConnectorErrors(t *testing.T) {
 }
 
 func TestCollectSelectionByName(t *testing.T) {
+	old := procAlive
+	procAlive = func(pid int) bool { return true } // selection test: every PID is live
+	t.Cleanup(func() { procAlive = old })
+
 	cfg := testConfig()
 	cfg.Connectors = "grok, hermes" // comma list, whitespace tolerated
 	now := time.Now()
@@ -115,6 +119,10 @@ func TestCollectSelectionByName(t *testing.T) {
 }
 
 func TestCollectSkipsDisabledConnectors(t *testing.T) {
+	old := procAlive
+	procAlive = func(pid int) bool { return true } // selection test: every PID is live
+	t.Cleanup(func() { procAlive = old })
+
 	now := time.Now()
 	conns := []Connector{
 		fakeConn{name: "grok", enabled: false, recs: []Record{{PID: 1, Label: "Grok", At: now}}},
