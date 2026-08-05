@@ -22,8 +22,9 @@
 #                            signal stays authoritative before the /proc
 #                            heuristic takes over again
 #   @tmon-ascii-icons       "0" (default) — render the status icons as
-#                            emoji (🤖 🚨 ⚡️ 💤); "1" switches to ASCII
-#                            ([@] B W I)
+#                            emoji (🤖 🚨 💤); "1" switches to ASCII
+#                            ([@] B I). Working agents always show the
+#                            animated spinner
 #   @tmon-bold-counts       "1" (default) — render the per-status counts
 #                            (the 2 in 🚨2) in bold; "0" turns it off
 #   @tmon-context-warn      85 (default) — context-usage % at which a ⚠️
@@ -43,7 +44,8 @@
 #                            app|blocked|working|idle|dim|accent|warn|selbg
 #                            and the value a tmux color (name, colourNNN, hex)
 #   @tmon-icon-<slot>       override one status glyph; slot is one of
-#                            app|blocked|working|idle|warn (e.g. @tmon-icon-working "⚙️")
+#                            app|blocked|idle|warn (working agents use the
+#                            animated spinner instead of an icon)
 #   @tmon-auto-hooks        "on" (default) — auto-install lifecycle hooks at
 #                            plugin load for every supported agent found on
 #                            this machine (set "off" to disable)

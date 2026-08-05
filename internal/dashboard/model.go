@@ -1,11 +1,15 @@
 // Package dashboard implements the interactive agent navigation popup
-// (`tmon dashboard`), a bubbletea TUI ported from scripts/dashboard.sh.
+// (`tmon dashboard`), a bubbletea TUI built on the bubbles components.
 package dashboard
 
 import (
 	"time"
 
+	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/guillaumemeyer/tmon/internal/agent"
 	"github.com/guillaumemeyer/tmon/internal/theme"
 	"github.com/guillaumemeyer/tmon/internal/tmux"
@@ -44,42 +48,22 @@ type Data struct {
 // fake one; DefaultLoader builds the real implementation.
 type Loader func() (Data, error)
 
-// itemKind discriminates the grouped display items.
-type itemKind int
-
-const (
-	itemSession itemKind = iota // non-selectable session header
-	itemWindow                  // non-selectable window sub-header
-	itemAgent                   // selectable agent line
-)
-
-// item is one line of the grouped list (session → window → agent).
-type item struct {
-	kind        itemKind
-	sessionName string // itemSession
-	windowIdx   string // itemWindow
-	windowName  string // itemWindow
-	rowIdx      int    // itemAgent: index into Model.rows
-}
-
 // Model is the bubbletea state for the dashboard popup.
 type Model struct {
 	loader Loader
 
-	rows     []Row  // full sorted agent list
-	filtered []int  // indices into rows after the query + status filter
-	items    []item // grouped display items
-	selMap   []int  // item index per selectable position
-	selected int    // index into selMap
+	rows      []Row      // full sorted agent list
+	filtered  []int      // indices into rows after the query + status filter
+	agentList list.Model // flat, selectable agent list (bubbles)
 
 	filterStatus agent.Status // "" = no status filter
 
 	previewText   string            // pane capture of the selected pane (colors preserved)
 	previewPane   string            // pane target the preview currently shows
-	previewOffset int               // lines scrolled up from the bottom (0 = pin to end)
 	paneCache     map[string]string // pane target → full capture (for search + preview)
 	previewPct    int               // preview panel width as % of popup (default 50)
 	draggingSplit bool              // true while the user is dragging the │ separator
+	preview       viewport.Model    // right-side pane preview (scrollable, bottom-pinned)
 
 	// settingsPath is where UI prefs (e.g. preview width) are persisted.
 	// Empty disables load/save (tests and ad-hoc construction).
@@ -97,6 +81,16 @@ type Model struct {
 	// contextWarn is the context-usage percent at which the usage bar and
 	// the status bar switch to the warn color; 0 disables the warning.
 	contextWarn int
+
+	// spinner animates the status slot of working agents (one glyph, green).
+	spinner spinner.Model
+
+	// themeMode is true while the theme selector is open; themes is its
+	// preset list, themeOpts the resolution inputs (overrides, ASCII) that
+	// keep applying to the highlighted preset.
+	themeMode bool
+	themes    list.Model
+	themeOpts theme.Options
 
 	// version is the tmon release string shown bottom-left in the footer
 	// (e.g. "0.4.2"). Empty hides it (tests and direct construction).
@@ -123,14 +117,52 @@ func New(loader Loader, ascii bool) Model {
 	}
 	m.theme = theme.Resolve(theme.Options{ASCII: ascii})
 	m.st = buildStyles(m.theme.Palette)
+	m.agentList = newAgentList()
+	m.themes = newThemesList()
+	m.spinner = newSpinner(m.theme.Palette)
+	m.preview = viewport.New(40, 20) // sized per render in View
 	return m
 }
+
+// newSpinner builds the working-agent spinner, colored with the theme's
+// working color. The frames are ASCII (|/-\) so ASCII mode stays consistent.
+func newSpinner(pal theme.Palette) spinner.Model {
+	return spinner.New(spinner.WithStyle(
+		lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Lipgloss(pal.Working))),
+	))
+}
+
+// selectedRow returns the Row currently selected in the agent list, or nil
+// when nothing is selectable (empty list or selection out of range).
+func (m Model) selectedRow() *Row {
+	if len(m.filtered) == 0 {
+		return nil
+	}
+	idx := m.agentList.Index()
+	if idx < 0 || idx >= len(m.filtered) {
+		return nil
+	}
+	return &m.rows[m.filtered[idx]]
+}
+
+// spinnerFrame returns the current spinner glyph for working agents. The
+// frame carries the green foreground style, so rows render it directly.
+func (m Model) spinnerFrame() string { return m.spinner.View() }
 
 // WithTheme replaces the model's resolved theme (palette + icons) and
 // rebuilds the lipgloss styles from it.
 func (m Model) WithTheme(t theme.Theme) Model {
 	m.theme = t
 	m.st = buildStyles(t.Palette)
+	m.spinner = newSpinner(t.Palette)
+	return m
+}
+
+// WithThemeOptions records the resolution inputs (preset name, color/icon
+// overrides, ASCII) so the theme selector can re-resolve presets while
+// honoring the user's @tmon-color-* / @tmon-icon-* overrides.
+func (m Model) WithThemeOptions(opts theme.Options) Model {
+	m.themeOpts = opts
 	return m
 }
 
@@ -155,11 +187,13 @@ func (m Model) WithVersion(v string) Model {
 	return m
 }
 
-// Init kicks off the initial full load and the auto-refresh ticker.
+// Init kicks off the initial full load, the auto-refresh ticker, and the
+// working-agent spinner animation.
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		func() tea.Msg { return initMsg{} },
 		tickCmd(),
+		func() tea.Msg { return m.spinner.Tick() },
 	)
 }
 

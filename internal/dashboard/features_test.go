@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/guillaumemeyer/tmon/internal/agent"
@@ -65,16 +66,16 @@ func TestNumberJump(t *testing.T) {
 	m = applyMsg(t, m, initMsg{})
 
 	m = applyMsg(t, m, key('2'))
-	if m.selected != 1 {
-		t.Fatalf("selection after 2 = %d, want 1", m.selected)
+	if m.agentList.Index() != 1 {
+		t.Fatalf("selection after 2 = %d, want 1", m.agentList.Index())
 	}
 	m = applyMsg(t, m, key('1'))
-	if m.selected != 0 {
-		t.Fatalf("selection after 1 = %d, want 0", m.selected)
+	if m.agentList.Index() != 0 {
+		t.Fatalf("selection after 1 = %d, want 0", m.agentList.Index())
 	}
 	m = applyMsg(t, m, key('9')) // beyond the list clamps to the last
-	if m.selected != 2 {
-		t.Fatalf("selection after 9 = %d, want 2 (clamped)", m.selected)
+	if m.agentList.Index() != 2 {
+		t.Fatalf("selection after 9 = %d, want 2 (clamped)", m.agentList.Index())
 	}
 }
 
@@ -251,26 +252,6 @@ func TestPreviewIsHalfWidth(t *testing.T) {
 	}
 }
 
-func TestPreviewWindow(t *testing.T) {
-	cases := []struct {
-		total, visible, offset, wantStart, wantEnd int
-	}{
-		{0, 5, 0, 0, 0},    // empty
-		{3, 5, 0, 0, 3},    // fits entirely
-		{10, 4, 0, 6, 10},  // pin to bottom
-		{10, 4, 2, 4, 8},   // scrolled up 2
-		{10, 4, 100, 0, 4}, // offset clamped to max
-		{10, 4, -3, 6, 10}, // negative offset → 0
-	}
-	for _, c := range cases {
-		start, end := previewWindow(c.total, c.visible, c.offset)
-		if start != c.wantStart || end != c.wantEnd {
-			t.Errorf("previewWindow(%d,%d,%d) = [%d,%d), want [%d,%d)",
-				c.total, c.visible, c.offset, start, end, c.wantStart, c.wantEnd)
-		}
-	}
-}
-
 func TestPreviewPinsToBottom(t *testing.T) {
 	// More lines than the body can show: the last lines must appear, not the first.
 	var lines []string
@@ -308,29 +289,23 @@ func TestPreviewScrollCtrlUD(t *testing.T) {
 	f := &fakeLoader{data: Data{Rows: testRows()}}
 	m := New(f.load, true)
 	m = applyMsg(t, m, initMsg{})
-	m.width, m.height = 80, 12 // content rows ≈ 8; half-page step = 4
+	m.width, m.height = 80, 12 // preview content rows ≈ 8; half-page step = 4
 
 	// Default: pinned to bottom.
+	if !m.preview.AtBottom() {
+		t.Fatal("default should pin the preview to the bottom")
+	}
 	v := ansi.Strip(m.View())
 	if !strings.Contains(v, "LINE-40") || strings.Contains(v, "LINE-01") {
 		t.Fatalf("default should pin to bottom:\n%s", v)
 	}
 
-	// ctrl+u scrolls up: older content appears, bottom may leave the viewport.
-	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyCtrlU})
-	if m.previewOffset <= 0 {
-		t.Fatalf("previewOffset after ctrl+u = %d, want > 0", m.previewOffset)
-	}
-	v = ansi.Strip(m.View())
-	if strings.Contains(v, "LINE-40") {
-		// With step=4 and 40 lines, after one scroll the bottom should still
-		// often be visible depending on height; require offset applied instead.
-		// Re-check with enough scrolls to clear the bottom.
-	}
-
-	// Scroll up enough that LINE-40 is gone and earlier lines appear.
+	// ctrl+u scrolls up: older content appears, the bottom leaves the view.
 	for i := 0; i < 20; i++ {
 		m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyCtrlU})
+	}
+	if m.preview.AtBottom() {
+		t.Fatal("after many ctrl+u the preview should not be at the bottom")
 	}
 	v = ansi.Strip(m.View())
 	if strings.Contains(v, "LINE-40") {
@@ -344,8 +319,8 @@ func TestPreviewScrollCtrlUD(t *testing.T) {
 	for i := 0; i < 20; i++ {
 		m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyCtrlD})
 	}
-	if m.previewOffset != 0 {
-		t.Fatalf("previewOffset after ctrl+d to bottom = %d, want 0", m.previewOffset)
+	if !m.preview.AtBottom() {
+		t.Fatal("after ctrl+d to bottom, the preview should be at the bottom")
 	}
 	v = ansi.Strip(m.View())
 	if !strings.Contains(v, "LINE-40") {
@@ -371,14 +346,14 @@ func TestPreviewScrollResetsOnSelectionChange(t *testing.T) {
 
 	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyCtrlU})
 	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyCtrlU})
-	if m.previewOffset == 0 {
-		t.Fatal("expected non-zero offset before selection change")
+	if m.preview.AtBottom() {
+		t.Fatal("expected non-bottom preview before selection change")
 	}
 
 	// Moving to another agent re-captures and pins the new pane to the bottom.
 	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyDown})
-	if m.previewOffset != 0 {
-		t.Fatalf("previewOffset after selection change = %d, want 0", m.previewOffset)
+	if !m.preview.AtBottom() {
+		t.Fatal("preview should pin to bottom after selection change")
 	}
 	if m.previewPane != "main:0.1" {
 		t.Fatalf("previewPane = %q, want main:0.1", m.previewPane)
@@ -412,7 +387,7 @@ func TestFooterOmitsStatusCountsShowsPreviewTip(t *testing.T) {
 			t.Fatalf("footer should not show status count %q in:\n%s", bad, v)
 		}
 	}
-	for _, want := range []string{"[↑/↓ j/k] navigate", "[←/→ h/l · drag │] resize", "[C-u/C-d] scroll preview", "[1-9] jump"} {
+	for _, want := range []string{"[↑/↓ j/k] navigate", "[←/→ h/l · drag │] resize", "[C-u/C-d] scroll preview", "[1-9] jump", "[t] theme"} {
 		if !strings.Contains(v, want) {
 			t.Fatalf("footer missing %q in:\n%s", want, v)
 		}
@@ -460,25 +435,26 @@ func TestIdentityColorsInListAndPreview(t *testing.T) {
 	listW, _ := m.panelWidths(120)
 
 	raw := m.View()
-	// Selected Grok name: status icon + identity color on selBg.
+	// Selected Grok name: status icon (the working spinner frame) + identity
+	// color on selBg.
 	bg := m.st.selBgColor
-	grokLine := m.selFit(
+	grokLine := selFit(m.st,
 		m.st.selBg.Render("      ")+
-			m.statusStyle(agent.StatusWorking).Background(bg).Render("W ")+
-			m.identityStyle("Grok").Bold(true).Background(bg).Render("Popup preview scroll (Grok Build)"),
+			statusStyle(m.st, agent.StatusWorking).Background(bg).Render(m.spinnerFrame()+" ")+
+			identityStyle(m.st, "Grok").Bold(true).Background(bg).Render("Popup preview scroll (Grok Build)"),
 		listW,
 	)
 	if !strings.Contains(raw, grokLine) {
 		t.Fatalf("selected Grok missing identity+selBg highlight:\n%q", raw)
 	}
 	// Preview header uses Grok identity color.
-	if !strings.Contains(raw, m.identityStyle("Grok").Bold(true).Render("Popup preview scroll (Grok Build)")) {
+	if !strings.Contains(raw, identityStyle(m.st, "Grok").Bold(true).Render("Popup preview scroll (Grok Build)")) {
 		t.Fatalf("preview header missing Grok identity color:\n%q", raw)
 	}
 	// Unselected Claude: status icon + brand orange on the list name.
 	claudeLine := "      " +
-		m.statusStyle(agent.StatusBlocked).Render("B ") +
-		m.identityStyle("Claude").Bold(true).Render("Claude Code")
+		statusStyle(m.st, agent.StatusBlocked).Render("B ") +
+		identityStyle(m.st, "Claude").Bold(true).Render("Claude Code")
 	if !strings.Contains(raw, claudeLine) {
 		t.Fatalf("Claude list row missing identity color:\n%q", raw)
 	}
@@ -486,7 +462,7 @@ func TestIdentityColorsInListAndPreview(t *testing.T) {
 	// Select Claude: preview header uses Claude identity color.
 	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyDown})
 	raw = m.View()
-	if !strings.Contains(raw, m.identityStyle("Claude").Bold(true).Render("Claude Code")) {
+	if !strings.Contains(raw, identityStyle(m.st, "Claude").Bold(true).Render("Claude Code")) {
 		t.Fatalf("preview header should use Claude identity color:\n%q", raw)
 	}
 }
@@ -504,13 +480,14 @@ func TestSelectedAgentHighlight(t *testing.T) {
 	listW, _ := m.panelWidths(120)
 	raw := m.View()
 
-	// The selected name row uses status icon + agent identity color on the
-	// selection background, padded to the list width. The old ">" marker is gone.
+	// The selected name row uses status icon (the working spinner frame) +
+	// agent identity color on the selection background, padded to the list
+	// width. The old ">" marker is gone.
 	bg := m.st.selBgColor
-	nameLine := m.selFit(
+	nameLine := selFit(m.st,
 		m.st.selBg.Render("      ")+
-			m.statusStyle(agent.StatusWorking).Background(bg).Render("W ")+
-			m.identityStyle("Grok").Bold(true).Background(bg).Render("Popup preview scroll (Grok Build)"),
+			statusStyle(m.st, agent.StatusWorking).Background(bg).Render(m.spinnerFrame()+" ")+
+			identityStyle(m.st, "Grok").Bold(true).Background(bg).Render("Popup preview scroll (Grok Build)"),
 		listW,
 	)
 	if !strings.Contains(raw, nameLine) {
@@ -523,8 +500,8 @@ func TestSelectedAgentHighlight(t *testing.T) {
 
 	// Unselected rows use status icon + agent identity color (bold) and no marker.
 	claudeLine := "      " +
-		m.statusStyle(agent.StatusBlocked).Render("B ") +
-		m.identityStyle("Claude").Bold(true).Render("Claude Code")
+		statusStyle(m.st, agent.StatusBlocked).Render("B ") +
+		identityStyle(m.st, "Claude").Bold(true).Render("Claude Code")
 	if !strings.Contains(raw, claudeLine) {
 		t.Fatalf("unselected name row should use the identity color:\n%q", raw)
 	}
@@ -555,8 +532,10 @@ func TestAgentRowsAreTwoLines(t *testing.T) {
 		list := strings.SplitN(ln, "│", 2)[0]
 		switch {
 		case strings.Contains(list, "Popup preview scroll (Grok Build)"):
-			if !strings.Contains(list, "W Popup preview scroll") {
-				t.Fatalf("Grok name line = %q, want status icon before name", list)
+			// The working agent's status slot is the animated spinner frame
+			// (frame 0 is "|"), not the static "W".
+			if !strings.Contains(list, ansi.Strip(m.spinnerFrame())+" Popup preview scroll") {
+				t.Fatalf("Grok name line = %q, want spinner frame before name", list)
 			}
 			if !strings.Contains(lines[i+1], "code/tmon") {
 				t.Fatalf("Grok cwd line = %q, want code/tmon", lines[i+1])
@@ -587,18 +566,18 @@ func TestAgentRowsAreTwoLines(t *testing.T) {
 	raw := m.View()
 	listW, _ := m.panelWidths(120)
 	bg := m.st.selBgColor
-	nameLine := m.selFit(
+	nameLine := selFit(m.st,
 		m.st.selBg.Render("      ")+
-			m.statusStyle(agent.StatusWorking).Background(bg).Render("W ")+
-			m.identityStyle("Grok").Bold(true).Background(bg).Render("Popup preview scroll (Grok Build)"),
+			statusStyle(m.st, agent.StatusWorking).Background(bg).Render(m.spinnerFrame()+" ")+
+			identityStyle(m.st, "Grok").Bold(true).Background(bg).Render("Popup preview scroll (Grok Build)"),
 		listW,
 	)
 	if !strings.Contains(raw, nameLine) {
 		t.Fatal("selected agent name should be identity-colored on selBg")
 	}
 	claudeLine := "      " +
-		m.statusStyle(agent.StatusBlocked).Render("B ") +
-		m.identityStyle("Claude").Bold(true).Render("Claude Code")
+		statusStyle(m.st, agent.StatusBlocked).Render("B ") +
+		identityStyle(m.st, "Claude").Bold(true).Render("Claude Code")
 	if !strings.Contains(raw, claudeLine) {
 		t.Fatal("unselected agent name should use identity color")
 	}
@@ -645,32 +624,73 @@ func TestAgentRowsThreeLinesWithUsage(t *testing.T) {
 		list := strings.SplitN(ln, "│", 2)[0]
 		switch {
 		case strings.Contains(list, "Popup preview scroll (Grok Build)"):
-			// The agent with usage spans three list rows: name, cwd, stats.
+			// Every agent spans four uniform rows: name, cwd, pane, usage.
 			if !strings.Contains(lines[i+1], "code/tmon") {
 				t.Fatalf("Grok cwd line = %q, want code/tmon", lines[i+1])
 			}
-			stats = lines[i+2]
+			if !strings.Contains(lines[i+2], "tmux: main:0.0") {
+				t.Fatalf("Grok pane line = %q, want tmux: main:0.0", lines[i+2])
+			}
+			stats = lines[i+3]
 		case strings.Contains(list, "Claude Code"):
-			// The agent without usage stays at two rows: the line after its
-			// cwd is the next session header, not a stats line.
-			if strings.Contains(lines[i+2], "ctx ") {
-				t.Fatalf("Claude has no usage but rendered a stats line: %q", lines[i+2])
+			// The agent without usage keeps a blank fourth row.
+			if strings.Contains(lines[i+3], "ctx ") {
+				t.Fatalf("Claude has no usage but rendered a stats line: %q", lines[i+3])
 			}
 		}
 	}
-	if !strings.Contains(stats, "ctx 52.4k/200k ██░░░░░░░░ 26%") {
-		t.Fatalf("stats line = %q, want ctx 52.4k/200k ██░░░░░░░░ 26%%", stats)
+	// The list column is 59 cells here, so the progress bar takes the full
+	// 30-cell cap; 26% of 30 fills 8 cells (rounded).
+	if !strings.Contains(stats, "ctx 52.4k/200k ████████░░░░░░░░░░░░░░░░░░░░░░ 26%") {
+		t.Fatalf("stats line = %q, want the 30-cell progress bar", stats)
+	}
+}
+
+func TestWorkingAgentShowsSpinner(t *testing.T) {
+	old := capturePane
+	capturePane = func(p string) string { return "x" }
+	t.Cleanup(func() { capturePane = old })
+
+	// Emoji theme: the static working icon is ⚡️, which the spinner replaces.
+	f := &fakeLoader{data: Data{Rows: testRows()}}
+	m := New(f.load, false)
+	m = applyMsg(t, m, initMsg{})
+	m.width, m.height = 120, 24
+
+	frame := ansi.Strip(m.spinnerFrame())
+	if frame == "" {
+		t.Fatal("spinnerFrame() should return a frame")
+	}
+	lines := strings.Split(ansi.Strip(m.View()), "\n")
+	var grok string
+	for _, ln := range lines {
+		if strings.Contains(ln, "Grok Build") {
+			grok = ln
+			break
+		}
+	}
+	if grok == "" {
+		t.Fatal("no working row rendered")
+	}
+	if !strings.Contains(grok, frame+" ") {
+		t.Fatalf("working row should lead with the spinner frame %q, got %q", frame, grok)
+	}
+	if strings.Contains(grok, "⚡️") {
+		t.Fatalf("working row should not show the static ⚡️ icon: %q", grok)
 	}
 
-	// The stats text is dimmed and the bar is green in the raw view.
-	raw := m.View()
-	if !strings.Contains(raw, m.st.green.Render("██░░░░░░░░")) {
-		t.Fatal("usage bar should be green in the raw view")
+	// Advancing the spinner (its own tick message) changes the frame.
+	f0 := ansi.Strip(m.spinnerFrame())
+	m = applyMsg(t, m, spinner.TickMsg{ID: m.spinner.ID()})
+	if f1 := ansi.Strip(m.spinnerFrame()); f1 == f0 {
+		t.Fatalf("spinner frame did not advance: %q", f1)
 	}
 }
 
 func TestUsageLineFormat(t *testing.T) {
 	m := Model{st: defaultStyles, theme: theme.Default, contextWarn: defaultContextWarn}
+	// A wide row caps the progress bar at its 30-cell maximum, making the
+	// expected fill deterministic: round(width * pct / 100).
 	cases := []struct {
 		name string
 		u    agent.Usage
@@ -678,15 +698,15 @@ func TestUsageLineFormat(t *testing.T) {
 	}{
 		{"empty", agent.Usage{}, ""},
 		{"tokens only", agent.Usage{TokensUsed: 13025}, "ctx 13k"},
-		{"tokens and window", agent.Usage{TokensUsed: 52367, WindowTokens: 200000}, "ctx 52.4k/200k ██░░░░░░░░ 26%"},
-		{"million window", agent.Usage{TokensUsed: 123456, WindowTokens: 1000000}, "ctx 123k/1M █░░░░░░░░░ 12%"},
+		{"tokens and window", agent.Usage{TokensUsed: 52367, WindowTokens: 200000}, "ctx 52.4k/200k ████████░░░░░░░░░░░░░░░░░░░░░░ 26%"},
+		{"million window", agent.Usage{TokensUsed: 123456, WindowTokens: 1000000}, "ctx 123k/1M ████░░░░░░░░░░░░░░░░░░░░░░░░░░ 12%"},
 		{"quota only", agent.Usage{QuotaPct: 38, QuotaReset: "14:00"}, "62% left · reset 14:00"},
-		{"all", agent.Usage{TokensUsed: 52367, WindowTokens: 200000, QuotaPct: 38, QuotaReset: "14:00"}, "ctx 52.4k/200k ██░░░░░░░░ 26% · 62% left · reset 14:00"},
+		{"all", agent.Usage{TokensUsed: 52367, WindowTokens: 200000, QuotaPct: 38, QuotaReset: "14:00"}, "ctx 52.4k/200k ████████░░░░░░░░░░░░░░░░░░░░░░ 26% · 62% left · reset 14:00"},
 		{"over quota clamps", agent.Usage{QuotaPct: 120, QuotaReset: "14:00"}, "0% left · reset 14:00"},
-		{"warn threshold", agent.Usage{TokensUsed: 180000, WindowTokens: 200000}, "ctx 180k/200k █████████░ 90%"},
+		{"warn threshold", agent.Usage{TokensUsed: 180000, WindowTokens: 200000}, "ctx 180k/200k ███████████████████████████░░░ 90%"},
 	}
 	for _, tc := range cases {
-		if got := ansi.Strip(m.usageLine(tc.u, false)); got != tc.want {
+		if got := ansi.Strip(usageLine(m.st, m.contextWarn, tc.u, false, 200)); got != tc.want {
 			t.Errorf("%s: usageLine(%+v) = %q, want %q", tc.name, tc.u, got, tc.want)
 		}
 	}
@@ -694,31 +714,40 @@ func TestUsageLineFormat(t *testing.T) {
 
 func TestUsageBarColor(t *testing.T) {
 	m := Model{st: defaultStyles, theme: theme.Default, contextWarn: defaultContextWarn}
-	bar := func(pct int) string { return m.contextBar(pct, m.st.green, m.st.warn) }
-	if got := bar(26); got != m.st.green.Render("██░░░░░░░░") {
-		t.Fatalf("26%% bar = %q, want green", got)
+	green := styleHex(m.st.green)
+	warn := styleHex(m.st.warn)
+	if green == "" || warn == "" || green == warn {
+		t.Fatalf("need distinct hex colors for the bar, green=%q warn=%q", green, warn)
+	}
+	if got := usageBarColor(26, m.contextWarn, m.st.green, m.st.warn); got != green {
+		t.Fatalf("26%% bar color = %q, want green %q", got, green)
 	}
 	// At the warn threshold (85%) and above, the bar switches to warn.
-	if got := bar(85); got != m.st.warn.Render("████████░░") {
-		t.Fatalf("85%% bar = %q, want warn", got)
+	if got := usageBarColor(85, m.contextWarn, m.st.green, m.st.warn); got != warn {
+		t.Fatalf("85%% bar color = %q, want warn %q", got, warn)
 	}
-	if got := bar(90); got != m.st.warn.Render("█████████░") {
-		t.Fatalf("90%% bar = %q, want warn", got)
-	}
-	// Over 100% clamps to a full bar.
-	if got := bar(250); got != m.st.warn.Render("██████████") {
-		t.Fatalf("250%% bar = %q, want full warn bar", got)
+	if got := usageBarColor(90, m.contextWarn, m.st.green, m.st.warn); got != warn {
+		t.Fatalf("90%% bar color = %q, want warn %q", got, warn)
 	}
 
 	// A custom threshold (@tmon-context-warn) moves the warn switch point.
 	m2 := m.WithContextWarn(70)
-	if got := m2.contextBar(75, m2.st.green, m2.st.warn); got != m2.st.warn.Render("███████░░░") {
-		t.Fatalf("75%% bar with 70%% threshold = %q, want warn", got)
+	if got := usageBarColor(75, m2.contextWarn, m2.st.green, m2.st.warn); got != warn {
+		t.Fatalf("75%% bar with 70%% threshold = %q, want warn %q", got, warn)
 	}
 	// A threshold of 0 disables the warn color entirely.
 	m3 := m.WithContextWarn(0)
-	if got := m3.contextBar(90, m3.st.green, m3.st.warn); got != m3.st.green.Render("█████████░") {
-		t.Fatalf("90%% bar with 0 threshold = %q, want green", got)
+	if got := usageBarColor(90, m3.contextWarn, m3.st.green, m3.st.warn); got != green {
+		t.Fatalf("90%% bar with 0 threshold = %q, want green %q", got, green)
+	}
+
+	// Fill math: 26% of a 10-cell bar fills 3 cells (rounded); over 100%
+	// clamps to a full bar.
+	if got := ansi.Strip(usageBar(26, 10, m.contextWarn, m.st.green, m.st.warn, m.st.dim, false, m.st)); got != "███░░░░░░░" {
+		t.Fatalf("26%% 10-cell bar = %q, want 3 filled cells", got)
+	}
+	if got := ansi.Strip(usageBar(250, 10, m.contextWarn, m.st.green, m.st.warn, m.st.dim, false, m.st)); got != "██████████" {
+		t.Fatalf("250%% 10-cell bar = %q, want full bar", got)
 	}
 }
 

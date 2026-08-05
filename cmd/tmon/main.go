@@ -35,7 +35,8 @@ Environment (set by tmon.tmux from the @tmon-* tmux options):
   TMON_IO_ACTIVITY_THRESHOLD  Min IO bytes/poll for "working" (default 102400)
   TMON_IDLE_DECAY_POLLS       Grace polls before flagging "idle" (default 3)
   TMON_ASCII_ICONS            Render status icons as ASCII instead of emoji
-                              (default 0 = emoji 🤖 🚨 ⚡️ 💤; 1 = [@] B W I)
+                              (default 0 = emoji 🤖 🚨 💤; 1 = [@] B I;
+                              working agents always use the spinner)
   TMON_CONNECTORS             Connector selection: "auto" or a comma list
                               (default auto; agents' own state sources)
   TMON_CONNECTOR_FRESHNESS    Seconds a connector signal stays valid (default 30)
@@ -46,8 +47,8 @@ Environment (set by tmon.tmux from the @tmon-* tmux options):
                               (default default)
   TMON_COLOR_<SLOT>           Override a theme color slot (app|blocked|working|
                               idle|dim|accent|warn|selbg); name, colourNNN, or hex
-  TMON_ICON_<SLOT>            Override a status glyph (app|blocked|working|
-                              idle|warn)
+  TMON_ICON_<SLOT>            Override a status glyph (app|blocked|idle|
+                              warn); working agents use the spinner
   TMON_CONTEXT_WARN           Context-usage % at which the ⚠️ warning appears
                               in the status bar (default 85; 0 disables)
   TMON_BLOCKED_BELL           Ring the terminal bell when an agent blocks:

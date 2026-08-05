@@ -26,10 +26,11 @@ dashboard — or just **click the status bar indicator**.
 ![tmux](https://img.shields.io/badge/tmux-%E2%89%A5%203.2-1B93DB?style=flat-square)
 ![agents](https://img.shields.io/badge/supports-11%20agents-4FC08D?style=flat-square)
 
-<img src="docs/demo.gif" width="720" alt="tmon demo: an agent blocks, gets approved, springs back to work, dashboard tour" />
+<img src="docs/demo/demo.gif" width="720" alt="tmon demo: an agent blocks, gets approved, springs back to work, dashboard tour" />
 
-> **The demo GIF** is recorded from a live session — the shot list lives in
-> [`docs/demo.md`](docs/demo.md).
+> **The demo GIF** is recorded with [VHS](https://github.com/charmbracelet/vhs) —
+> run [`docs/demo/demo.sh`](docs/demo/demo.sh) (tape + notes in
+> [`docs/demo/`](docs/demo/)).
 
 ---
 
@@ -53,7 +54,7 @@ currently on stage:
 | Status | Icon | What it means | Personality |
 |--------|------|---------------|-------------|
 | **blocked** | 🚨 | Waiting for a user action: a permission prompt, a plan approval, a y/n question. Overrides everything — a waiting agent is waiting even if it's burning CPU. | *"Waiting for you. It has opinions."* |
-| **working** | ⚡️ | Actively thinking, writing, or running tools. | *"In flow. Do not disturb (unless it's been 40 minutes)."* |
+| **working** | `\|/-\` | Actively thinking, writing, or running tools — the glyph is an animated spinner. | *"In flow. Do not disturb (unless it's been 40 minutes)."* |
 | **idle** | 💤 | Session alive, but not thinking and not waiting on you. | *"Napping between thoughts. Wakes at the first hint of an API call."* |
 
 ---
@@ -63,25 +64,26 @@ currently on stage:
 ### Status bar
 
 ```
-🤖-🚨2-⚡️3-💤1
+🤖-🚨2-|3-💤1
 ↑  ↑   ↑   ↑
 icon blocked working idle
 ```
 
 - **🤖 cyan** — your personal fleet of AI agents
 - **🚨 orange** — agent is blocked, waiting for you
-- **⚡️ green** — agent is working
+- **`|` green** — agent is working; the spinner animates, advancing a frame on each status refresh
 - **💤 blue** — agent is idle
 - **🤖** alone — no agents detected (peace and quiet)
 
 Each status segment (icon + count) only appears when at least one agent is
 in that state, so the indicator stays compact. Set `@tmon-ascii-icons "1"`
-to swap the emoji for plain ASCII — same colors, same visibility rules:
+to swap the emoji for plain ASCII — same colors, same visibility rules
+(working agents keep the spinner either way):
 
 ```
-[@]-B2-W3-I1
+[@]-B2-|3-I1
 ↑   ↑  ↑  ↑
-app B  W  I
+app B  |  I
    blocked working idle
 ```
 
@@ -90,49 +92,53 @@ app B  W  I
 
 ### Dashboard (`prefix a a`)
 
-An 80%×80% popup that lists every running agent grouped by session and
-window, with a live pane preview on the right:
+An 80%×80% popup that lists every running agent — one flat row per agent —
+with a live pane preview on the right:
 
 ```
-┌──────────────────────────────────┬───────────────────┐
-│  🤖 tmon  [/] search [esc/q] quit │ Extract Agent Ses…│
-│ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━│───────────────────│
-│  main                            │ $ tmon dashboard  │
-│    0:code                        │ … pane content …  │
-│    > Extract Agent Sessions (Grok…│                   │
-│      ~/code                      │                   │
-│      ctx 52.4k/200k (26%)        │                   │
-│      Claude Code                 │                   │
-│      ~/docs  [y/N]               │                   │
-│  side                            │                   │
-│    0:research                    │                   │
-│      Windsurf                    │                   │
-│      ~/res                       │                   │
-│  v0.4.2        [↑/↓ j/k] navig… │                   │
-└──────────────────────────────────┴───────────────────┘
+┌───────────────────────────────────────┬──────────────────────┐
+│  🤖 tmon           [/] search [esc/q] quit │  Popup preview scro… │
+│ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━│──────────────────────│
+│  / Popup preview scroll (Grok Build)   │  Popup preview scro… │
+│    ~/code/tmon  now                   │  $ tmon dashboard    │
+│    tmux: main:0.0                     │  … pane content …    │
+│    ctx 52.4k/200k ████████░░… 26%     │                      │
+│  🚨 Claude Code                        │                      │
+│    ~/site  paused                     │                      │
+│    tmux: main:0.1                     │                      │
+│  💤 Codex CLI                          │                      │
+│    ~/blog                             │                      │
+│    tmux: side:3.0                     │                      │
+│  v0.4.2     [↑/↓ j/k] navigate  …     │                      │
+└───────────────────────────────────────┴──────────────────────┘
 ```
 
-Each agent takes two compact lines: a bold **session title and agent name**
+Each agent takes four uniform lines: a bold **session title and agent name**
 (`Title (Name)`, or just the name when the session has not earned a title
 yet) tinted with a **per-agent identity color** (Claude orange, Codex green,
 Hermes cyan, …) so the fleet is recognizable at a glance — same color in the
-list and the preview header. Beneath the name, a dimmed **working directory**
-plus — when the agent is blocked — the prompt it is waiting on (e.g. `[y/N]`,
-or `paused` when the prompt is unknown). When the connector can read token
-usage, a third dim **stats line** appears:
+list and the preview header. Working agents animate: their status slot spins
+(a green bubbles spinner) instead of the static `⚡️`. Beneath the name, a
+dimmed **working directory** plus — when the agent is blocked — the prompt it
+is waiting on (e.g. `[y/N]`, or `paused` when the prompt is unknown), then a
+dimmed **tmux location** (`tmux: main:0.1` — session:window.pane). When the
+connector can read token usage, a fourth **stats line** appears with a
+progress-bar context gauge:
 
 ```
-    > Extract Agent Sessions (Grok Build)
-      ~/code
-      ctx 52.4k/200k (26%)
+    / Popup preview scroll (Grok Build)
+      ~/code/tmon
+      tmux: main:0.0
+      ctx 52.4k/200k ████████░░░░░░░░░░░░░░░░░░░░░░ 26%
 ```
 
 The stats line shows the **context window** — tokens used over the model's
-window size with the used percentage (`ctx 13k/200k (5%)`; the `%` is shown
-only when the window size is known) — and, when a connector reports it, the
-**account quota** as remaining percentage plus next reset time
-(`62% left · reset 14:00`). Both are blank when unknown, and the agent then
-stays at two lines. What gets populated today:
+window size with a live progress bar and the used percentage (`ctx 13k/200k
+████░░… 5%`; the bar and `%` are shown only when the window size is known) —
+and, when a connector reports it, the **account quota** as remaining
+percentage plus next reset time (`62% left · reset 14:00`). Both are blank
+when unknown, and the agent then stays at three lines. What gets populated
+today:
 
 | Agent | Stats line |
 |-------|------------|
@@ -162,6 +168,7 @@ are ranked by match quality. `Esc` leaves search mode (the filter stays);
 | `1`–`9` | Jump to the Nth agent in the list |
 | `b` / `w` / `i` | Filter by status: blocked / working / idle (press again to clear) |
 | `Enter` / `Space` | Jump to the selected agent's pane |
+| `t` | Open the theme selector (browse with `↑`/`↓`, `Enter` applies and persists, `Esc` back) |
 | Click on an agent line | Select and jump to that agent's pane |
 | `/` | Start fuzzy search (session title, name, directory, pane content) |
 | Type | Filter the list |
@@ -404,7 +411,7 @@ are optional — the defaults are sensible for most people.
 | `@tmon-connectors` | `auto` | which connectors to enable (`auto` or a comma list) |
 | `@tmon-connector-freshness` | `30` | seconds a connector signal stays authoritative |
 | `@tmon-auto-hooks` | `on` | auto-install lifecycle hooks at plugin load |
-| `@tmon-ascii-icons` | `0` | `1` renders icons as ASCII (`[@] B W I`) |
+| `@tmon-ascii-icons` | `0` | `1` renders icons as ASCII (`[@] B I`; working agents keep the spinner) |
 | `@tmon-bold-counts` | `1` | bold the per-status counts |
 | `@tmon-context-warn` | `85` | context % at which a ⚠️ warning appears (`0` disables) |
 | `@tmon-blocked-bell` | `off` | ring the bell when an agent transitions to blocked |
@@ -552,7 +559,7 @@ activity detection.
 | **Options** | `0` (emoji) or `1` (ASCII) |
 
 ```tmux
-set -g @tmon-ascii-icons "1"   # [@]-B2-W3-I1 instead of 🤖-🚨2-⚡️3-💤1
+set -g @tmon-ascii-icons "1"   # [@]-B2-|3-I1 instead of 🤖-🚨2-|3-💤1
 ```
 
 ### `@tmon-bold-counts`
@@ -641,15 +648,22 @@ status line):
 
 `tmon theme` (no arguments) lists all presets.
 
+You can also switch themes live from the dashboard: press `t` inside the
+popup to open the theme selector — a list of presets on the left with the
+selected theme's color palette previewed on the right. `Enter` applies and
+persists the theme (it writes `@tmon-theme` and `TMON_THEME`), so it
+survives restarts; `Esc` closes the selector without changing anything.
+
 Fine-tune any theme with per-slot overrides. `@tmon-color-<slot>` accepts a
 tmux color — a name (`red`), an indexed color (`colour208`), or hex
 (`#ff5555`) — for the slots `app`, `blocked`, `working`, `idle`, `dim`,
 `accent`, `warn`, `selbg`. `@tmon-icon-<slot>` swaps a status glyph for
-`app`, `blocked`, `working`, `idle`, `warn`:
+`app`, `blocked`, `idle`, or `warn` (working agents show the animated
+spinner in the theme's `working` color instead of an icon):
 
 ```tmux
 set -g @tmon-color-blocked "#ff5555"
-set -g @tmon-icon-working "⚙️"
+set -g @tmon-icon-idle "😴"
 set -g @tmon-icon-app "@"    # ASCII-only crowd
 ```
 

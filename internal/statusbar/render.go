@@ -15,15 +15,18 @@ const (
 	reset  = "#[default]"
 )
 
-// Render builds the indicator line — "🤖-🚨1-⚡️2-💤3 " in emoji mode or
-// "[@]-B1-W2-I3 " in ASCII mode — colored by the theme palette. Each status
+// Render builds the indicator line — "🤖-🚨1-|2-💤3 " in emoji mode or
+// "[@]-B1-|2-I3 " in ASCII mode — colored by the theme palette. Working
+// agents show the same bubbles Line spinner the dashboard animates: the
+// frame advances with wall-clock time (tmux re-renders `tmon status` every
+// status-interval, so each status refresh shows the next frame). Each status
 // segment (icon + count) appears only when that status has at least one
 // agent, so an empty fleet renders as just the app icon. Icons and colors
 // come from the resolved theme, including any @tmon-icon-* / @tmon-color-*
 // overrides. When bold is true, each count digit is wrapped in #[bold].
 //
 // warnPct is the context-usage percent at which a warning segment (⚠️/! in
-// the theme's warn color) is appended to the indicator — e.g. "🤖-⚡️2-⚠️" —
+// the theme's warn color) is appended to the indicator — e.g. "🤖-|2-⚠️" —
 // when any agent's context usage reaches it. 0 disables the warning.
 func Render(agents []agent.AgentState, bold bool, t theme.Theme, warnPct int) string {
 	var blocked, working, idle int
@@ -52,7 +55,7 @@ func Render(agents []agent.AgentState, bold bool, t theme.Theme, warnPct int) st
 		segs = append(segs, "#[fg="+color+"]"+glyph+count+reset)
 	}
 	add(ic.Blocked, pal.Blocked, blocked)
-	add(ic.Working, pal.Working, working)
+	add(theme.SpinnerFrame(), pal.Working, working)
 	add(ic.Idle, pal.Idle, idle)
 
 	if warnPct > 0 {

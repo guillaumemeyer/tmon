@@ -2,8 +2,10 @@ package theme
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/guillaumemeyer/tmon/internal/agent"
 )
 
@@ -154,23 +156,72 @@ func TestForStatus(t *testing.T) {
 	}
 }
 
+func TestSwatchLines(t *testing.T) {
+	lines := SwatchLines(Default)
+	if len(lines) != 8 {
+		t.Fatalf("SwatchLines = %d rows, want 8 (one per palette slot)", len(lines))
+	}
+	// One row per slot, with the raw tmux-style value and a color chip.
+	joined := strings.Join(lines, "\n")
+	for _, want := range []string{"app", "blocked", "working", "idle", "dim", "accent", "warn", "selbg", "colour208", "colour240"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("SwatchLines missing %q:\n%s", want, joined)
+		}
+	}
+}
+
+func TestSampleLine(t *testing.T) {
+	// The working segment renders the spinner frame (pinned for determinism).
+	old := SpinnerFrame
+	SpinnerFrame = func() string { return "|" }
+	t.Cleanup(func() { SpinnerFrame = old })
+
+	// Emoji icons render in the theme's colors; ASCII icons swap the glyphs.
+	emoji := SampleLine(Default, emojiIcons)
+	if !strings.Contains(emoji, "🤖") || !strings.Contains(emoji, "🚨1") ||
+		!strings.Contains(emoji, "|2") || !strings.Contains(emoji, "💤1") {
+		t.Fatalf("emoji sample line = %q", emoji)
+	}
+	ascii := SampleLine(Default, asciiIcons)
+	if !strings.Contains(ascii, "[@]") || !strings.Contains(ascii, "B1") ||
+		!strings.Contains(ascii, "|2") || !strings.Contains(ascii, "I1") {
+		t.Fatalf("ascii sample line = %q", ascii)
+	}
+}
+
+func TestSpinnerFrameIsBubblesLine(t *testing.T) {
+	// SpinnerFrame must be one of the bubbles Line frames — the same spinner
+	// the dashboard animates — so status bar and popup stay in sync.
+	frame := SpinnerFrame()
+	found := false
+	for _, f := range spinner.Line.Frames {
+		if frame == f {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("SpinnerFrame() = %q, want one of %v", frame, spinner.Line.Frames)
+	}
+}
+
 // TestTint locks the darkening factor: each channel scales to 35%, so the
 // default palette's colours darken to readable, subtle pane backgrounds.
 func TestTint(t *testing.T) {
 	cases := map[string]string{
 		// #ff8700 (colour208) → 89,47,0
-		"#ff8700":     "#592f00",
-		"colour208":   "#592f00", // xterm cube resolves to the same orange
-		"green":       "#002c00", // ANSI green #008000 → 0,44,0
-		"blue":        "#00002c", // ANSI blue #000080 → 0,0,44
-		"#abc":        "#3b4147", // 3-digit shorthand doubles each digit
-		"colour255":   "#535353", // gray ramp: 8+(255-232)*10=238 → 83,83,83
-		"brightred":   "#590000", // bright red #ff0000
-		"grey":        "#2c2c2c", // ANSI grey #808080 → 44,44,44
-		"notacolor":   "notacolor", // passthrough
-		"":            "",
-		"colour999":   "colour999", // out of range → passthrough
-		"colour":      "colour",    // no index → passthrough
+		"#ff8700":   "#592f00",
+		"colour208": "#592f00",   // xterm cube resolves to the same orange
+		"green":     "#002c00",   // ANSI green #008000 → 0,44,0
+		"blue":      "#00002c",   // ANSI blue #000080 → 0,0,44
+		"#abc":      "#3b4147",   // 3-digit shorthand doubles each digit
+		"colour255": "#535353",   // gray ramp: 8+(255-232)*10=238 → 83,83,83
+		"brightred": "#590000",   // bright red #ff0000
+		"grey":      "#2c2c2c",   // ANSI grey #808080 → 44,44,44
+		"notacolor": "notacolor", // passthrough
+		"":          "",
+		"colour999": "colour999", // out of range → passthrough
+		"colour":    "colour",    // no index → passthrough
 	}
 	for in, want := range cases {
 		if got := Tint(in); got != want {

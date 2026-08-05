@@ -71,25 +71,28 @@ func TestTickReloadsRows(t *testing.T) {
 	}
 }
 
-func TestGrouping(t *testing.T) {
+func TestFlatList(t *testing.T) {
 	f := &fakeLoader{data: Data{Rows: testRows()}}
 	m := New(f.load, true)
 	m = applyMsg(t, m, initMsg{})
 
-	// main → 0:shell → 2 agents; side → 3:code → 1 agent.
-	want := []itemKind{itemSession, itemWindow, itemAgent, itemAgent, itemSession, itemWindow, itemAgent}
-	if len(m.items) != len(want) {
-		t.Fatalf("items = %d, want %d", len(m.items), len(want))
+	// No session/window grouping: one item per agent, in row order.
+	items := m.agentList.Items()
+	if len(items) != 3 {
+		t.Fatalf("agent list items = %d, want 3", len(items))
 	}
-	for i, kind := range want {
-		if m.items[i].kind != kind {
-			t.Fatalf("item %d kind = %v, want %v", i, m.items[i].kind, kind)
+	want := []string{"Grok", "Claude", "Codex"}
+	for i, item := range items {
+		ai, ok := item.(agentItem)
+		if !ok {
+			t.Fatalf("item %d is %T, want agentItem", i, item)
+		}
+		if ai.row.Label != want[i] {
+			t.Fatalf("item %d label = %q, want %q", i, ai.row.Label, want[i])
 		}
 	}
-
-	// Selectable map points at the three agent lines: items 2, 3, 6.
-	if got := m.selMap; len(got) != 3 || got[0] != 2 || got[1] != 3 || got[2] != 6 {
-		t.Fatalf("selMap = %v, want [2 3 6]", got)
+	if m.agentList.Index() != 0 {
+		t.Fatalf("initial selection = %d, want 0", m.agentList.Index())
 	}
 }
 
@@ -260,8 +263,8 @@ func TestNavigationWraps(t *testing.T) {
 	m := New(f.load, true)
 	m = applyMsg(t, m, initMsg{})
 
-	if m.selected != 0 {
-		t.Fatalf("initial selection = %d, want 0", m.selected)
+	if m.agentList.Index() != 0 {
+		t.Fatalf("initial selection = %d, want 0", m.agentList.Index())
 	}
 
 	steps := []struct {
@@ -278,8 +281,8 @@ func TestNavigationWraps(t *testing.T) {
 	}
 	for i, s := range steps {
 		m = applyMsg(t, m, s.msg)
-		if m.selected != s.want {
-			t.Fatalf("step %d: selection = %d, want %d", i, m.selected, s.want)
+		if m.agentList.Index() != s.want {
+			t.Fatalf("step %d: selection = %d, want %d", i, m.agentList.Index(), s.want)
 		}
 	}
 }
@@ -291,8 +294,8 @@ func TestSelectionClampsOnFilter(t *testing.T) {
 
 	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyDown})
 	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyDown})
-	if m.selected != 2 {
-		t.Fatalf("selection = %d, want 2", m.selected)
+	if m.agentList.Index() != 2 {
+		t.Fatalf("selection = %d, want 2", m.agentList.Index())
 	}
 
 	// Filtering down to one agent clamps the selection to 0.
@@ -303,8 +306,8 @@ func TestSelectionClampsOnFilter(t *testing.T) {
 	if len(m.filtered) != 1 {
 		t.Fatalf("filtered = %d, want 1", len(m.filtered))
 	}
-	if m.selected != 0 {
-		t.Fatalf("selection after clamp = %d, want 0", m.selected)
+	if m.agentList.Index() != 0 {
+		t.Fatalf("selection after clamp = %d, want 0", m.agentList.Index())
 	}
 }
 
@@ -540,9 +543,9 @@ func TestMouseClickFocusesAgent(t *testing.T) {
 		return nil
 	}
 
-	// Body rows: 0=session, 1=window, 2-3=Grok (name, cwd), 4-5=Claude,
-	// 6=session, 7=window, 8-9=Codex. Clicking an agent row (either of its
-	// two lines) selects it and focuses its pane.
+	// Body rows: each agent spans four (name, cwd, pane, usage). Clicking
+	// any of an agent's rows selects it and focuses its pane: y 2-5 = Grok,
+	// y 6-9 = Claude, y 10-13 = Codex.
 	m = applyMsg(t, m, click(2, 4))
 	if focused != "main:0.0" {
 		t.Fatalf("click Grok: focused %q, want main:0.0", focused)
@@ -577,14 +580,14 @@ func TestMouseClickOnStatsLine(t *testing.T) {
 		return nil
 	}
 
-	// Body rows: 0=session, 1=window, 2-4=Grok (name, cwd, stats), 5-6=Claude,
-	// 7=session, 8=window, 9-10=Codex. A click on the stats line (body row 4)
-	// selects Grok; Claude and Codex keep their two-row layout.
-	m = applyMsg(t, m, click(2, 6))
+	// Rows are uniform (4 lines) whether or not usage is present, so a click
+	// on any line of an agent's block selects that agent: y 2-5 = Grok,
+	// y 6-9 = Claude, y 10-13 = Codex.
+	m = applyMsg(t, m, click(2, 3))
 	if focused != "main:0.0" {
 		t.Fatalf("click stats line: focused %q, want main:0.0", focused)
 	}
-	m = applyMsg(t, m, click(2, 8))
+	m = applyMsg(t, m, click(2, 7))
 	if focused != "main:0.1" {
 		t.Fatalf("click Claude after stats line: focused %q, want main:0.1", focused)
 	}
@@ -606,20 +609,18 @@ func TestMouseClickIgnoresHeadersAndChrome(t *testing.T) {
 		return nil
 	}
 
-	// Session header (row 0 of body) and window header (row 1) do nothing.
-	m = applyMsg(t, m, click(2, 2))
-	if focused != "" {
-		t.Fatalf("click on session header focused %q", focused)
-	}
-	m = applyMsg(t, m, click(2, 3))
-	if focused != "" {
-		t.Fatalf("click on window header focused %q", focused)
-	}
 	// Chrome rows: header (y=0), divider (y=1), footer (y=23).
 	for _, y := range []int{0, 1, 23} {
 		m = applyMsg(t, m, click(2, y))
 		if focused != "" {
 			t.Fatalf("click on chrome row y=%d focused %q", y, focused)
+		}
+	}
+	// Clicks below the last agent (y=14+, past the 3 rows × 4 lines) no-op.
+	for _, y := range []int{14, 18} {
+		m = applyMsg(t, m, click(2, y))
+		if focused != "" {
+			t.Fatalf("click below the list y=%d focused %q", y, focused)
 		}
 	}
 	// Click on the preview panel (right of the separator) does nothing.
@@ -646,13 +647,13 @@ func TestMouseClickFocusesInSearchFlatList(t *testing.T) {
 		return nil
 	}
 
-	// Narrow to a single agent: the flat list has one row at body row 0.
+	// Narrow to a single agent: the flat list has one item at body row 0.
 	m = applyMsg(t, m, key('/'))
 	for _, r := range []rune{'c', 'o', 'd', 'e', 'x'} {
 		m = applyMsg(t, m, key(r))
 	}
-	if len(m.items) != 1 {
-		t.Fatalf("filtered items = %d, want 1", len(m.items))
+	if len(m.agentList.Items()) != 1 {
+		t.Fatalf("filtered items = %d, want 1", len(m.agentList.Items()))
 	}
 	m = applyMsg(t, m, click(2, 2))
 	if focused != "side:3.0" {
@@ -742,7 +743,7 @@ func TestViewEmptyStateWithFilter(t *testing.T) {
 	}
 }
 
-func TestViewRendersGroupedList(t *testing.T) {
+func TestViewRendersFlatList(t *testing.T) {
 	f := &fakeLoader{data: Data{Rows: testRows()}}
 	m := New(f.load, true)
 	m = applyMsg(t, m, initMsg{})
@@ -752,15 +753,22 @@ func TestViewRendersGroupedList(t *testing.T) {
 	v := m.View()
 	for _, want := range []string{
 		"[@] tmon",
-		"main",                              // session header
-		"0:shell",                           // window sub-header
 		"Popup preview scroll (Grok Build)", // session title + name
 		"Claude Code", "Codex CLI",
-		"side", "3:code",
-		"code/tmon", // cwd
+		"code/tmon",      // cwd
+		"tmux: main:0.0", // pane location line
+		"tmux: main:0.1",
+		"tmux: side:3.0",
 	} {
 		if !strings.Contains(v, want) {
 			t.Fatalf("view missing %q:\n%s", want, v)
+		}
+	}
+	// Grouping headers are gone (window sub-headers; pane lines keep the
+	// session names so "main" alone would be ambiguous).
+	for _, bad := range []string{"0:shell", "3:code"} {
+		if strings.Contains(v, bad) {
+			t.Fatalf("view should not contain grouping header %q:\n%s", bad, v)
 		}
 	}
 	if strings.Count(v, "\n")+1 != 24 {

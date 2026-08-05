@@ -6,6 +6,8 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/guillaumemeyer/tmon/internal/agent"
@@ -39,6 +41,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tickMsg:
 		return m.doLoad()
+
+	case spinner.TickMsg:
+		// Advance the working-agent spinner and re-schedule the next frame.
+		var cmd tea.Cmd
+		m.spinner, cmd = m.spinner.Update(msg)
+		return m, cmd
 
 	default:
 		return m, nil
@@ -88,8 +96,10 @@ func (m *Model) refreshPaneCache() {
 }
 
 // handleKey dispatches a key press in the current mode. Search mode consumes
-// printable keys, Backspace and Esc; navigation mode handles movement, focus,
-// filter entry and quitting.
+// printable keys, Backspace and Esc; theme mode routes to the theme
+// selector; navigation mode handles movement, focus, filter entry and
+// quitting. tmon-owned keys are intercepted here; everything else
+// (j/k/up/down/g/G/…) is forwarded to the bubbles list.
 func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	if m.searching {
 		switch msg.String() {
@@ -119,37 +129,78 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if m.themeMode {
+		return m.handleThemeKey(msg)
+	}
+
 	switch msg.String() {
 	case "/":
 		m.searching = true
+	case "t":
+		m.themeMode = true
 	case "esc", "q", "ctrl+c":
 		return m, tea.Quit
-	case "up", "k":
-		m.move(-1)
-	case "down", "j":
-		m.move(1)
 	case "left", "h":
 		m.resizePreview(previewResizeStep)
 	case "right", "l":
 		m.resizePreview(-previewResizeStep)
 	case "ctrl+u":
-		m.scrollPreview(m.previewScrollStep())
+		m.preview.HalfPageUp()
 	case "ctrl+d":
-		m.scrollPreview(-m.previewScrollStep())
+		m.preview.HalfPageDown()
 	case "enter", " ":
 		return m.focusSelected()
 	case "b", "w", "i":
 		m.toggleStatusFilter(statusKey(msg.String()))
 	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
 		m.jumpTo(msg.String())
+	default:
+		// Everything else is list navigation: j/k/up/down/g/G/home/end.
+		var cmd tea.Cmd
+		m.agentList, cmd = m.agentList.Update(msg)
+		if cmd != nil {
+			return m, cmd
+		}
+		m.refreshPreview(false)
+	}
+	return m, nil
+}
+
+// handleThemeKey dispatches keys in the theme selector: esc/q return to the
+// agent list without applying, enter/space apply the highlighted theme (and
+// persist it), ctrl+c quits the popup, and everything else (j/k/up/down/
+// g/G/…) is forwarded to the themes list, which re-resolves the palette
+// preview on selection.
+func (m Model) handleThemeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc", "q":
+		m.themeMode = false
+	case "ctrl+c":
+		return m, tea.Quit
+	case "enter", " ":
+		m = m.applyThemeSelection()
+		m.themeMode = false
+		// Applying replaces the spinner (new theme color); re-arm its tick
+		// so the animation keeps running after the old tick chain is orphaned.
+		return m, func() tea.Msg { return m.spinner.Tick() }
+	default:
+		var cmd tea.Cmd
+		m.themes, cmd = m.themes.Update(msg)
+		if cmd != nil {
+			return m, cmd
+		}
 	}
 	return m, nil
 }
 
 // handleMouse maps mouse events: drag the │ separator to resize the preview,
-// or left-click an agent line to focus its pane (same as Enter). Clicks on
-// session/window headers, the preview panel body, and chrome rows are ignored.
+// or left-click an agent row to focus its pane (same as Enter). Clicks on
+// chrome rows, the preview panel body, and blank padding are ignored. The
+// theme selector is keyboard-only.
 func (m Model) handleMouse(msg tea.MouseMsg) (Model, tea.Cmd) {
+	if m.themeMode {
+		return m, nil
+	}
 	switch msg.Action {
 	case tea.MouseActionRelease:
 		if m.draggingSplit {
@@ -165,6 +216,16 @@ func (m Model) handleMouse(msg tea.MouseMsg) (Model, tea.Cmd) {
 		return m, nil
 
 	case tea.MouseActionPress:
+		// The mouse wheel scrolls the preview panel; the viewport moves
+		// itself (up = older content, down = toward the bottom).
+		if msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown {
+			if m.width > 0 {
+				if listW, _ := m.panelWidths(m.width); msg.X >= listW {
+					m.preview.Update(msg)
+				}
+			}
+			return m, nil
+		}
 		if msg.Button != tea.MouseButtonLeft {
 			return m, nil
 		}
@@ -177,12 +238,6 @@ func (m Model) handleMouse(msg tea.MouseMsg) (Model, tea.Cmd) {
 				return m, nil
 			}
 		}
-		// Rows 0 (header) and 1 (divider) are chrome; body rows start at 2.
-		bodyRow := msg.Y - 2
-		di := m.itemAtRow(bodyRow, m.height-3)
-		if di < 0 {
-			return m, nil
-		}
 		// Only clicks on the list column act; the preview panel is a no-op.
 		if m.width > 0 {
 			_, panelW := m.panelWidths(m.width)
@@ -190,18 +245,46 @@ func (m Model) handleMouse(msg tea.MouseMsg) (Model, tea.Cmd) {
 				return m, nil
 			}
 		}
-		if m.items[di].kind != itemAgent {
-			return m, nil // session/window headers are not clickable
+		// Rows 0 (header) and 1 (divider) are chrome; body rows start at 2.
+		bodyRow := msg.Y - 2
+		if bodyRow < 0 || bodyRow >= m.height-3 {
+			return m, nil
 		}
-		for i, sel := range m.selMap {
-			if sel == di {
-				m.selected = i
-				return m.focusSelected()
-			}
+		if m.clickAgentAt(bodyRow) {
+			return m.focusSelected()
 		}
 		return m, nil
 	}
 	return m, nil
+}
+
+// clickAgentAt maps a body row to the agent rendered there and selects it.
+// Rows are uniform (agentDelegate.Height() lines each); clicks past the
+// last visible item are ignored. Reports whether an agent was hit.
+func (m *Model) clickAgentAt(bodyRow int) bool {
+	const itemH = 4 // agentDelegate.Height()
+	idxInView := bodyRow / itemH
+	visible := m.agentList.VisibleItems()
+	if idxInView < 0 || idxInView >= len(visible) {
+		return false
+	}
+	// Only count fully rendered rows: a partially clipped item cannot be
+	// the click target.
+	if (idxInView+1)*itemH > m.height-3 {
+		return false
+	}
+	hit, ok := visible[idxInView].(agentItem)
+	if !ok {
+		return false
+	}
+	for i, item := range m.agentList.Items() {
+		if ai, ok := item.(agentItem); ok && ai.row.PID == hit.row.PID {
+			m.agentList.Select(i)
+			m.refreshPreview(false)
+			return true
+		}
+	}
+	return false
 }
 
 // setPreviewPctFromX sets previewPct so the separator sits near column x.
@@ -223,35 +306,6 @@ func (m *Model) setPreviewPctFromX(x int) {
 	m.previewPct = clampPreviewPct(pct)
 }
 
-// itemAtRow returns the index into m.items of the item rendered at the
-// given body row (0-based, below the header/divider), or -1 when the row is
-// blank padding or past the last fully rendered item. Agent items occupy
-// two rows (name + cwd/pause line) — three when the agent has usage stats —
-// while session and window headers take one.
-func (m Model) itemAtRow(row, bodyLines int) int {
-	if row < 0 || bodyLines < 1 || len(m.filtered) == 0 {
-		return -1
-	}
-	line := 0
-	for di, it := range m.items {
-		n := 1
-		if it.kind == itemAgent {
-			n = 2
-			if !m.rows[it.rowIdx].Usage.Empty() {
-				n = 3
-			}
-		}
-		if row < line+n {
-			if line+n <= bodyLines {
-				return di // the item was rendered in full
-			}
-			return -1 // past the last rendered item (list overflow)
-		}
-		line += n
-	}
-	return -1
-}
-
 // resizePreview grows or shrinks the preview panel by deltaPct percentage
 // points and persists the new width when it changes.
 func (m *Model) resizePreview(deltaPct int) {
@@ -264,58 +318,6 @@ func (m *Model) resizePreview(deltaPct int) {
 	}
 	m.previewPct = next
 	m.saveSettings()
-}
-
-// previewScrollStep is half the preview body height (at least 1), matching
-// vim-style ctrl+u / ctrl+d half-page scrolling.
-func (m Model) previewScrollStep() int {
-	body := m.height - 3 // header + divider + footer
-	if body < 1 {
-		body = 1
-	}
-	// One row is the preview header; the rest is content.
-	content := body - 1
-	if content < 1 {
-		return 1
-	}
-	step := content / 2
-	if step < 1 {
-		return 1
-	}
-	return step
-}
-
-// scrollPreview moves the preview window by delta lines (positive = up
-// toward older content, negative = down toward the bottom). The offset is
-// clamped against the current capture length and viewport size.
-func (m *Model) scrollPreview(delta int) {
-	if delta == 0 {
-		return
-	}
-	content := trimTrailingEmpty(strings.Split(m.previewText, "\n"))
-	if len(content) == 1 && content[0] == "" {
-		content = nil
-	}
-	body := m.height - 3
-	if body < 1 {
-		body = 1
-	}
-	visible := body - 1
-	if visible < 1 {
-		visible = 1
-	}
-	maxOff := len(content) - visible
-	if maxOff < 0 {
-		maxOff = 0
-	}
-	off := m.previewOffset + delta
-	if off < 0 {
-		off = 0
-	}
-	if off > maxOff {
-		off = maxOff
-	}
-	m.previewOffset = off
 }
 
 // statusKey maps a filter key to its status: b=blocked, w=working, i=idle.
@@ -344,40 +346,41 @@ func (m *Model) toggleStatusFilter(st agent.Status) {
 
 // jumpTo selects the Nth (1-based) agent in the filtered list.
 func (m *Model) jumpTo(n string) {
-	idx := int(n[0] - '1')
-	if len(m.selMap) == 0 {
+	if len(m.filtered) == 0 {
 		return
 	}
-	if idx >= len(m.selMap) {
-		idx = len(m.selMap) - 1
+	idx := int(n[0] - '1')
+	if idx >= len(m.filtered) {
+		idx = len(m.filtered) - 1
 	}
-	m.selected = idx
+	m.agentList.Select(idx)
 	m.refreshPreview(false)
 }
 
 // refreshPreview points the preview panel at the selected agent's pane.
 // With force, content is re-read from the cache (or captured if missing)
-// even when the pane target is unchanged. Changing panes resets the scroll
-// offset so the new pane pins to the bottom again.
+// even when the pane target is unchanged. Changing panes pins the new pane
+// to the bottom of the viewport.
 func (m *Model) refreshPreview(force bool) {
-	if len(m.selMap) == 0 {
-		m.previewText, m.previewPane, m.previewOffset = "", "", 0
+	r := m.selectedRow()
+	if r == nil {
+		m.previewText, m.previewPane = "", ""
+		m.preview.SetContent("")
 		return
 	}
-	it := m.items[m.selMap[m.selected]]
-	if it.kind != itemAgent {
-		m.previewText, m.previewPane, m.previewOffset = "", "", 0
-		return
-	}
-	pane := m.rows[it.rowIdx].Pane
+	pane := r.Pane
 	if !force && pane == m.previewPane {
 		return
 	}
-	if pane != m.previewPane {
-		m.previewOffset = 0
-	}
+	changed := pane != m.previewPane
 	m.previewPane = pane
 	m.previewText = m.cachedPane(pane)
+	// Trim trailing blanks so the bottom pin lands on real content (tmux
+	// pane captures end with a newline).
+	m.preview.SetContent(strings.Join(trimTrailingEmpty(strings.Split(m.previewText, "\n")), "\n"))
+	if changed {
+		m.preview.GotoBottom()
+	}
 }
 
 // cachedPane returns the capture for pane, filling the cache on a miss.
@@ -398,28 +401,14 @@ func (m *Model) cachedPane(pane string) string {
 	return text
 }
 
-// move steps the selection by delta, wrapping at the ends like the bash
-// popup's modulo navigation.
-func (m *Model) move(delta int) {
-	n := len(m.selMap)
-	if n == 0 {
-		return
-	}
-	m.selected = (m.selected + delta + n) % n
-	m.refreshPreview(false)
-}
-
 // focusSelected switches the tmux client to the selected agent's pane and
 // quits the popup. Returns no command when nothing is selectable.
 func (m Model) focusSelected() (Model, tea.Cmd) {
-	if len(m.selMap) == 0 {
+	r := m.selectedRow()
+	if r == nil {
 		return m, nil
 	}
-	it := m.items[m.selMap[m.selected]]
-	if it.kind != itemAgent {
-		return m, nil // safety: only agent lines are selectable
-	}
-	return m, m.focusCmd(m.rows[it.rowIdx])
+	return m, m.focusCmd(*r)
 }
 
 // dropLastRune removes the final rune of s (backspace semantics — the query
@@ -431,9 +420,6 @@ func dropLastRune(s string) string {
 	}
 	return string(r[:len(r)-1])
 }
-
-// noneID is a sentinel that can never equal a tmux session/window id.
-const noneID = "\x00"
 
 // rebuildFilter re-applies the query with Telescope/fzy-style fuzzy matching
 // over the session title, agent name, working directory, and full pane
@@ -507,39 +493,23 @@ func (m *Model) agentSearchScore(r Row) int {
 	return best
 }
 
-// rebuildItems rebuilds the display list from filtered agents, then clamps
-// the selection. With an active search query the list is flat and
-// score-ordered (Telescope-style); otherwise agents are grouped by
-// session → window → agent.
+// rebuildItems rebuilds the flat agent list from the filtered rows (one
+// item per agent, in filtered order) and feeds it to the bubbles list.
+// Each item carries the agent's stripped pane capture so search can match
+// content beyond the visible preview. The bubbles list keeps its cursor
+// when items change, so the selection is clamped back into range here.
 func (m *Model) rebuildItems() {
-	m.items = m.items[:0]
-	m.selMap = m.selMap[:0]
-
-	if m.query != "" {
-		for _, fi := range m.filtered {
-			m.selMap = append(m.selMap, len(m.items))
-			m.items = append(m.items, item{kind: itemAgent, rowIdx: fi})
+	items := make([]list.Item, 0, len(m.filtered))
+	for _, fi := range m.filtered {
+		r := m.rows[fi]
+		capture := ""
+		if r.Pane != "" && r.Pane != "?" && m.paneCache != nil {
+			capture = ansi.Strip(m.paneCache[r.Pane])
 		}
-	} else {
-		lastSession, lastWindow := noneID, noneID
-		for _, fi := range m.filtered {
-			r := m.rows[fi]
-			if r.SessionID != lastSession {
-				m.items = append(m.items, item{kind: itemSession, sessionName: r.SessionName})
-				lastSession, lastWindow = r.SessionID, noneID
-			}
-			if r.WindowIndex != lastWindow {
-				m.items = append(m.items, item{kind: itemWindow, windowIdx: r.WindowIndex, windowName: r.WindowName})
-				lastWindow = r.WindowIndex
-			}
-			m.selMap = append(m.selMap, len(m.items))
-			m.items = append(m.items, item{kind: itemAgent, rowIdx: fi})
-		}
+		items = append(items, agentItem{row: r, capture: capture})
 	}
-
-	if len(m.selMap) == 0 {
-		m.selected = 0
-	} else if m.selected >= len(m.selMap) {
-		m.selected = len(m.selMap) - 1
+	_ = m.agentList.SetItems(items)
+	if n := len(items); n > 0 && m.agentList.Index() >= n {
+		m.agentList.Select(n - 1)
 	}
 }

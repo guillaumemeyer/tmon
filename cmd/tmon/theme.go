@@ -3,10 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
-	"strconv"
-	"strings"
 
-	"github.com/charmbracelet/lipgloss"
 	"github.com/guillaumemeyer/tmon/internal/config"
 	"github.com/guillaumemeyer/tmon/internal/theme"
 )
@@ -34,15 +31,21 @@ func cmdTheme(args []string) int {
 	}
 }
 
-// resolveTheme builds the theme options from the runtime config so every
-// consumer (status bar, dashboard, preview) resolves identically.
-func resolveTheme(cfg config.Config) theme.Theme {
-	return theme.Resolve(theme.Options{
+// resolveThemeOpts builds the theme resolution options from the runtime
+// config, shared by the status bar, the dashboard, and previews.
+func resolveThemeOpts(cfg config.Config) theme.Options {
+	return theme.Options{
 		Name:           cfg.Theme,
 		ColorOverrides: cfg.ColorOverrides,
 		IconOverrides:  cfg.IconOverrides,
 		ASCII:          cfg.ASCII,
-	})
+	}
+}
+
+// resolveTheme builds the resolved theme from the runtime config so every
+// consumer (status bar, dashboard, preview) resolves identically.
+func resolveTheme(cfg config.Config) theme.Theme {
+	return theme.Resolve(resolveThemeOpts(cfg))
 }
 
 func listThemes() int {
@@ -52,54 +55,17 @@ func listThemes() int {
 	return 0
 }
 
+// previewTheme prints the swatch rows and sample status lines for a theme.
+// The rendering itself lives in internal/theme so the in-popup theme
+// selector (dashboard) shows the exact same preview.
 func previewTheme(name string) int {
 	t := theme.Resolve(theme.Options{Name: name})
 	fmt.Printf("theme: %s\n\n", t.Name)
-
-	swatches := []struct{ label, value string }{
-		{"app", t.Palette.App},
-		{"blocked", t.Palette.Blocked},
-		{"working", t.Palette.Working},
-		{"idle", t.Palette.Idle},
-		{"dim", t.Palette.Dim},
-		{"accent", t.Palette.Accent},
-		{"warn", t.Palette.Warn},
-		{"selbg", t.Palette.SelBg},
+	for _, line := range theme.SwatchLines(t) {
+		fmt.Println(line)
 	}
-	for _, s := range swatches {
-		block := lipgloss.NewStyle().
-			Background(lipgloss.Color(theme.Lipgloss(s.value))).
-			Render("  ")
-		fmt.Printf("  %s  %-8s %s\n", block, s.label, s.value)
-	}
-
 	fmt.Println()
-	fmt.Println("  emoji: " + sampleStatusLine(t, theme.Resolve(theme.Options{Name: name}).Icons))
-	fmt.Println("  ascii: " + sampleStatusLine(t, theme.Resolve(theme.Options{Name: name, ASCII: true}).Icons))
+	fmt.Println("  emoji: " + theme.SampleLine(t, theme.Resolve(theme.Options{Name: name}).Icons))
+	fmt.Println("  ascii: " + theme.SampleLine(t, theme.Resolve(theme.Options{Name: name, ASCII: true}).Icons))
 	return 0
-}
-
-// sampleStatusLine renders one indicator line ("🤖-🚨1-⚡️2-💤1") in the
-// theme's actual colors, so `tmon theme preview` shows real terminal colors
-// rather than raw tmux directives.
-func sampleStatusLine(t theme.Theme, ic theme.Icons) string {
-	col := func(c string) lipgloss.Style { return lipgloss.NewStyle().Foreground(lipgloss.Color(theme.Lipgloss(c))) }
-	app := col(t.Palette.App).Render(ic.App)
-
-	var segs []string
-	add := func(glyph, color string, n int) {
-		if n <= 0 {
-			return
-		}
-		segs = append(segs, col(color).Render(glyph+strconv.Itoa(n)))
-	}
-	add(ic.Blocked, t.Palette.Blocked, 1)
-	add(ic.Working, t.Palette.Working, 2)
-	add(ic.Idle, t.Palette.Idle, 1)
-
-	line := app
-	if len(segs) > 0 {
-		line += "-" + strings.Join(segs, "-")
-	}
-	return line
 }

@@ -10,7 +10,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/guillaumemeyer/tmon/internal/agent"
 )
 
@@ -50,6 +53,16 @@ func (i Icons) ForStatus(s agent.Status) string {
 		return i.Idle
 	}
 	return i.App
+}
+
+// SpinnerFrame returns the current frame of the working-agent spinner — the
+// same bubbles Line spinner the dashboard animates — advanced by wall-clock
+// time. tmux re-renders `tmon status` every status-interval, so each status
+// refresh shows the next frame of the spinner. Tests pin it for
+// deterministic output.
+var SpinnerFrame = func() string {
+	frames := spinner.Line.Frames
+	return frames[time.Now().Unix()%int64(len(frames))]
 }
 
 // Theme is a fully resolved theme: name, palette, and icons.
@@ -212,6 +225,61 @@ func Names() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// SwatchLines renders the palette preview rows shared by `tmon theme
+// preview` and the in-popup theme selector: one row per palette slot with a
+// real color chip, the slot name, and the raw tmux-style value. Each row is
+// a single display line, already styled.
+func SwatchLines(t Theme) []string {
+	swatches := []struct{ label, value string }{
+		{"app", t.Palette.App},
+		{"blocked", t.Palette.Blocked},
+		{"working", t.Palette.Working},
+		{"idle", t.Palette.Idle},
+		{"dim", t.Palette.Dim},
+		{"accent", t.Palette.Accent},
+		{"warn", t.Palette.Warn},
+		{"selbg", t.Palette.SelBg},
+	}
+	out := make([]string, 0, len(swatches))
+	for _, s := range swatches {
+		chip := lipgloss.NewStyle().
+			Background(lipgloss.Color(Lipgloss(s.value))).
+			Render("  ")
+		out = append(out, fmt.Sprintf("  %s  %-8s %s", chip, s.label, s.value))
+	}
+	return out
+}
+
+// SampleLine renders one status-bar sample line (e.g. "🤖-🚨1-|2-💤1") in
+// the theme's actual colors, so theme previews show real terminal colors
+// rather than raw tmux directives. The icon set is passed separately — it
+// may come from a differently-resolved theme (ASCII vs emoji). Working
+// agents render as the animated spinner frame instead of an icon, matching
+// the status bar and the dashboard.
+func SampleLine(t Theme, ic Icons) string {
+	col := func(c string) lipgloss.Style {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(Lipgloss(c)))
+	}
+	app := col(t.Palette.App).Render(ic.App)
+
+	var segs []string
+	add := func(glyph, color string, n int) {
+		if n <= 0 {
+			return
+		}
+		segs = append(segs, col(color).Render(glyph+strconv.Itoa(n)))
+	}
+	add(ic.Blocked, t.Palette.Blocked, 1)
+	add(SpinnerFrame(), t.Palette.Working, 2)
+	add(ic.Idle, t.Palette.Idle, 1)
+
+	line := app
+	if len(segs) > 0 {
+		line += "-" + strings.Join(segs, "-")
+	}
+	return line
 }
 
 // Lipgloss converts a tmux-style color string to the form lipgloss expects:
