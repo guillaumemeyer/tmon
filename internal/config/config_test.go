@@ -1,6 +1,7 @@
 package config
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -175,6 +176,8 @@ func TestBoldCountsIgnoresGarbage(t *testing.T) {
 }
 
 func TestThemeDefaultsToDefault(t *testing.T) {
+	// Empty state dir so a developer's state/theme cannot leak into the test.
+	t.Setenv("TMON_STATE_DIR", t.TempDir())
 	t.Setenv("TMON_THEME", "")
 	c := FromEnv()
 	if c.Theme != "default" {
@@ -251,6 +254,8 @@ func TestPaneBorderFromEnv(t *testing.T) {
 }
 
 func TestThemeOverrides(t *testing.T) {
+	// Isolate from any durable state/theme the developer may have on disk.
+	t.Setenv("TMON_STATE_DIR", t.TempDir())
 	t.Setenv("TMON_THEME", "nord")
 	t.Setenv("TMON_COLOR_BLOCKED", "#ff0000")
 	t.Setenv("TMON_COLOR_SELBG", "colour237")
@@ -272,5 +277,30 @@ func TestThemeOverrides(t *testing.T) {
 	// Empty values are ignored, so the icon-app override is dropped.
 	if len(c.IconOverrides) != 1 || c.IconOverrides["working"] != "⚙️" {
 		t.Errorf("IconOverrides = %v, want {working: ⚙️} only", c.IconOverrides)
+	}
+}
+
+func TestThemeFileWinsOverEnv(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("TMON_STATE_DIR", dir)
+	t.Setenv("TMON_THEME", "nord")
+	// No file yet: env wins.
+	if c := FromEnv(); c.Theme != "nord" {
+		t.Fatalf("without file, Theme = %q, want nord", c.Theme)
+	}
+	// Durable state/theme overrides a stale TMON_THEME (session env often
+	// keeps the value from session creation and shadows a later global update).
+	if err := os.WriteFile(filepath.Join(dir, "theme"), []byte("tokyonight\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if c := FromEnv(); c.Theme != "tokyonight" {
+		t.Fatalf("with file, Theme = %q, want tokyonight", c.Theme)
+	}
+	// Whitespace-only file is ignored; fall back to env.
+	if err := os.WriteFile(filepath.Join(dir, "theme"), []byte("  \n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if c := FromEnv(); c.Theme != "nord" {
+		t.Fatalf("whitespace file, Theme = %q, want nord", c.Theme)
 	}
 }

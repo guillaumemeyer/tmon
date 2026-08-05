@@ -139,6 +139,17 @@ func FromEnv() Config {
 	if v := os.Getenv("TMON_THEME"); v != "" {
 		c.Theme = v
 	}
+	// state/theme is the durable source of truth. TMON_THEME can be stale:
+	// tmux copies the global environment into each session at creation time,
+	// so a later set-environment -g (or a plugin reload that restores from
+	// this file) is shadowed by the session's old value. Prefer the file
+	// whenever it is present so status, dashboard, and borders agree after
+	// a restart.
+	if data, err := os.ReadFile(filepath.Join(c.StateDir, "theme")); err == nil {
+		if name := strings.TrimSpace(string(data)); name != "" {
+			c.Theme = name
+		}
+	}
 	c.ColorOverrides = envMap("TMON_COLOR_")
 	c.IconOverrides = envMap("TMON_ICON_")
 	return c

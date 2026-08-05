@@ -89,10 +89,12 @@ case "$PANE_BORDER_POS" in
 esac
 # The theme is chosen in the dashboard's selector and saved to state/theme
 # (tmux's TMON_THEME is server-state only and vanishes when the server
-# restarts), so restore it at load.
+# restarts), so restore it at load. Trim whitespace so a trailing newline
+# from editors never becomes part of the name.
 THEME="default"
 if [ -s "$STATE_DIR/theme" ]; then
-  THEME=$(cat "$STATE_DIR/theme")
+  THEME=$(tr -d '[:space:]' < "$STATE_DIR/theme")
+  [ -n "$THEME" ] || THEME="default"
 fi
 AUTO_HOOKS=$(get_tmux_option "@tmon-auto-hooks" "on")
 
@@ -102,21 +104,35 @@ AUTO_HOOKS=$(get_tmux_option "@tmon-auto-hooks" "on")
 # command and the display-popup actually see it. (The bash plugin only
 # exported these in the sourcing shell, which the status bar never inherits —
 # so its @tmon-* options were effectively dead for the #() path.)
-tmux set-environment -g TMON_STATE_DIR "$STATE_DIR"
-tmux set-environment -g TMON_BIN_DIR "$BIN_DIR"
-tmux set-environment -g TMON_POLL_INTERVAL_MS "$POLL_INTERVAL"
-tmux set-environment -g TMON_ACTIVITY_THRESHOLD_MS "$ACTIVITY_THRESHOLD"
-tmux set-environment -g TMON_IO_ACTIVITY_THRESHOLD "$IO_THRESHOLD"
-tmux set-environment -g TMON_CONNECTORS "$CONNECTORS"
-tmux set-environment -g TMON_CONNECTOR_FRESHNESS "$CONNECTOR_FRESHNESS"
-tmux set-environment -g TMON_ASCII_ICONS "$ASCII_ICONS"
-tmux set-environment -g TMON_BOLD_COUNTS "$BOLD_COUNTS"
-tmux set-environment -g TMON_CONTEXT_WARN "$CONTEXT_WARN"
-tmux set-environment -g TMON_BLOCKED_BELL "$BLOCKED_BELL"
-tmux set-environment -g TMON_PANE_BORDER "$PANE_BORDER"
-tmux set-environment -g TMON_PANE_BORDER_POSITION "$PANE_BORDER_POS"
-tmux set-environment -g TMON_THEME "$THEME"
-tmux set-environment -g TMON_HOOK_STATE_DIR "$STATE_DIR/hooks"
+#
+# set_env_everywhere updates both the global environment and every live
+# session. tmux copies globals into a session at creation time; later
+# set-environment -g alone is shadowed by the session's stale copy, which
+# is what broke theme persistence across reloads/restarts.
+set_env_everywhere() {
+  local name="$1" value="$2" s
+  tmux set-environment -g "$name" "$value"
+  while IFS= read -r s; do
+    [ -n "$s" ] || continue
+    tmux set-environment -t "$s" "$name" "$value" 2>/dev/null || true
+  done < <(tmux list-sessions -F '#{session_name}' 2>/dev/null || true)
+}
+
+set_env_everywhere TMON_STATE_DIR "$STATE_DIR"
+set_env_everywhere TMON_BIN_DIR "$BIN_DIR"
+set_env_everywhere TMON_POLL_INTERVAL_MS "$POLL_INTERVAL"
+set_env_everywhere TMON_ACTIVITY_THRESHOLD_MS "$ACTIVITY_THRESHOLD"
+set_env_everywhere TMON_IO_ACTIVITY_THRESHOLD "$IO_THRESHOLD"
+set_env_everywhere TMON_CONNECTORS "$CONNECTORS"
+set_env_everywhere TMON_CONNECTOR_FRESHNESS "$CONNECTOR_FRESHNESS"
+set_env_everywhere TMON_ASCII_ICONS "$ASCII_ICONS"
+set_env_everywhere TMON_BOLD_COUNTS "$BOLD_COUNTS"
+set_env_everywhere TMON_CONTEXT_WARN "$CONTEXT_WARN"
+set_env_everywhere TMON_BLOCKED_BELL "$BLOCKED_BELL"
+set_env_everywhere TMON_PANE_BORDER "$PANE_BORDER"
+set_env_everywhere TMON_PANE_BORDER_POSITION "$PANE_BORDER_POS"
+set_env_everywhere TMON_THEME "$THEME"
+set_env_everywhere TMON_HOOK_STATE_DIR "$STATE_DIR/hooks"
 
 # Per-slot theme overrides. Set values are exported to the binary via
 # TMON_COLOR_*/TMON_ICON_*; cleared ones are unset so removing the tmux

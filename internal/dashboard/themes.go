@@ -90,14 +90,29 @@ func (m Model) themeNames() []string {
 }
 
 // persistTheme writes the chosen theme back to tmux so the status bar
-// matches the popup after it closes, via the TMON_THEME environment (the
-// config reads TMON_THEME first). Best-effort; failures and headless runs
-// are ignored. Package-level so tests can capture it.
+// matches the popup after it closes. Both the global environment and every
+// live session are updated: tmux copies globals into each session at
+// creation time, so set-environment -g alone leaves existing sessions on
+// the previous theme (session values shadow globals). Best-effort;
+// failures and headless runs are ignored. Package-level so tests can
+// capture it.
 var persistTheme = func(name string) {
 	if !tmux.Available() {
 		return
 	}
 	_, _ = tmux.Run("set-environment", "-g", "TMON_THEME", name)
+	out, err := tmux.Run("list-sessions", "-F", "#{session_name}")
+	if err != nil {
+		// Fall back to the current session when listing fails.
+		_, _ = tmux.Run("set-environment", "TMON_THEME", name)
+		return
+	}
+	for _, s := range strings.Split(strings.TrimSpace(out), "\n") {
+		if s == "" {
+			continue
+		}
+		_, _ = tmux.Run("set-environment", "-t", s, "TMON_THEME", name)
+	}
 }
 
 // themeStateDir is where the persisted theme file lives: the same state

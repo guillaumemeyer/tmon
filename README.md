@@ -650,10 +650,12 @@ The theme is chosen live from the dashboard: press `t` inside the popup to
 open the theme selector — a list of presets on the left with the selected
 theme's color palette previewed on the right. Browsing the list applies the
 highlighted theme to the whole popup as a live preview. `Enter` or `Space`
-applies and persists the theme (it updates `TMON_THEME` for the live session
-and saves the choice to `state/theme`, which tmon restores on the next tmux
-server start); `Esc` or `q` closes the selector and reverts to the theme
-that was active before.
+applies and persists the theme (it writes `state/theme` and updates
+`TMON_THEME` in the global environment and every live session — session
+env otherwise shadows a global-only update). On the next tmux start or
+plugin reload, tmon restores from `state/theme`; the binary also reads
+that file directly so a stale session env cannot wipe the choice); `Esc`
+or `q` closes the selector and reverts to the theme that was active before.
 
 Preview a theme's colors straight from the terminal (swatches plus a sample
 status line):
