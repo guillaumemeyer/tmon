@@ -19,15 +19,29 @@ finds every running AI coding agent across your panes, tracks whether it's
 color-coded count. Need details? Hit `prefix a a` for an interactive
 dashboard — or just **click the status bar indicator**.
 
-[![stars](https://img.shields.io/github/stars/guillaumemeyer/tmon?style=flat-square&label=stars)](https://github.com/guillaumemeyer/tmon)
+[![downloads](https://img.shields.io/github/downloads/guillaumemeyer/tmon/total?style=flat-square)](https://github.com/guillaumemeyer/tmon/releases)
 [![license](https://img.shields.io/github/license/guillaumemeyer/tmon?style=flat-square)](LICENSE.md)
+[![CI](https://img.shields.io/github/actions/workflow/status/guillaumemeyer/tmon/ci.yml?style=flat-square&label=CI)](https://github.com/guillaumemeyer/tmon/actions/workflows/ci.yml)
+![Go](https://img.shields.io/badge/Go-1.26-00ADD8?style=flat-square&logo=go&logoColor=white)
 ![tmux](https://img.shields.io/badge/tmux-%E2%89%A5%203.2-1B93DB?style=flat-square)
-![agents](https://img.shields.io/badge/monitors-11%20agents-4FC08D?style=flat-square)
+![agents](https://img.shields.io/badge/supports-11%20agents-4FC08D?style=flat-square)
 
 <img src="docs/demo.gif" width="720" alt="tmon demo: an agent blocks, gets approved, springs back to work, dashboard tour" />
 
 > **The demo GIF** is recorded from a live session — the shot list lives in
 > [`docs/demo.md`](docs/demo.md).
+
+---
+
+## What tmon won't do
+
+- Won't feed them
+- Won't explain why Hermes Agent is in `/var/log`
+- Won't pair your socks or approve `rm -rf /` for you
+- Won't start agents, stop agents, or "just send a quick prompt"
+- Won't auto-merge PRs written by three agents at once (we have *some* standards)
+
+tmon is a fleet manager, not a petting zoo.
 
 ---
 
@@ -100,10 +114,12 @@ window, with a live pane preview on the right:
 
 Each agent takes two compact lines: a bold **session title and agent name**
 (`Title (Name)`, or just the name when the session has not earned a title
-yet) and, beneath it, a dimmed **working directory** plus — when the agent
-is blocked — the prompt it is waiting on (e.g. `[y/N]`, or `paused` when
-the prompt is unknown). When the connector can read token usage, a third
-dim **stats line** appears:
+yet) tinted with a **per-agent identity color** (Claude orange, Codex green,
+Hermes cyan, …) so the fleet is recognizable at a glance — same color in the
+list and the preview header. Beneath the name, a dimmed **working directory**
+plus — when the agent is blocked — the prompt it is waiting on (e.g. `[y/N]`,
+or `paused` when the prompt is unknown). When the connector can read token
+usage, a third dim **stats line** appears:
 
 ```
     > Extract Agent Sessions (Grok Build)
@@ -141,6 +157,7 @@ are ranked by match quality. `Esc` leaves search mode (the filter stays);
 |-----|--------|
 | `↑` `↓` / `j` `k` | Navigate the list |
 | `←` / `→` / `h` / `l` | Grow / shrink the preview pane (persisted) |
+| Drag `│` separator | Resize the preview pane (persisted) |
 | `Ctrl-u` / `Ctrl-d` | Scroll the preview up / down |
 | `1`–`9` | Jump to the Nth agent in the list |
 | `b` / `w` / `i` | Filter by status: blocked / working / idle (press again to clear) |
@@ -200,6 +217,15 @@ Hooks install automatically at plugin load unless `@tmon-auto-hooks` is
 `off` — or by hand with `tmon hooks install <agent>`. Codex additionally
 requires the hooks to be trusted in-session via `/hooks`. Without hooks, the
 Cursor/Copilot native fallback only reports the agent as idle.
+
+### Add your agent
+
+Missing your favorite agent? The connector interface is about **15 lines** —
+`Name()`, `Enabled()`, `Probe()` — and community connectors are how the
+fleet grows (same playbook that made TPM the default tmux plugin story).
+
+See **[CONTRIBUTING.md](CONTRIBUTING.md)** for a copy-paste template, the
+detect-signature checklist, and how to land a PR.
 
 ### Scripting with JSON (`tmon status --json`)
 
@@ -723,6 +749,41 @@ Eleven agents and counting — see [Supported agents](#supported-agents).
 
 **Can I use it without tmux?**
 No — but `tmon status --json` feeds any status bar that can run a command.
+
+---
+
+## Testimonials
+
+> "I didn't know my agents were blocked until tmon told me. My agents still don't know."
+> — Someone with 14 panes and one coffee
+
+> "Finally, a tool that judges my agent fleet without judging *me*."
+> — A human who definitely approved that plan
+
+> "`prefix a a` is muscle memory now. My left pinky is a stakeholder."
+> — Terminal-native
+
+> "I used to `tmux list-panes` and pray. Now I pray less and click more."
+> — Reformed pane spelunker
+
+> "Supports 11 agents. I only run two. The other nine live rent-free in the README."
+> — Minimalist with FOMO
+
+> "Zero-config means I configured nothing and it still found Claude waiting on `[y/N]`. Rude. Accurate."
+> — Permission-prompt survivor
+
+*Testimonials may be fictional. Agents cannot sue.*
+
+---
+
+## Libraries
+
+tmon is built on a short stack of excellent Go libraries:
+
+- [Bubble Tea](https://github.com/charmbracelet/bubbletea) — the dashboard TUI
+- [Lip Gloss](https://github.com/charmbracelet/lipgloss) — styles and layout
+- [charmbracelet/x/ansi](https://github.com/charmbracelet/x/ansi) — ANSI width and truncation
+- [golang.org/x/sys](https://github.com/golang/sys) — process / OS bits
 
 ---
 

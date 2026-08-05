@@ -418,6 +418,94 @@ func TestPreviewPctPersists(t *testing.T) {
 	}
 }
 
+func TestDragSeparatorResizesPreview(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/dashboard.json"
+
+	old := capturePane
+	capturePane = func(p string) string { return "x" }
+	t.Cleanup(func() { capturePane = old })
+
+	f := &fakeLoader{data: Data{Rows: testRows()}}
+	m := New(f.load, true).WithSettingsPath(path)
+	m = applyMsg(t, m, initMsg{})
+	m.width, m.height = 100, 24
+
+	listW, _ := m.panelWidths(100)
+	var focused string
+	m.focusCmd = func(r Row) tea.Cmd {
+		focused = r.Pane
+		return nil
+	}
+
+	// Press on the separator starts a drag; no agent focus.
+	m = applyMsg(t, m, tea.MouseMsg{
+		Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: listW, Y: 4,
+	})
+	if !m.draggingSplit {
+		t.Fatal("expected draggingSplit after press on separator")
+	}
+	if focused != "" {
+		t.Fatalf("separator press focused %q", focused)
+	}
+
+	// Motion while dragging moves the split (drag left → larger preview).
+	m = applyMsg(t, m, tea.MouseMsg{
+		Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft, X: 30, Y: 4,
+	})
+	if m.previewPct == defaultPreviewPct {
+		t.Fatalf("previewPct after drag motion = %d, want a change", m.previewPct)
+	}
+	// Motion must not persist yet.
+	m2 := New(f.load, true).WithSettingsPath(path)
+	if m2.previewPct != defaultPreviewPct {
+		t.Fatalf("settings written during drag motion: %d", m2.previewPct)
+	}
+
+	want := m.previewPct
+	m = applyMsg(t, m, tea.MouseMsg{
+		Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft, X: 30, Y: 4,
+	})
+	if m.draggingSplit {
+		t.Fatal("draggingSplit should clear on release")
+	}
+	m3 := New(f.load, true).WithSettingsPath(path)
+	if m3.previewPct != want {
+		t.Fatalf("reloaded previewPct = %d, want %d after drag release", m3.previewPct, want)
+	}
+}
+
+func TestDragSeparatorPressWithoutMotionDoesNotFocus(t *testing.T) {
+	old := capturePane
+	capturePane = func(p string) string { return "x" }
+	t.Cleanup(func() { capturePane = old })
+
+	f := &fakeLoader{data: Data{Rows: testRows()}}
+	m := New(f.load, true)
+	m = applyMsg(t, m, initMsg{})
+	m.width, m.height = 100, 24
+
+	listW, _ := m.panelWidths(100)
+	var focused string
+	m.focusCmd = func(r Row) tea.Cmd {
+		focused = r.Pane
+		return nil
+	}
+
+	m = applyMsg(t, m, tea.MouseMsg{
+		Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: listW, Y: 4,
+	})
+	m = applyMsg(t, m, tea.MouseMsg{
+		Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft, X: listW, Y: 4,
+	})
+	if focused != "" {
+		t.Fatalf("separator click focused %q", focused)
+	}
+	if m.draggingSplit {
+		t.Fatal("draggingSplit should be false after release")
+	}
+}
+
 func TestFocusWithNothingSelectable(t *testing.T) {
 	m := New(func() (Data, error) { return Data{}, nil }, true)
 	m = applyMsg(t, m, initMsg{})

@@ -146,37 +146,81 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleMouse maps a left click in the popup viewport to a list row. A click
-// on an agent line selects it and immediately focuses its pane (the same
-// action as Enter). Clicks on session/window headers, the preview panel, and
-// the chrome rows (header, divider, footer) are ignored.
+// handleMouse maps mouse events: drag the │ separator to resize the preview,
+// or left-click an agent line to focus its pane (same as Enter). Clicks on
+// session/window headers, the preview panel body, and chrome rows are ignored.
 func (m Model) handleMouse(msg tea.MouseMsg) (Model, tea.Cmd) {
-	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
+	switch msg.Action {
+	case tea.MouseActionRelease:
+		if m.draggingSplit {
+			m.draggingSplit = false
+			m.saveSettings()
+		}
 		return m, nil
-	}
-	// Rows 0 (header) and 1 (divider) are chrome; body rows start at 2.
-	bodyRow := msg.Y - 2
-	di := m.itemAtRow(bodyRow, m.height-3)
-	if di < 0 {
+
+	case tea.MouseActionMotion:
+		if m.draggingSplit {
+			m.setPreviewPctFromX(msg.X)
+		}
 		return m, nil
-	}
-	// Only clicks on the list column act; the preview panel is a no-op.
-	if m.width > 0 {
-		_, panelW := m.panelWidths(m.width)
-		if listW := m.width - panelW - 1; msg.X >= listW {
+
+	case tea.MouseActionPress:
+		if msg.Button != tea.MouseButtonLeft {
 			return m, nil
 		}
-	}
-	if m.items[di].kind != itemAgent {
-		return m, nil // session/window headers are not clickable
-	}
-	for i, sel := range m.selMap {
-		if sel == di {
-			m.selected = i
-			return m.focusSelected()
+		// Drag the list|preview separator (hit target ±1 cell).
+		if m.width > 0 {
+			listW, _ := m.panelWidths(m.width)
+			if msg.X >= listW-1 && msg.X <= listW+1 {
+				m.draggingSplit = true
+				m.setPreviewPctFromX(msg.X)
+				return m, nil
+			}
 		}
+		// Rows 0 (header) and 1 (divider) are chrome; body rows start at 2.
+		bodyRow := msg.Y - 2
+		di := m.itemAtRow(bodyRow, m.height-3)
+		if di < 0 {
+			return m, nil
+		}
+		// Only clicks on the list column act; the preview panel is a no-op.
+		if m.width > 0 {
+			_, panelW := m.panelWidths(m.width)
+			if listW := m.width - panelW - 1; msg.X >= listW {
+				return m, nil
+			}
+		}
+		if m.items[di].kind != itemAgent {
+			return m, nil // session/window headers are not clickable
+		}
+		for i, sel := range m.selMap {
+			if sel == di {
+				m.selected = i
+				return m.focusSelected()
+			}
+		}
+		return m, nil
 	}
 	return m, nil
+}
+
+// setPreviewPctFromX sets previewPct so the separator sits near column x.
+// Does not persist; the caller saves on drag release.
+func (m *Model) setPreviewPctFromX(x int) {
+	if m.width < 2 {
+		return
+	}
+	// list | sep | preview  →  preview fraction of (width - 1) after the sep.
+	listW := x
+	if listW < 0 {
+		listW = 0
+	}
+	if listW > m.width-1 {
+		listW = m.width - 1
+	}
+	panelW := m.width - 1 - listW
+	pct := (panelW * 100) / (m.width - 1)
+	m.previewPct = clampPreviewPct(pct)
 }
 
 // itemAtRow returns the index into m.items of the item rendered at the

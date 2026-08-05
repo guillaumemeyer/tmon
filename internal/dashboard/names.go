@@ -31,6 +31,39 @@ func agentFullName(label string) string {
 	}
 }
 
+// agentIdentityColor returns a brand color for the agent label so list rows
+// and the preview header are recognizable at a glance. Empty means fall back
+// to the theme accent (unknown labels). Colors are fixed brand constants, not
+// theme palette slots.
+func agentIdentityColor(label string) string {
+	switch label {
+	case "Claude":
+		return "#D97757"
+	case "Codex":
+		return "#10B981"
+	case "Hermes":
+		return "#22D3EE"
+	case "Grok":
+		return "#A78BFA"
+	case "Cursor":
+		return "#E879F9"
+	case "Copilot":
+		return "#79C0FF"
+	case "Cline":
+		return "#FBBF24"
+	case "CodeBuddy":
+		return "#2DD4BF"
+	case "Windsurf":
+		return "#38BDF8"
+	case "Aider":
+		return "#A3E635"
+	case "OpenClaw":
+		return "#FB7185"
+	default:
+		return ""
+	}
+}
+
 // agentDisplayName renders the agent's name in the popup: when the agent's
 // session has a title it is shown as "Title (Name)", otherwise just the
 // name. The title comes from the connector (Grok's generated_title, Claude's

@@ -412,7 +412,7 @@ func TestFooterOmitsStatusCountsShowsPreviewTip(t *testing.T) {
 			t.Fatalf("footer should not show status count %q in:\n%s", bad, v)
 		}
 	}
-	for _, want := range []string{"[↑/↓ j/k] navigate", "[←/→ h/l] resize preview", "[C-u/C-d] scroll preview", "[1-9] jump"} {
+	for _, want := range []string{"[↑/↓ j/k] navigate", "[←/→ h/l · drag │] resize", "[C-u/C-d] scroll preview", "[1-9] jump"} {
 		if !strings.Contains(v, want) {
 			t.Fatalf("footer missing %q in:\n%s", want, v)
 		}
@@ -448,6 +448,49 @@ func TestFooterShowsVersionBottomLeft(t *testing.T) {
 	}
 }
 
+func TestIdentityColorsInListAndPreview(t *testing.T) {
+	old := capturePane
+	capturePane = func(p string) string { return "x" }
+	t.Cleanup(func() { capturePane = old })
+
+	f := &fakeLoader{data: Data{Rows: testRows()}}
+	m := New(f.load, true)
+	m = applyMsg(t, m, initMsg{}) // Grok selected first
+	m.width, m.height = 120, 24
+	listW, _ := m.panelWidths(120)
+
+	raw := m.View()
+	// Selected Grok name: status icon + identity color on selBg.
+	bg := m.st.selBgColor
+	grokLine := m.selFit(
+		m.st.selBg.Render("      ")+
+			m.statusStyle(agent.StatusWorking).Background(bg).Render("W ")+
+			m.identityStyle("Grok").Bold(true).Background(bg).Render("Popup preview scroll (Grok Build)"),
+		listW,
+	)
+	if !strings.Contains(raw, grokLine) {
+		t.Fatalf("selected Grok missing identity+selBg highlight:\n%q", raw)
+	}
+	// Preview header uses Grok identity color.
+	if !strings.Contains(raw, m.identityStyle("Grok").Bold(true).Render("Popup preview scroll (Grok Build)")) {
+		t.Fatalf("preview header missing Grok identity color:\n%q", raw)
+	}
+	// Unselected Claude: status icon + brand orange on the list name.
+	claudeLine := "      " +
+		m.statusStyle(agent.StatusBlocked).Render("B ") +
+		m.identityStyle("Claude").Bold(true).Render("Claude Code")
+	if !strings.Contains(raw, claudeLine) {
+		t.Fatalf("Claude list row missing identity color:\n%q", raw)
+	}
+
+	// Select Claude: preview header uses Claude identity color.
+	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	raw = m.View()
+	if !strings.Contains(raw, m.identityStyle("Claude").Bold(true).Render("Claude Code")) {
+		t.Fatalf("preview header should use Claude identity color:\n%q", raw)
+	}
+}
+
 func TestSelectedAgentHighlight(t *testing.T) {
 	old := capturePane
 	capturePane = func(p string) string { return "x" }
@@ -456,25 +499,34 @@ func TestSelectedAgentHighlight(t *testing.T) {
 	f := &fakeLoader{data: Data{Rows: testRows()}}
 	m := New(f.load, true)
 	m = applyMsg(t, m, initMsg{}) // Grok is selected
-	m.width, m.height = 80, 24
+	m.width, m.height = 120, 24
 
-	listW, _ := m.panelWidths(80)
+	listW, _ := m.panelWidths(120)
 	raw := m.View()
 
-	// The selected name row is highlighted with the full-line selection
-	// style: bold accent on the selection background, padded to the list
-	// width. The old ">" marker is gone.
-	if !strings.Contains(raw, m.st.selText.Render(fit("      Popup preview scroll (Grok Build)", listW))) {
-		t.Fatalf("selected name row missing the selText highlight:\n%q", raw)
+	// The selected name row uses status icon + agent identity color on the
+	// selection background, padded to the list width. The old ">" marker is gone.
+	bg := m.st.selBgColor
+	nameLine := m.selFit(
+		m.st.selBg.Render("      ")+
+			m.statusStyle(agent.StatusWorking).Background(bg).Render("W ")+
+			m.identityStyle("Grok").Bold(true).Background(bg).Render("Popup preview scroll (Grok Build)"),
+		listW,
+	)
+	if !strings.Contains(raw, nameLine) {
+		t.Fatalf("selected name row missing the identity+selBg highlight:\n%q", raw)
 	}
 	// The cwd row gets the dim selection background too.
 	if !strings.Contains(raw, m.st.selDim.Render(fit("      code/tmon", listW))) {
 		t.Fatalf("selected cwd row missing the selection background:\n%q", raw)
 	}
 
-	// Unselected rows keep the plain bold style and no marker.
-	if !strings.Contains(raw, m.st.white.Bold(true).Render("      Claude Code")) {
-		t.Fatalf("unselected name row should use the plain bold style:\n%q", raw)
+	// Unselected rows use status icon + agent identity color (bold) and no marker.
+	claudeLine := "      " +
+		m.statusStyle(agent.StatusBlocked).Render("B ") +
+		m.identityStyle("Claude").Bold(true).Render("Claude Code")
+	if !strings.Contains(raw, claudeLine) {
+		t.Fatalf("unselected name row should use the identity color:\n%q", raw)
 	}
 	for _, ln := range strings.Split(ansi.Strip(raw), "\n") {
 		if strings.Contains(ln, "Claude Code") && strings.Contains(ln, ">") {
@@ -491,7 +543,8 @@ func TestAgentRowsAreTwoLines(t *testing.T) {
 	f := &fakeLoader{data: Data{Rows: testRows()}}
 	m := New(f.load, true)
 	m = applyMsg(t, m, initMsg{}) // Grok selected first
-	m.width, m.height = 80, 24
+	// Wide enough that status icon + session title fit in the list column.
+	m.width, m.height = 120, 24
 
 	v := ansi.Strip(m.View())
 	lines := strings.Split(v, "\n")
@@ -502,6 +555,9 @@ func TestAgentRowsAreTwoLines(t *testing.T) {
 		list := strings.SplitN(ln, "│", 2)[0]
 		switch {
 		case strings.Contains(list, "Popup preview scroll (Grok Build)"):
+			if !strings.Contains(list, "W Popup preview scroll") {
+				t.Fatalf("Grok name line = %q, want status icon before name", list)
+			}
 			if !strings.Contains(lines[i+1], "code/tmon") {
 				t.Fatalf("Grok cwd line = %q, want code/tmon", lines[i+1])
 			}
@@ -509,26 +565,42 @@ func TestAgentRowsAreTwoLines(t *testing.T) {
 				t.Fatalf("working agent should not show pause status: %q", lines[i+1])
 			}
 		case strings.Contains(ln, "Claude Code"):
+			if !strings.Contains(list, "B Claude Code") {
+				t.Fatalf("Claude name line = %q, want status icon before name", list)
+			}
 			if !strings.Contains(lines[i+1], "site") || !strings.Contains(lines[i+1], "paused") {
 				t.Fatalf("blocked agent cwd line = %q, want site + paused", lines[i+1])
 			}
 		case strings.Contains(ln, "Codex CLI"):
+			if !strings.Contains(list, "I Codex CLI") {
+				t.Fatalf("Codex name line = %q, want status icon before name", list)
+			}
 			if !strings.Contains(lines[i+1], "blog") || strings.Contains(lines[i+1], "paused") {
 				t.Fatalf("idle agent cwd line = %q, want blog only", lines[i+1])
 			}
 		}
 	}
 
-	// The selected name row uses the selection highlight; unselected rows
-	// keep the plain bold/dim styles, and the pause status keeps the orange
-	// "blocked" color.
+	// The selected name row uses status icon + identity color on selBg;
+	// unselected rows use the same pattern, and the pause status keeps
+	// the orange "blocked" color.
 	raw := m.View()
-	listW, _ := m.panelWidths(80)
-	if !strings.Contains(raw, m.st.selText.Render(fit("      Popup preview scroll (Grok Build)", listW))) {
-		t.Fatal("selected agent name should be highlighted in the raw view")
+	listW, _ := m.panelWidths(120)
+	bg := m.st.selBgColor
+	nameLine := m.selFit(
+		m.st.selBg.Render("      ")+
+			m.statusStyle(agent.StatusWorking).Background(bg).Render("W ")+
+			m.identityStyle("Grok").Bold(true).Background(bg).Render("Popup preview scroll (Grok Build)"),
+		listW,
+	)
+	if !strings.Contains(raw, nameLine) {
+		t.Fatal("selected agent name should be identity-colored on selBg")
 	}
-	if !strings.Contains(raw, m.st.white.Bold(true).Render("      Claude Code")) {
-		t.Fatal("unselected agent name should stay plain bold in the raw view")
+	claudeLine := "      " +
+		m.statusStyle(agent.StatusBlocked).Render("B ") +
+		m.identityStyle("Claude").Bold(true).Render("Claude Code")
+	if !strings.Contains(raw, claudeLine) {
+		t.Fatal("unselected agent name should use identity color")
 	}
 	if !strings.Contains(raw, styleDim.Render("site")) {
 		t.Fatal("cwd should be dimmed in the raw view")
@@ -562,7 +634,8 @@ func TestAgentRowsThreeLinesWithUsage(t *testing.T) {
 	m := New(f.load, true)
 	m = applyMsg(t, m, initMsg{})
 	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyDown}) // select Claude so Grok renders unstyled
-	m.width, m.height = 80, 24
+	// Wide enough that status icon + session title fit in the list column.
+	m.width, m.height = 120, 24
 
 	v := ansi.Strip(m.View())
 	lines := strings.Split(v, "\n")
@@ -649,7 +722,7 @@ func TestUsageBarColor(t *testing.T) {
 	}
 }
 
-func TestHeaderFleetCounts(t *testing.T) {
+func TestHeaderOmitsFleetCounts(t *testing.T) {
 	old := capturePane
 	capturePane = func(p string) string { return "x" }
 	t.Cleanup(func() { capturePane = old })
@@ -659,37 +732,25 @@ func TestHeaderFleetCounts(t *testing.T) {
 	m = applyMsg(t, m, initMsg{})
 	m.width, m.height = 80, 24
 
-	// ASCII theme: one of each status — 🚨→B, ⚡️→W, 💤→I.
 	raw := m.View()
 	if !strings.Contains(raw, m.st.cyan.Bold(true).Render(" [@] tmon")) {
 		t.Fatalf("header missing the title:\n%s", raw)
 	}
-	for _, want := range []string{m.st.orange.Render("B1"), m.st.green.Render("W1"), m.st.blue.Render("I1")} {
-		if !strings.Contains(raw, want) {
-			t.Fatalf("header missing fleet count %q in:\n%s", want, raw)
+	header := strings.Split(ansi.Strip(raw), "\n")[0]
+	// Fleet status counts live on the status bar and per-agent rows, not
+	// the popup title bar.
+	for _, bad := range []string{"B1", "W1", "I1"} {
+		if strings.Contains(header, bad) {
+			t.Fatalf("header should not show fleet count %q: %q", bad, header)
 		}
 	}
 
-	// The emoji theme renders the same counts with emoji glyphs.
 	m3 := m.WithTheme(theme.Default)
-	raw3 := ansi.Strip(m3.View())
-	for _, want := range []string{"🚨1", "⚡️1", "💤1"} {
-		if !strings.Contains(raw3, want) {
-			t.Fatalf("emoji header missing %q in:\n%s", want, raw3)
+	header3 := strings.Split(ansi.Strip(m3.View()), "\n")[0]
+	for _, bad := range []string{"🚨1", "⚡️1", "💤1"} {
+		if strings.Contains(header3, bad) {
+			t.Fatalf("emoji header should not show fleet count %q: %q", bad, header3)
 		}
-	}
-
-	// Only non-zero statuses are shown: a single working agent shows W only.
-	rows := testRows()[:1]
-	m2 := New(func() (Data, error) { return Data{Rows: rows}, nil }, true)
-	m2 = applyMsg(t, m2, initMsg{})
-	m2.width, m2.height = 80, 24
-	header := strings.Split(ansi.Strip(m2.View()), "\n")[0]
-	if !strings.Contains(header, "W1") {
-		t.Fatalf("single-agent header missing W1: %q", header)
-	}
-	if strings.Contains(header, "B") || strings.Contains(header, "I") {
-		t.Fatalf("single-agent header should only show W: %q", header)
 	}
 }
 
@@ -705,7 +766,7 @@ func TestCwdLineShowsStatusAge(t *testing.T) {
 	f := &fakeLoader{data: Data{Rows: rows}}
 	m := New(f.load, false) // emoji theme
 	m = applyMsg(t, m, initMsg{})
-	m.width, m.height = 80, 24
+	m.width, m.height = 120, 24
 
 	v := ansi.Strip(m.View())
 	lines := strings.Split(v, "\n")
@@ -713,12 +774,25 @@ func TestCwdLineShowsStatusAge(t *testing.T) {
 		list := strings.SplitN(ln, "│", 2)[0]
 		switch {
 		case strings.Contains(list, "Claude Code"):
-			if !strings.Contains(lines[i+1], "🚨 now") {
-				t.Fatalf("blocked cwd line = %q, want 🚨 now", lines[i+1])
+			// Status icon lives on the name line; age alone on the cwd line.
+			if !strings.Contains(list, "🚨 Claude Code") {
+				t.Fatalf("blocked name line = %q, want 🚨 before name", list)
+			}
+			if !strings.Contains(lines[i+1], "now") {
+				t.Fatalf("blocked cwd line = %q, want age now", lines[i+1])
+			}
+			if strings.Contains(lines[i+1], "🚨") {
+				t.Fatalf("blocked cwd line should not repeat status icon: %q", lines[i+1])
 			}
 		case strings.Contains(list, "Codex CLI"):
-			if !strings.Contains(lines[i+1], "💤 1m") {
-				t.Fatalf("idle cwd line = %q, want 💤 1m", lines[i+1])
+			if !strings.Contains(list, "💤 Codex CLI") {
+				t.Fatalf("idle name line = %q, want 💤 before name", list)
+			}
+			if !strings.Contains(lines[i+1], "1m") {
+				t.Fatalf("idle cwd line = %q, want age 1m", lines[i+1])
+			}
+			if strings.Contains(lines[i+1], "💤") {
+				t.Fatalf("idle cwd line should not repeat status icon: %q", lines[i+1])
 			}
 		}
 	}

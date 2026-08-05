@@ -156,23 +156,24 @@ const sgrReset = "\x1b[0m"
 // cleanly with the list column.
 func (m Model) previewLines(w, n int) []string {
 	out := make([]string, 0, n)
-	header := ""
 	switch {
 	case len(m.selMap) == 0:
-		header = " no agents"
+		out = append(out, fit(m.st.dim.Render(" no agents"), w))
 	case m.previewPane == "" || m.previewPane == "?":
-		header = " no pane (headless)"
+		out = append(out, fit(m.st.dim.Render(" no pane (headless)"), w))
 	default:
 		it := m.items[m.selMap[m.selected]]
 		if it.kind == itemAgent {
 			r := m.rows[it.rowIdx]
-			header = " " + agentDisplayName(r)
+			header := " " + m.identityStyle(r.Label).Bold(true).Render(agentDisplayName(r))
 			if r.Detail != "" {
-				header += " — " + r.Detail
+				header += m.st.dim.Render(" — " + r.Detail)
 			}
+			out = append(out, fit(header, w))
+		} else {
+			out = append(out, fit("", w))
 		}
 	}
-	out = append(out, fit(m.st.dim.Render(header), w))
 	if m.previewText == "" && m.previewPane != "" && m.previewPane != "?" {
 		out = append(out, fit(m.st.dim.Render("  (empty pane)"), w))
 	}
@@ -231,50 +232,16 @@ func trimTrailingEmpty(lines []string) []string {
 	return lines[:i]
 }
 
-// headerLine is the title with the key-hint aligned right and, when any
-// agents are detected, the per-status fleet counts (blocked/working/idle)
-// shown after the title — same visibility rule as the status bar.
+// headerLine is the title with the key-hint aligned right.
 func (m Model) headerLine(w int) string {
 	app := m.theme.Icons.App
 	title := m.st.cyan.Bold(true).Render(" " + app + " tmon")
-	counts := m.fleetCounts()
 	hint := m.st.dim.Render("[/] search  [esc/q] quit ")
-	pad := w - ansi.StringWidth(title) - ansi.StringWidth(counts) - ansi.StringWidth(hint)
+	pad := w - ansi.StringWidth(title) - ansi.StringWidth(hint)
 	if pad < 1 {
-		return ansi.Truncate(title+counts, w, "")
+		return ansi.Truncate(title, w, "")
 	}
-	return title + counts + strings.Repeat(" ", pad) + hint
-}
-
-// fleetCounts renders the per-status agent counts for the header — e.g.
-// " 🚨1 ⚡️2 💤1" — showing only non-zero statuses in their status colors.
-// Empty when no agents have a known status.
-func (m Model) fleetCounts() string {
-	var blocked, working, idle int
-	for _, r := range m.rows {
-		switch r.Status {
-		case agent.StatusBlocked:
-			blocked++
-		case agent.StatusWorking:
-			working++
-		case agent.StatusIdle:
-			idle++
-		}
-	}
-	var parts []string
-	if blocked > 0 {
-		parts = append(parts, m.st.orange.Render(m.theme.Icons.Blocked+strconv.Itoa(blocked)))
-	}
-	if working > 0 {
-		parts = append(parts, m.st.green.Render(m.theme.Icons.Working+strconv.Itoa(working)))
-	}
-	if idle > 0 {
-		parts = append(parts, m.st.blue.Render(m.theme.Icons.Idle+strconv.Itoa(idle)))
-	}
-	if len(parts) == 0 {
-		return ""
-	}
-	return " " + strings.Join(parts, " ")
+	return title + strings.Repeat(" ", pad) + hint
 }
 
 // renderItem renders one display item into one or more lines, each exactly
@@ -297,15 +264,28 @@ func (m Model) renderItem(di int, it item, w int) []string {
 		r := m.rows[it.rowIdx]
 		selected := len(m.selMap) > 0 && m.selMap[m.selected] == di
 
-		// Line 1: the session title (or plain name) in bold. The selected
-		// row is fitted first, then wrapped in the full-line selection
-		// style so the padding cells carry the background too.
-		name := "      " + agentDisplayName(r)
+		// Line 1: status icon (status-colored) then the session title (or
+		// plain name) in bold, tinted with the agent's identity color.
+		// The selected row keeps selBg on every piece so brand + selection
+		// stay visible.
+		icon := m.theme.Icons.ForStatus(r.Status) + " "
+		disp := agentDisplayName(r)
 		var line1 string
 		if selected {
-			line1 = m.st.selText.Render(fit(name, w))
+			bg := m.st.selBgColor
+			line1 = m.selFit(
+				m.st.selBg.Render("      ")+
+					m.statusStyle(r.Status).Background(bg).Render(icon)+
+					m.identityStyle(r.Label).Bold(true).Background(bg).Render(disp),
+				w,
+			)
 		} else {
-			line1 = fit(m.st.white.Bold(true).Render(name), w)
+			line1 = fit(
+				"      "+
+					m.statusStyle(r.Status).Render(icon)+
+					m.identityStyle(r.Label).Bold(true).Render(disp),
+				w,
+			)
 		}
 
 		// Line 2: the working directory, the status age when known, plus
@@ -316,7 +296,7 @@ func (m Model) renderItem(di int, it item, w int) []string {
 		cwd := displayCWD(r.CWD)
 		age := ""
 		if a := ageString(r.LastTs); a != "" {
-			age = "  " + m.theme.Icons.ForStatus(r.Status) + " " + a
+			age = "  " + a
 		}
 		pause := ""
 		if r.Status == agent.StatusBlocked {
@@ -357,6 +337,30 @@ func (m Model) renderItem(di int, it item, w int) []string {
 		return lines
 	}
 	return []string{fit("", w)}
+}
+
+// identityStyle is the lipgloss style for an agent's brand color, falling
+// back to the theme accent when the label is unknown.
+func (m Model) identityStyle(label string) lipgloss.Style {
+	if c := agentIdentityColor(label); c != "" {
+		return lipgloss.NewStyle().Foreground(lipgloss.Color(c))
+	}
+	return m.st.white
+}
+
+// statusStyle is the lipgloss style for a status icon: orange blocked,
+// green working, blue idle — matching the status bar.
+func (m Model) statusStyle(st agent.Status) lipgloss.Style {
+	switch st {
+	case agent.StatusBlocked:
+		return m.st.orange
+	case agent.StatusWorking:
+		return m.st.green
+	case agent.StatusIdle:
+		return m.st.blue
+	default:
+		return m.st.dim
+	}
 }
 
 // selFit truncates s to at most w cells and pads the remainder with the
@@ -521,7 +525,8 @@ func (m Model) footerRight() string {
 		parts = append(parts, fmt.Sprintf("%d/%d", len(m.filtered), len(m.rows)))
 	}
 	parts = append(parts, "[↑/↓ j/k] navigate")
-	parts = append(parts, "[←/→ h/l] resize preview")
+	// Keyboard + drag share one tip so the footer fits at common widths.
+	parts = append(parts, "[←/→ h/l · drag │] resize")
 	if m.previewNavTipVisible() {
 		parts = append(parts, "[C-u/C-d] scroll preview")
 	}

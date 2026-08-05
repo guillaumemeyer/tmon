@@ -2,6 +2,33 @@ package dashboard
 
 import "testing"
 
+func TestAgentIdentityColor(t *testing.T) {
+	want := map[string]string{
+		"Claude":    "#D97757",
+		"Codex":     "#10B981",
+		"Hermes":    "#22D3EE",
+		"Grok":      "#A78BFA",
+		"Cursor":    "#E879F9",
+		"Copilot":   "#79C0FF",
+		"Cline":     "#FBBF24",
+		"CodeBuddy": "#2DD4BF",
+		"Windsurf":  "#38BDF8",
+		"Aider":     "#A3E635",
+		"OpenClaw":  "#FB7185",
+	}
+	for label, color := range want {
+		if got := agentIdentityColor(label); got != color {
+			t.Errorf("agentIdentityColor(%q) = %q, want %q", label, got, color)
+		}
+	}
+	if got := agentIdentityColor("Unknown"); got != "" {
+		t.Errorf("agentIdentityColor(Unknown) = %q, want empty", got)
+	}
+	if got := agentIdentityColor(""); got != "" {
+		t.Errorf("agentIdentityColor(\"\") = %q, want empty", got)
+	}
+}
+
 func TestAgentDisplayNameHermesProfile(t *testing.T) {
 	cases := []struct {
 		name string

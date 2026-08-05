@@ -79,6 +79,7 @@ type Model struct {
 	previewOffset int               // lines scrolled up from the bottom (0 = pin to end)
 	paneCache     map[string]string // pane target → full capture (for search + preview)
 	previewPct    int               // preview panel width as % of popup (default 50)
+	draggingSplit bool              // true while the user is dragging the │ separator
 
 	// settingsPath is where UI prefs (e.g. preview width) are persisted.
 	// Empty disables load/save (tests and ad-hoc construction).
