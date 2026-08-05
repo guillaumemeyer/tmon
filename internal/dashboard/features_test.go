@@ -157,13 +157,14 @@ func TestPreviewLayoutAlignment(t *testing.T) {
 		t.Fatalf("rows = %d, want %d", len(rows), h)
 	}
 
-	// Top border, header, divider, then the body; footer and bottom border
-	// below. The │ separator column lives on body rows only: body starts at
-	// index 3, ends at h-3 inclusive.
+	// Top border, mainHeaderHeight header rows, divider, then the body;
+	// footer and bottom border below. The │ separator column lives on body
+	// rows only: body starts right after the divider, ends at h-3 inclusive.
 	listW, _ := m.panelWidths(w - 2)
 	sepCol := listW + 1 // 0-based index of │, one cell in from the left border
+	bodyStart := 1 + mainHeaderHeight + 1
 
-	for i := 3; i < h-2; i++ {
+	for i := bodyStart; i < h-2; i++ {
 		line := rows[i]
 		if got := ansi.StringWidth(line); got != w {
 			t.Fatalf("body row %d width = %d, want %d:\n%q", i, got, w, line)
@@ -362,7 +363,7 @@ func TestPreviewIsHalfWidth(t *testing.T) {
 	m.width, m.height = w, 12
 
 	v := ansi.Strip(m.View())
-	body := strings.Split(v, "\n")[3] // first body row, below border+header+divider
+	body := strings.Split(v, "\n")[1+mainHeaderHeight+1] // first body row, below border+header+divider
 	listW, _ := m.panelWidths(w - 2)
 	sepCol := listW + 1
 	runes := []rune(body)
@@ -373,7 +374,7 @@ func TestPreviewIsHalfWidth(t *testing.T) {
 	// After growing the preview (left arrow), the separator moves left.
 	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyLeft})
 	v = ansi.Strip(m.View())
-	body = strings.Split(v, "\n")[3]
+	body = strings.Split(v, "\n")[1+mainHeaderHeight+1]
 	listW2, _ := m.panelWidths(w - 2)
 	if listW2 >= listW {
 		t.Fatalf("listW after left = %d, want < %d", listW2, listW)
@@ -921,23 +922,31 @@ func TestHeaderOmitsFleetCounts(t *testing.T) {
 	m.width, m.height = 80, 24
 
 	raw := m.View()
-	if !strings.Contains(raw, m.st.cyan.Bold(true).Render(" [@] tmon")) {
-		t.Fatalf("header missing the title:\n%s", raw)
+	rawLines := strings.Split(ansi.Strip(raw), "\n")
+	// Rows 1..mainHeaderHeight sit below the top border and carry the ascii
+	// wordmark; each must match one row of the logo.
+	for i, glyph := range asciiLogo {
+		if !strings.Contains(rawLines[1+i], glyph) {
+			t.Fatalf("header row %d missing wordmark %q:\n%s", i, glyph, raw)
+		}
 	}
-	header := strings.Split(ansi.Strip(raw), "\n")[1] // below the top border
 	// Fleet status counts live on the status bar and per-agent rows, not
 	// the popup title bar.
-	for _, bad := range []string{"B1", "W1", "I1"} {
-		if strings.Contains(header, bad) {
-			t.Fatalf("header should not show fleet count %q: %q", bad, header)
+	for _, headerRow := range rawLines[1 : 1+mainHeaderHeight] {
+		for _, bad := range []string{"B1", "W1", "I1"} {
+			if strings.Contains(headerRow, bad) {
+				t.Fatalf("header should not show fleet count %q: %q", bad, headerRow)
+			}
 		}
 	}
 
 	m3 := m.WithTheme(theme.Default)
-	header3 := strings.Split(ansi.Strip(m3.View()), "\n")[1]
-	for _, bad := range []string{"🚨1", "⚡️1", "💤1"} {
-		if strings.Contains(header3, bad) {
-			t.Fatalf("emoji header should not show fleet count %q: %q", bad, header3)
+	header3Lines := strings.Split(ansi.Strip(m3.View()), "\n")[1 : 1+mainHeaderHeight]
+	for _, headerRow := range header3Lines {
+		for _, bad := range []string{"🚨1", "⚡️1", "💤1"} {
+			if strings.Contains(headerRow, bad) {
+				t.Fatalf("emoji header should not show fleet count %q: %q", bad, headerRow)
+			}
 		}
 	}
 }

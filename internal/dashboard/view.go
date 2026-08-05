@@ -92,10 +92,10 @@ func (m Model) View() string {
 	listW, panelW := m.panelWidths(innerW)
 
 	lines := make([]string, 0, innerH)
-	lines = append(lines, m.headerLine(innerW))
+	lines = append(lines, m.headerLines(innerW)...)
 	lines = append(lines, fit(m.st.dim.Render(strings.Repeat("━", innerW)), innerW))
 
-	bodyLines := bodyLinesFor(innerH)
+	bodyLines := bodyLinesFor(innerH, mainHeaderHeight)
 	if bodyLines < 1 {
 		bodyLines = 1
 	}
@@ -132,10 +132,10 @@ func framed(w int, rows []string, border lipgloss.Style) []string {
 }
 
 // bodyLinesFor is the row count available for the list/preview body of a
-// canvas innerH cells tall: the header and divider above it, the footer
-// below.
-func bodyLinesFor(innerH int) int {
-	n := innerH - 3
+// canvas innerH cells tall: headerHeight rows of title chrome, one divider
+// below it, and one footer row at the bottom.
+func bodyLinesFor(innerH, headerHeight int) int {
+	n := innerH - headerHeight - 2
 	if n < 1 {
 		return 1
 	}
@@ -368,7 +368,17 @@ func (m Model) listLines(w, bodyLines int) []string {
 		width:       w,
 		spinner:     m.spinnerFrame(),
 	})
-	return strings.Split(m.agentList.View(), "\n")
+	out := strings.Split(m.agentList.View(), "\n")
+	// The bubbles list can emit more or fewer lines than requested at small
+	// heights (e.g. its own minimum for pagination chrome); clamp to exactly
+	// bodyLines so it stays zip-aligned with the preview column in View().
+	if len(out) > bodyLines {
+		out = out[:bodyLines]
+	}
+	for len(out) < bodyLines {
+		out = append(out, fit("", w))
+	}
+	return out
 }
 
 // panelWidths splits the popup width into list | preview columns using the
@@ -454,16 +464,40 @@ func trimTrailingEmpty(lines []string) []string {
 	return lines[:i]
 }
 
-// headerLine is the title with the key-hint aligned right.
-func (m Model) headerLine(w int) string {
-	app := m.theme.Icons.App
-	title := m.st.cyan.Bold(true).Render(" " + app + " tmon")
+// mainHeaderHeight is the row count of the popup's title chrome: the
+// asciiLogo lines, one per row.
+const mainHeaderHeight = len(asciiLogo)
+
+// asciiLogo is the tmon wordmark drawn across the header's three rows.
+var asciiLogo = [3]string{
+	"▀█▀ █▀▄▀█ █▀█ █▄░█",
+	"░█░ █░▀░█ █▄█ █░▀█",
+	"▔▔▔ ▔▔▔▔▔ ▔▔▔ ▔▔▔▔",
+}
+
+// headerLines renders the popup title chrome: the ascii wordmark on the
+// left spanning all mainHeaderHeight rows, and the key hint right-aligned
+// on the vertically centered row.
+func (m Model) headerLines(w int) []string {
 	hint := m.st.dim.Render("[/] search  [esc/q] quit ")
-	pad := w - ansi.StringWidth(title) - ansi.StringWidth(hint)
-	if pad < 1 {
-		return ansi.Truncate(title, w, "")
+	hintW := ansi.StringWidth(hint)
+	mid := mainHeaderHeight / 2
+
+	lines := make([]string, mainHeaderHeight)
+	for i, glyph := range asciiLogo {
+		logo := m.st.cyan.Bold(true).Render(" " + glyph)
+		right, rightW := "", 0
+		if i == mid {
+			right, rightW = hint, hintW
+		}
+		pad := w - ansi.StringWidth(logo) - rightW
+		if pad < 1 {
+			lines[i] = ansi.Truncate(logo, w, "")
+			continue
+		}
+		lines[i] = logo + strings.Repeat(" ", pad) + right
 	}
-	return title + strings.Repeat(" ", pad) + hint
+	return lines
 }
 
 // identityStyle is the lipgloss style for an agent's brand color, falling

@@ -253,9 +253,10 @@ func (m Model) handleMouse(msg tea.MouseMsg) (Model, tea.Cmd) {
 				return m, nil
 			}
 		}
-		// Rows 0 (header) and 1 (divider) are chrome; body rows start at 2.
-		bodyRow := msg.Y - 2
-		if bodyRow < 0 || bodyRow >= bodyLinesFor(m.height-2) {
+		// Rows 0..mainHeaderHeight-1 (header) and mainHeaderHeight (divider)
+		// are chrome; body rows start right after.
+		bodyRow := msg.Y - (mainHeaderHeight + 1)
+		if bodyRow < 0 || bodyRow >= bodyLinesFor(m.height-2, mainHeaderHeight) {
 			return m, nil
 		}
 		if m.clickAgentAt(bodyRow) {
@@ -278,7 +279,7 @@ func (m *Model) clickAgentAt(bodyRow int) bool {
 	}
 	// Only count fully rendered rows: a partially clipped item cannot be
 	// the click target.
-	if (idxInView+1)*itemH > bodyLinesFor(m.height-2) {
+	if (idxInView+1)*itemH > bodyLinesFor(m.height-2, mainHeaderHeight) {
 		return false
 	}
 	hit, ok := visible[idxInView].(agentItem)

@@ -182,7 +182,7 @@ func (m Model) themeView(w, h int) string {
 	lines = append(lines, m.themeHeaderLine(innerW))
 	lines = append(lines, fit(m.st.dim.Render(strings.Repeat("━", innerW)), innerW))
 
-	bodyLines := bodyLinesFor(innerH)
+	bodyLines := bodyLinesFor(innerH, 1)
 	if bodyLines < 1 {
 		bodyLines = 1
 	}

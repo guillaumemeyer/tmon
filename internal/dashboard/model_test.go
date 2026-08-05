@@ -546,19 +546,20 @@ func TestMouseClickFocusesAgent(t *testing.T) {
 	}
 
 	// Body rows: each agent spans four (name, cwd, pane, usage). Clicking
-	// any of an agent's rows selects it and focuses its pane: y 3-6 = Grok,
-	// y 7-10 = Claude, y 11-14 = Codex (one row below the top border).
-	m = applyMsg(t, m, click(2, 4))
+	// any of an agent's rows selects it and focuses its pane: y 5-8 = Grok,
+	// y 9-12 = Claude, y 13-16 = Codex (below the top border and the
+	// mainHeaderHeight-row wordmark + divider).
+	m = applyMsg(t, m, click(2, 6))
 	if focused != "main:0.0" {
 		t.Fatalf("click Grok: focused %q, want main:0.0", focused)
 	}
 
-	m = applyMsg(t, m, click(2, 7))
+	m = applyMsg(t, m, click(2, 9))
 	if focused != "main:0.1" {
 		t.Fatalf("click Claude: focused %q, want main:0.1", focused)
 	}
 
-	m = applyMsg(t, m, click(2, 11))
+	m = applyMsg(t, m, click(2, 13))
 	if focused != "side:3.0" {
 		t.Fatalf("click Codex: focused %q, want side:3.0", focused)
 	}
@@ -583,17 +584,17 @@ func TestMouseClickOnStatsLine(t *testing.T) {
 	}
 
 	// Rows are uniform (4 lines) whether or not usage is present, so a click
-	// on any line of an agent's block selects that agent: y 3-6 = Grok,
-	// y 7-10 = Claude, y 11-14 = Codex.
-	m = applyMsg(t, m, click(2, 3))
+	// on any line of an agent's block selects that agent: y 5-8 = Grok,
+	// y 9-12 = Claude, y 13-16 = Codex.
+	m = applyMsg(t, m, click(2, 5))
 	if focused != "main:0.0" {
 		t.Fatalf("click stats line: focused %q, want main:0.0", focused)
 	}
-	m = applyMsg(t, m, click(2, 7))
+	m = applyMsg(t, m, click(2, 9))
 	if focused != "main:0.1" {
 		t.Fatalf("click Claude after stats line: focused %q, want main:0.1", focused)
 	}
-	m = applyMsg(t, m, click(2, 11))
+	m = applyMsg(t, m, click(2, 13))
 	if focused != "side:3.0" {
 		t.Fatalf("click Codex after stats line: focused %q, want side:3.0", focused)
 	}
@@ -611,16 +612,16 @@ func TestMouseClickIgnoresHeadersAndChrome(t *testing.T) {
 		return nil
 	}
 
-	// Chrome rows: top border (y=0), header (y=1), divider (y=2), footer
-	// (y=22, above the bottom border).
-	for _, y := range []int{0, 1, 2, 22} {
+	// Chrome rows: top border (y=0), the mainHeaderHeight-row wordmark
+	// (y=1-3), divider (y=4), footer (y=22, above the bottom border).
+	for _, y := range []int{0, 1, 2, 3, 4, 22} {
 		m = applyMsg(t, m, click(2, y))
 		if focused != "" {
 			t.Fatalf("click on chrome row y=%d focused %q", y, focused)
 		}
 	}
-	// Clicks below the last agent (y=15+, past the 3 rows × 4 lines) no-op.
-	for _, y := range []int{15, 18} {
+	// Clicks below the last agent (y=17+, past the 3 rows × 4 lines) no-op.
+	for _, y := range []int{17, 20} {
 		m = applyMsg(t, m, click(2, y))
 		if focused != "" {
 			t.Fatalf("click below the list y=%d focused %q", y, focused)
@@ -651,7 +652,7 @@ func TestMouseClickFocusesInSearchFlatList(t *testing.T) {
 	}
 
 	// Narrow to a single agent: the flat list has one item at body row 0
-	// (screen row 3, below the top border, header and divider).
+	// (screen row 5, below the top border, the wordmark header, and divider).
 	m = applyMsg(t, m, key('/'))
 	for _, r := range []rune{'c', 'o', 'd', 'e', 'x'} {
 		m = applyMsg(t, m, key(r))
@@ -659,7 +660,7 @@ func TestMouseClickFocusesInSearchFlatList(t *testing.T) {
 	if len(m.agentList.Items()) != 1 {
 		t.Fatalf("filtered items = %d, want 1", len(m.agentList.Items()))
 	}
-	m = applyMsg(t, m, click(2, 3))
+	m = applyMsg(t, m, click(2, 5))
 	if focused != "side:3.0" {
 		t.Fatalf("click in search list: focused %q, want side:3.0", focused)
 	}
@@ -756,7 +757,7 @@ func TestViewEmptyState(t *testing.T) {
 	m.width, m.height = 80, 24
 
 	v := m.View()
-	for _, want := range []string{"[@] tmon", "No agents detected."} {
+	for _, want := range []string{asciiLogo[0], "No agents detected."} {
 		if !strings.Contains(v, want) {
 			t.Fatalf("view missing %q:\n%s", want, v)
 		}
@@ -788,7 +789,7 @@ func TestViewRendersFlatList(t *testing.T) {
 
 	v := m.View()
 	for _, want := range []string{
-		"[@] tmon",
+		asciiLogo[0],
 		"Popup preview scroll (Grok Build)", // session title + name
 		"Claude Code", "Codex CLI",
 		"code/tmon",       // cwd

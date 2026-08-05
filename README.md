@@ -1,8 +1,3 @@
-```
-▀█▀ █▀▄▀█ █▀█ █▄░█
-░█░ █░▀░█ █▄█ █░▀█
-```
-
 # tmon — your AI coding agents, now with a leash
 
 ```
@@ -308,7 +303,7 @@ detection to see them.
 
 ## Installation
 
-### One-liner
+### One-liner (recommended)
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/guillaumemeyer/tmon/main/install.sh | sh
@@ -318,7 +313,7 @@ Detects whether TPM manages your tmux config or not, clones the plugin
 (updating an existing checkout), wires `~/.tmux.conf`, and reloads tmux if
 you're inside it. Safe to re-run.
 
-### 1. Agent install (recommended)
+### 1. Agent install
 
 Paste this into your coding agent (Grok Build, Claude Code, Codex, …) and let
 it wire up your tmux config:
