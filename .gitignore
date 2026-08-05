@@ -9,3 +9,7 @@
 # Test/coverage output
 coverage.out
 *.test
+
+# Generated demo media (record locally with docs/demo/demo.sh)
+docs/demo/demo.gif
+docs/demo/demo.mp4
