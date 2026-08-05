@@ -29,7 +29,9 @@ func TestIncrementalTokens(t *testing.T) {
 	src := filepath.Join(dir, "session.jsonl")
 
 	// First poll: empty file, no cache.
-	os.WriteFile(src, nil, 0o644)
+	if err := os.WriteFile(src, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if n, err := incrementalTokens(dir, src, countUsage); err != nil || n != 0 {
 		t.Fatalf("empty file: n=%d err=%v", n, err)
 	}
@@ -122,8 +124,10 @@ func TestLatestTokens(t *testing.T) {
 func TestIncrementalTokensRotation(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "session.jsonl")
-	os.WriteFile(src, []byte(`{"usage":{"tokens":50}}
-`), 0o644)
+	if err := os.WriteFile(src, []byte(`{"usage":{"tokens":50}}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	n, err := incrementalTokens(dir, src, countUsage)
 	if err != nil || n != 50 {
 		t.Fatalf("initial: n=%d err=%v, want 50", n, err)
@@ -175,10 +179,14 @@ func TestIncrementalTokensVersionBump(t *testing.T) {
 func TestPruneUsageCache(t *testing.T) {
 	dir := t.TempDir()
 	usageDir := filepath.Join(dir, "usage")
-	os.MkdirAll(usageDir, 0o755)
+	if err := os.MkdirAll(usageDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	live := filepath.Join(dir, "live.jsonl")
-	os.WriteFile(live, []byte("x"), 0o644)
+	if err := os.WriteFile(live, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	dead := filepath.Join(dir, "dead.jsonl")
 
 	// Write two entries past the (low) cap by lowering it temporarily.

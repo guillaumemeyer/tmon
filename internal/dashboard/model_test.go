@@ -124,7 +124,7 @@ func TestFilterFuzzyNameAndCWD(t *testing.T) {
 	}
 	for _, c := range cases {
 		m = applyMsg(t, m, key('/')) // filtering happens in search mode
-		for _, r := range []rune(c.query) {
+		for _, r := range c.query {
 			m = applyMsg(t, m, key(r))
 		}
 		got := labelsOf(m)
@@ -182,7 +182,7 @@ func TestFilterFuzzyPreviewContent(t *testing.T) {
 
 	// Fuzzy match against content that is not the selected agent's preview.
 	m = applyMsg(t, m, key('/'))
-	for _, r := range []rune("middleware") {
+	for _, r := range "middleware" {
 		m = applyMsg(t, m, key(r))
 	}
 	if len(m.filtered) != 1 || m.rows[m.filtered[0]].Label != "Codex" {
@@ -193,7 +193,7 @@ func TestFilterFuzzyPreviewContent(t *testing.T) {
 	for range "middleware" {
 		m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyBackspace})
 	}
-	for _, r := range []rune("aprvl") { // approval
+	for _, r := range "aprvl" { // approval
 		m = applyMsg(t, m, key(r))
 	}
 	if len(m.filtered) != 1 || m.rows[m.filtered[0]].Label != "Claude" {
@@ -303,7 +303,7 @@ func TestSelectionClampsOnFilter(t *testing.T) {
 
 	// Filtering down to one agent clamps the selection to 0.
 	m = applyMsg(t, m, key('/'))
-	for _, r := range []rune("aud") { // matches only "Claude Code"
+	for _, r := range "aud" { // matches only "Claude Code"
 		m = applyMsg(t, m, key(r))
 	}
 	if len(m.filtered) != 1 {

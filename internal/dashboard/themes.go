@@ -43,7 +43,7 @@ func (d themeDelegate) Render(w io.Writer, lm list.Model, index int, item list.I
 	if lm.Index() == index {
 		line = d.st.selBg.Render(line)
 	}
-	io.WriteString(w, line)
+	_, _ = io.WriteString(w, line)
 }
 
 // newThemesList builds the bubbles list used by the theme selector: the

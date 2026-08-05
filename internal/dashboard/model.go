@@ -221,7 +221,7 @@ func defaultFocusCmd(r Row) tea.Cmd {
 	return tea.Sequence(
 		func() tea.Msg {
 			if r.Pane != "" && r.Pane != "?" && tmux.Available() {
-				tmux.Run("switch-client", "-t", r.Pane)
+				_, _ = tmux.Run("switch-client", "-t", r.Pane)
 			}
 			return nil
 		},

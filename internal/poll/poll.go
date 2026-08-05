@@ -187,7 +187,7 @@ var announce = notifyTransition
 // ringBell rings the terminal bell via tmux, overridable in tests.
 var ringBell = func() {
 	if tmux.Available() {
-		tmux.Run("run-shell", `printf '\a'`)
+		_, _ = tmux.Run("run-shell", `printf '\a'`)
 	}
 }
 
@@ -199,7 +199,7 @@ func notifyTransition(label string, old, new agent.Status, cwd string) {
 		return
 	}
 	if tmux.Available() {
-		tmux.Run("display-message", msg)
+		_, _ = tmux.Run("display-message", msg)
 	}
 }
 
@@ -241,13 +241,13 @@ var (
 		if pane == "" || pane == "?" || !tmux.Available() {
 			return
 		}
-		tmux.Run("set-option", "-p", "-t", pane, "@tmon_border", value)
+		_, _ = tmux.Run("set-option", "-p", "-t", pane, "@tmon_border", value)
 	}
 	clearPaneBorder = func(pane string) {
 		if pane == "" || pane == "?" || !tmux.Available() {
 			return
 		}
-		tmux.Run("set-option", "-u", "-p", "-t", pane, "@tmon_border")
+		_, _ = tmux.Run("set-option", "-u", "-p", "-t", pane, "@tmon_border")
 	}
 	ensureBorderChrome = func(position string) {
 		if !tmux.Available() {
@@ -256,8 +256,8 @@ var (
 		if position != "bottom" {
 			position = "top"
 		}
-		tmux.Run("set-option", "-g", "pane-border-status", position)
-		tmux.Run("set-option", "-g", "pane-border-format", "#{E:@tmon_border}")
+		_, _ = tmux.Run("set-option", "-g", "pane-border-status", position)
+		_, _ = tmux.Run("set-option", "-g", "pane-border-format", "#{E:@tmon_border}")
 	}
 )
 

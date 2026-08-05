@@ -109,7 +109,7 @@ func TestPreviewRecapturesOnReload(t *testing.T) {
 		t.Fatalf("captures after init = %d, want 1 (selected pane only)", len(captures))
 	}
 	n := len(captures)
-	m = applyMsg(t, m, tickMsg{})
+	_ = applyMsg(t, m, tickMsg{})
 	if len(captures) != n+1 {
 		t.Fatalf("captures after reload = %d, want %d (selected pane re-captured)", len(captures), n+1)
 	}

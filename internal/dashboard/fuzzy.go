@@ -13,9 +13,8 @@ func fuzzyMatch(query, text string) bool {
 		return true
 	}
 	q := []rune(strings.ToLower(query))
-	t := []rune(strings.ToLower(text))
 	i := 0
-	for _, r := range t {
+	for _, r := range strings.ToLower(text) {
 		if i < len(q) && r == q[i] {
 			i++
 			if i == len(q) {

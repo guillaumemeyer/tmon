@@ -1,11 +1,14 @@
-run:
-  timeout: 3m
-
+version: "2"
 linters:
+  default: none
   enable:
     - errcheck
     - govet
     - staticcheck
-
-issues:
-  exclude-use-default: false
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling

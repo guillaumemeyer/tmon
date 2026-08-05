@@ -59,7 +59,7 @@ var sessionWalkSkip = map[string]bool{
 // IDE's worth of data — stays cheap. ok is false when nothing matched.
 func newestSessionFile(dir string, suffixes []string, maxDepth, maxFiles int) (t time.Time, path string, ok bool) {
 	entries := 0
-	filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+	_ = filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil // unreadable subtree: skip
 		}

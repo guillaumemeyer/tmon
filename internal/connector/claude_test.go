@@ -428,7 +428,9 @@ func TestClaudeUnknownModelHasTokensOnly(t *testing.T) {
 func TestClaudeProjectDirByDecode(t *testing.T) {
 	home := stubClaudeHome(t)
 	projects := filepath.Join(home, "projects")
-	os.MkdirAll(filepath.Join(projects, "-home-other-dir"), 0o755)
+	if err := os.MkdirAll(filepath.Join(projects, "-home-other-dir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	dir := claudeProjectDirByDecode(projects, "/home/other/dir")
 	if dir != filepath.Join(projects, "-home-other-dir") {

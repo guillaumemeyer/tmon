@@ -30,11 +30,11 @@ func cmdBorder(args []string) int {
 	}
 	for _, target := range strings.Fields(panes) {
 		// Errors ignored per pane: a pane may vanish mid-loop.
-		tmux.Run("set-option", "-u", "-p", "-t", target, "@tmon_border")
+		_, _ = tmux.Run("set-option", "-u", "-p", "-t", target, "@tmon_border")
 	}
 	// Turn the border status strip off and clear the format we installed so
 	// a custom pane-border-format is not left pointing at @tmon_border.
-	tmux.Run("set-option", "-g", "pane-border-status", "off")
-	tmux.Run("set-option", "-gu", "pane-border-format")
+	_, _ = tmux.Run("set-option", "-g", "pane-border-status", "off")
+	_, _ = tmux.Run("set-option", "-gu", "pane-border-format")
 	return 0
 }

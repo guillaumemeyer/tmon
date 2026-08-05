@@ -81,7 +81,7 @@ func (d agentDelegate) Render(w io.Writer, lm list.Model, index int, item list.I
 	if !ok {
 		return
 	}
-	io.WriteString(w, strings.Join(d.renderRow(it.row, lm.Index() == index), "\n"))
+	_, _ = io.WriteString(w, strings.Join(d.renderRow(it.row, lm.Index() == index), "\n"))
 }
 
 // renderRow renders the four lines of one agent row, each exactly d.width
