@@ -127,14 +127,24 @@ func run(cfg config.Config, prevStatus map[int]agent.Status, notify bool, record
 	// Opt-in pane glow: when a pane's agent status changed, tint the pane's
 	// content area so a blocked agent is visible across the room. Only
 	// changed panes generate tmux round-trips; steady state is silent.
-	if cfg.PaneTint {
-		pal := theme.Resolve(theme.Options{
+	needTheme := cfg.PaneTint || cfg.PaneBorder
+	var resolved theme.Theme
+	if needTheme {
+		resolved = theme.Resolve(theme.Options{
 			Name:           cfg.Theme,
 			ColorOverrides: cfg.ColorOverrides,
 			IconOverrides:  cfg.IconOverrides,
 			ASCII:          cfg.ASCII,
-		}).Palette
-		applyTints(pal, sf.Agents, snapshot)
+		})
+	}
+	if cfg.PaneTint {
+		applyTints(resolved.Palette, sf.Agents, snapshot)
+	}
+	// Opt-in border status strip: blocked/working panes get a colored
+	// pane-border-status line; idle and exited panes clear it so the
+	// border reverts to the default (empty) strip.
+	if cfg.PaneBorder {
+		applyBorders(resolved, cfg.PaneBorderPosition, sf.Agents, snapshot)
 	}
 
 	res := Result{Statuses: statuses, Agents: snapshot}
@@ -234,6 +244,30 @@ var (
 		}
 		tmux.Run("select-pane", "-t", pane, "-P", style) // errors ignored: pane may have vanished
 	}
+	// Border-strip seams: per-pane user option holds a themed format fragment;
+	// #{E:@tmon_border} re-expands #[fg=…] styles in pane-border-format.
+	setPaneBorder = func(pane, value string) {
+		if pane == "" || pane == "?" || !tmux.Available() {
+			return
+		}
+		tmux.Run("set-option", "-p", "-t", pane, "@tmon_border", value)
+	}
+	clearPaneBorder = func(pane string) {
+		if pane == "" || pane == "?" || !tmux.Available() {
+			return
+		}
+		tmux.Run("set-option", "-u", "-p", "-t", pane, "@tmon_border")
+	}
+	ensureBorderChrome = func(position string) {
+		if !tmux.Available() {
+			return
+		}
+		if position != "bottom" {
+			position = "top"
+		}
+		tmux.Run("set-option", "-g", "pane-border-status", position)
+		tmux.Run("set-option", "-g", "pane-border-format", "#{E:@tmon_border}")
+	}
 )
 
 // applyTints diffs the previous poll's agents (loaded from state.json)
@@ -289,4 +323,57 @@ func tintStyle(pal theme.Palette, st agent.Status) string {
 	default:
 		return "bg=default,fg=default"
 	}
+}
+
+// applyBorders syncs the pane-border status strip with the current snapshot.
+// Unlike applyTints (transition-only), every poll rewrites blocked/working
+// strips: otherwise enabling the feature mid-session leaves steady-state
+// agents with an empty border forever. Idle and exited panes clear
+// @tmon_border so the strip reverts to the default (empty) appearance.
+func applyBorders(t theme.Theme, position string, prev, snap []agent.AgentState) {
+	ensureBorderChrome(position)
+
+	prevByPane := make(map[string]agent.Status, len(prev))
+	for _, a := range prev {
+		if a.Pane != "" && a.Pane != "?" {
+			prevByPane[a.Pane] = a.Status
+		}
+	}
+	snapByPane := make(map[string]agent.Status, len(snap))
+	for _, a := range snap {
+		if a.Pane != "" && a.Pane != "?" {
+			snapByPane[a.Pane] = a.Status
+		}
+	}
+
+	for pane := range prevByPane {
+		if _, ok := snapByPane[pane]; !ok {
+			clearPaneBorder(pane)
+		}
+	}
+
+	for pane, st := range snapByPane {
+		switch st {
+		case agent.StatusBlocked, agent.StatusWorking:
+			setPaneBorder(pane, borderLine(t, st))
+		default:
+			clearPaneBorder(pane)
+		}
+	}
+}
+
+// borderLine is the pane-border-format fragment for a status. Idle is not
+// rendered here — callers clear the option instead so the border reverts
+// to default. Working uses the static theme working icon (not the spinner).
+func borderLine(t theme.Theme, st agent.Status) string {
+	var color, icon string
+	switch st {
+	case agent.StatusBlocked:
+		color, icon = t.Palette.Blocked, t.Icons.Blocked
+	case agent.StatusWorking:
+		color, icon = t.Palette.Working, t.Icons.Working
+	default:
+		return ""
+	}
+	return "#[fg=" + color + "] " + icon + " " + string(st) + " "
 }

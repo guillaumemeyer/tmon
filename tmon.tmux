@@ -36,13 +36,15 @@
 #                            blocked agent's pane glows with a darkened
 #                            blocked-color background, working agents get a
 #                            greenish glow, idle clears it; "on" enables
-#   @tmon-theme             "default" (default) — color theme preset for the
-#                            status bar and dashboard: default, catppuccin,
-#                            nord, dracula, tokyonight, gruvbox, solarized,
-#                            onedark (list/preview with `tmon theme`)
+#   @tmon-pane-border       "on" (default) — show a status-colored border
+#                            strip on agent panes (blocked/working icon+label;
+#                            idle clears to the default empty strip); "off"
+#                            disables. Owns pane-border-status/format while on.
+#   @tmon-pane-border-position "top" (default) or "bottom" — where the strip sits
 #   @tmon-color-<slot>      override one theme color slot; slot is one of
-#                            app|blocked|working|idle|dim|accent|warn|selbg
-#                            and the value a tmux color (name, colourNNN, hex)
+#                            bg|app|blocked|working|idle|dim|accent|warn|selbg
+#                            (bg is the dashboard popup background) and the
+#                            value a tmux color (name, colourNNN, hex)
 #   @tmon-icon-<slot>       override one status glyph; slot is one of
 #                            app|blocked|idle|warn (working agents use the
 #                            animated spinner instead of an icon)
@@ -84,7 +86,19 @@ BOLD_COUNTS=$(get_tmux_option "@tmon-bold-counts" "1")
 CONTEXT_WARN=$(get_tmux_option "@tmon-context-warn" "85")
 BLOCKED_BELL=$(get_tmux_option "@tmon-blocked-bell" "off")
 PANE_TINT=$(get_tmux_option "@tmon-pane-tint" "off")
-THEME=$(get_tmux_option "@tmon-theme" "default")
+PANE_BORDER=$(get_tmux_option "@tmon-pane-border" "on")
+PANE_BORDER_POS=$(get_tmux_option "@tmon-pane-border-position" "top")
+case "$PANE_BORDER_POS" in
+  top|bottom) ;;
+  *) PANE_BORDER_POS="top" ;;
+esac
+# The theme is chosen in the dashboard's selector and saved to state/theme
+# (tmux's TMON_THEME is server-state only and vanishes when the server
+# restarts), so restore it at load.
+THEME="default"
+if [ -s "$STATE_DIR/theme" ]; then
+  THEME=$(cat "$STATE_DIR/theme")
+fi
 AUTO_HOOKS=$(get_tmux_option "@tmon-auto-hooks" "on")
 
 # ─── Runtime environment ──────────────────────────────────────────────────────
@@ -105,13 +119,15 @@ tmux set-environment -g TMON_BOLD_COUNTS "$BOLD_COUNTS"
 tmux set-environment -g TMON_CONTEXT_WARN "$CONTEXT_WARN"
 tmux set-environment -g TMON_BLOCKED_BELL "$BLOCKED_BELL"
 tmux set-environment -g TMON_PANE_TINT "$PANE_TINT"
+tmux set-environment -g TMON_PANE_BORDER "$PANE_BORDER"
+tmux set-environment -g TMON_PANE_BORDER_POSITION "$PANE_BORDER_POS"
 tmux set-environment -g TMON_THEME "$THEME"
 tmux set-environment -g TMON_HOOK_STATE_DIR "$STATE_DIR/hooks"
 
 # Per-slot theme overrides. Set values are exported to the binary via
 # TMON_COLOR_*/TMON_ICON_*; cleared ones are unset so removing the tmux
 # option also removes the override.
-for slot in app blocked working idle dim accent warn selbg; do
+for slot in bg app blocked working idle dim accent warn selbg; do
   val=$(get_tmux_option "@tmon-color-$slot" "")
   upper=$(echo "$slot" | tr '[:lower:]' '[:upper:]')
   if [ -n "$val" ]; then
@@ -162,6 +178,15 @@ main() {
     "$BINARY" tint off
   fi
 
+  # Pane border strip: enable chrome when on so the strip is ready before the
+  # first poll; clean up when off so a previous session's strips don't linger.
+  if [ "$PANE_BORDER" = "on" ]; then
+    tmux set -g pane-border-status "$PANE_BORDER_POS"
+    tmux set -g pane-border-format '#{E:@tmon_border}'
+  elif [ -x "$BINARY" ]; then
+    "$BINARY" border off
+  fi
+
   # Make `git pull` a complete update. TPM's `prefix U` runs exactly `git pull`
   # in the plugin dir and then does nothing else — so without help the new
   # VERSION file lands on disk but bootstrap never runs and the binary stays
@@ -206,14 +231,16 @@ main() {
   fi
 
   # Chord table for the agent navigation popup: prefix <key> <key>.
+  # The popup opens borderless (-B); the dashboard draws its own rounded
+  # border inside, tinted with the current theme.
   tmux bind-key "$DASHBOARD_KEY" switch-client -T a-table
   tmux bind-key -T a-table "$DASHBOARD_KEY" \
-    display-popup -w 80% -h 80% -E "$BINARY dashboard"
+    display-popup -B -w 80% -h 80% -E "$BINARY dashboard"
 
   # Mouse click on the status-bar indicator opens the popup too.
   tmux bind-key -T root MouseDown1Status \
     if -F "#{==:#{mouse_status_range},tmon}" \
-    "display-popup -w 80% -h 80% -E '$BINARY dashboard'" \
+    "display-popup -B -w 80% -h 80% -E '$BINARY dashboard'" \
     "select-window -t ="
 }
 

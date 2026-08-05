@@ -93,24 +93,27 @@ app B  |  I
 ### Dashboard (`prefix a a`)
 
 An 80%×80% popup that lists every running agent — one flat row per agent —
-with a live pane preview on the right:
+with a live pane preview on the right. The tmux popup opens borderless; the
+dashboard draws its own **rounded border inside the popup, in the theme's
+accent color**, and paints its background from the theme's `bg` slot, so it
+reads as a solid themed panel:
 
 ```
-┌───────────────────────────────────────┬──────────────────────┐
+╭───────────────────────────────────────┬──────────────────────╮
 │  🤖 tmon           [/] search [esc/q] quit │  Popup preview scro… │
 │ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━│──────────────────────│
-│  / Popup preview scroll (Grok Build)   │  Popup preview scro… │
-│    ~/code/tmon  now                   │  $ tmon dashboard    │
-│    tmux: main:0.0                     │  … pane content …    │
-│    ctx 52.4k/200k ████████░░… 26%     │                      │
-│  🚨 Claude Code                        │                      │
-│    ~/site  paused                     │                      │
-│    tmux: main:0.1                     │                      │
-│  💤 Codex CLI                          │                      │
-│    ~/blog                             │                      │
-│    tmux: side:3.0                     │                      │
+│ / Popup preview scroll (Grok Build)    │  Popup preview scro… │
+│  ~/code/tmon  now                     │  $ tmon dashboard    │
+│  tmux: main / shell / 0               │  … pane content …    │
+│  ctx 52.4k/200k ████████░░… 26%       │                      │
+│ 🚨 Claude Code                         │                      │
+│  ~/site  paused                       │                      │
+│  tmux: main / shell / 1               │                      │
+│ 💤 Codex CLI                           │                      │
+│  ~/blog                               │                      │
+│  tmux: side / code / 0                │                      │
 │  v0.4.2     [↑/↓ j/k] navigate  …     │                      │
-└───────────────────────────────────────┴──────────────────────┘
+╰───────────────────────────────────────┴──────────────────────╯
 ```
 
 Each agent takes four uniform lines: a bold **session title and agent name**
@@ -121,15 +124,17 @@ list and the preview header. Working agents animate: their status slot spins
 (a green bubbles spinner) instead of the static `⚡️`. Beneath the name, a
 dimmed **working directory** plus — when the agent is blocked — the prompt it
 is waiting on (e.g. `[y/N]`, or `paused` when the prompt is unknown), then a
-dimmed **tmux location** (`tmux: main:0.1` — session:window.pane). When the
+dimmed **tmux location** (`tmux: main / shell / 1` — Session / Window / Pane,
+each segment preferring the human name and falling back to the numeric
+index). When the
 connector can read token usage, a fourth **stats line** appears with a
 progress-bar context gauge:
 
 ```
-    / Popup preview scroll (Grok Build)
-      ~/code/tmon
-      tmux: main:0.0
-      ctx 52.4k/200k ████████░░░░░░░░░░░░░░░░░░░░░░ 26%
+ / Popup preview scroll (Grok Build)
+  ~/code/tmon
+  tmux: main / shell / 0
+  ctx 52.4k/200k ████████░░░░░░░░░░░░░░░░░░░░░░ 26%
 ```
 
 The stats line shows the **context window** — tokens used over the model's
@@ -149,7 +154,7 @@ today:
 | Others | no stats line — no local usage source |
 
 Filter by status with `b` (blocked), `w` (working), `i` (idle); press the
-key again to clear. `1`–`9` jumps to the Nth agent. Hit `Enter` or **click
+key again to clear. Hit `Enter` or **click
 an agent line** to jump to that agent's pane.
 
 **Fuzzy search** — press `/`, then type a Telescope/fzy-style query. Matches
@@ -165,10 +170,9 @@ are ranked by match quality. `Esc` leaves search mode (the filter stays);
 | `←` / `→` / `h` / `l` | Grow / shrink the preview pane (persisted) |
 | Drag `│` separator | Resize the preview pane (persisted) |
 | `Ctrl-u` / `Ctrl-d` | Scroll the preview up / down |
-| `1`–`9` | Jump to the Nth agent in the list |
 | `b` / `w` / `i` | Filter by status: blocked / working / idle (press again to clear) |
 | `Enter` / `Space` | Jump to the selected agent's pane |
-| `t` | Open the theme selector (browse with `↑`/`↓`, `Enter` applies and persists, `Esc` back) |
+| `t` | Open the theme selector (browse with `↑`/`↓` — previews live; `Enter`/`Space` applies and persists, `Esc`/`q` reverts) |
 | Click on an agent line | Select and jump to that agent's pane |
 | `/` | Start fuzzy search (session title, name, directory, pane content) |
 | Type | Filter the list |
@@ -416,7 +420,8 @@ are optional — the defaults are sensible for most people.
 | `@tmon-context-warn` | `85` | context % at which a ⚠️ warning appears (`0` disables) |
 | `@tmon-blocked-bell` | `off` | ring the bell when an agent transitions to blocked |
 | `@tmon-pane-tint` | `off` | tint agent panes by status (blocked/working glow) |
-| `@tmon-theme` | `default` | color theme preset (see [Themes](#themes)) |
+| `@tmon-pane-border` | `on` | status-colored border strip on agent panes (blocked/working) |
+| `@tmon-pane-border-position` | `top` | where the strip sits (`top` or `bottom`) |
 | `@tmon-color-<slot>` | — | override one theme color slot |
 | `@tmon-icon-<slot>` | — | override one status glyph |
 
@@ -626,18 +631,45 @@ set -g @tmon-blocked-bell "on"
 set -g @tmon-pane-tint "on"
 ```
 
+### `@tmon-pane-border`
+
+> Draw a short status strip on each agent pane's border — themed icon and
+> status word in the blocked or working color — so you can spot waiting or
+> busy agents without reading the pane. Idle agents clear the strip so the
+> border returns to its default (empty) appearance; when an agent exits, its
+> strip is removed. This uses tmux's `pane-border-status` line (not the
+> box-drawing edges, which tmux only styles as active vs inactive). While the
+> feature is on, tmon owns `pane-border-status` and `pane-border-format`
+> globally — turn it off (or run `tmon border off`) to restore the default
+> border chrome. Non-agent panes get an empty strip for as long as the
+> feature is enabled.
+
+| | |
+|---|---|
+| **Default** | `on` |
+| **Options** | `on` or `off` |
+
+```tmux
+set -g @tmon-pane-border "on"             # default; set "off" to disable
+set -g @tmon-pane-border-position "top"   # or "bottom"
+```
+
 ---
 
 ## Themes
 
-tmon ships with color themes for both the status bar and the dashboard. Set
-`@tmon-theme` to one of the presets:
+tmon ships with color themes for both the status bar and the dashboard:
 
 `default` · `catppuccin` · `nord` · `dracula` · `tokyonight` · `gruvbox` · `solarized` · `onedark`
 
-```tmux
-set -g @tmon-theme "nord"
-```
+The theme is chosen live from the dashboard: press `t` inside the popup to
+open the theme selector — a list of presets on the left with the selected
+theme's color palette previewed on the right. Browsing the list applies the
+highlighted theme to the whole popup as a live preview. `Enter` or `Space`
+applies and persists the theme (it updates `TMON_THEME` for the live session
+and saves the choice to `state/theme`, which tmon restores on the next tmux
+server start); `Esc` or `q` closes the selector and reverts to the theme
+that was active before.
 
 Preview a theme's colors straight from the terminal (swatches plus a sample
 status line):
@@ -648,20 +680,17 @@ status line):
 
 `tmon theme` (no arguments) lists all presets.
 
-You can also switch themes live from the dashboard: press `t` inside the
-popup to open the theme selector — a list of presets on the left with the
-selected theme's color palette previewed on the right. `Enter` applies and
-persists the theme (it writes `@tmon-theme` and `TMON_THEME`), so it
-survives restarts; `Esc` closes the selector without changing anything.
-
 Fine-tune any theme with per-slot overrides. `@tmon-color-<slot>` accepts a
 tmux color — a name (`red`), an indexed color (`colour208`), or hex
-(`#ff5555`) — for the slots `app`, `blocked`, `working`, `idle`, `dim`,
-`accent`, `warn`, `selbg`. `@tmon-icon-<slot>` swaps a status glyph for
-`app`, `blocked`, `idle`, or `warn` (working agents show the animated
-spinner in the theme's `working` color instead of an icon):
+(`#ff5555`) — for the slots `bg` (the dashboard popup's background panel),
+`app`, `blocked`, `working`, `idle`, `dim`, `accent` (the popup's rounded
+border and highlights), `warn`, `selbg`.
+`@tmon-icon-<slot>` swaps a status glyph for `app`, `blocked`, `idle`, or
+`warn` (working agents show the animated spinner in the theme's `working`
+color instead of an icon):
 
 ```tmux
+set -g @tmon-color-bg "#1e1e2e"
 set -g @tmon-color-blocked "#ff5555"
 set -g @tmon-icon-idle "😴"
 set -g @tmon-icon-app "@"    # ASCII-only crowd

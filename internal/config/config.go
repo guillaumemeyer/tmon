@@ -32,6 +32,8 @@ type Config struct {
 	ContextWarn         int               // context-usage % at which the ⚠️ warning appears (0 disables)
 	BlockedBell         bool              // ring the terminal bell when an agent transitions to blocked
 	PaneTint            bool              // tint agent panes by status (blocked/working) via select-pane
+	PaneBorder          bool              // show a status-colored border strip on agent panes
+	PaneBorderPosition  string            // "top" or "bottom" for pane-border-status
 }
 
 // Defaults returns the configuration used when no TMON_* variables are set.
@@ -58,6 +60,8 @@ func Defaults() Config {
 		BoldCounts:          true,
 		Theme:               "default",
 		ContextWarn:         85,
+		PaneBorder:          true,
+		PaneBorderPosition:  "top",
 	}
 }
 
@@ -122,6 +126,18 @@ func FromEnv() Config {
 	c.ContextWarn = envInt("TMON_CONTEXT_WARN", c.ContextWarn)
 	c.BlockedBell = envBool("TMON_BLOCKED_BELL", c.BlockedBell)
 	c.PaneTint = envBool("TMON_PANE_TINT", c.PaneTint)
+	c.PaneBorder = envBool("TMON_PANE_BORDER", c.PaneBorder)
+	if v := os.Getenv("TMON_PANE_BORDER_POSITION"); v != "" {
+		switch strings.ToLower(v) {
+		case "top", "bottom":
+			c.PaneBorderPosition = strings.ToLower(v)
+		default:
+			c.PaneBorderPosition = "top"
+		}
+	}
+	if c.PaneBorderPosition == "" {
+		c.PaneBorderPosition = "top"
+	}
 	if v := os.Getenv("TMON_THEME"); v != "" {
 		c.Theme = v
 	}

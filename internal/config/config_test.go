@@ -238,6 +238,36 @@ func TestPaneTintFromEnv(t *testing.T) {
 	}
 }
 
+func TestPaneBorderFromEnv(t *testing.T) {
+	if c := Defaults(); !c.PaneBorder {
+		t.Fatal("default PaneBorder should be on")
+	}
+	if c := Defaults(); c.PaneBorderPosition != "top" {
+		t.Fatalf("default PaneBorderPosition = %q, want top", c.PaneBorderPosition)
+	}
+	// Explicit off wins over the default.
+	t.Setenv("TMON_PANE_BORDER", "off")
+	if c := FromEnv(); c.PaneBorder {
+		t.Fatal("PaneBorder should be off with TMON_PANE_BORDER=off")
+	}
+	t.Setenv("TMON_PANE_BORDER", "on")
+	c := FromEnv()
+	if !c.PaneBorder {
+		t.Fatal("PaneBorder should be on with TMON_PANE_BORDER=on")
+	}
+	if c.PaneBorderPosition != "top" {
+		t.Fatalf("PaneBorderPosition = %q, want top", c.PaneBorderPosition)
+	}
+	t.Setenv("TMON_PANE_BORDER_POSITION", "bottom")
+	if c := FromEnv(); c.PaneBorderPosition != "bottom" {
+		t.Fatalf("PaneBorderPosition = %q, want bottom", c.PaneBorderPosition)
+	}
+	t.Setenv("TMON_PANE_BORDER_POSITION", "sideways") // invalid → top
+	if c := FromEnv(); c.PaneBorderPosition != "top" {
+		t.Fatalf("invalid position = %q, want top", c.PaneBorderPosition)
+	}
+}
+
 func TestThemeOverrides(t *testing.T) {
 	t.Setenv("TMON_THEME", "nord")
 	t.Setenv("TMON_COLOR_BLOCKED", "#ff0000")

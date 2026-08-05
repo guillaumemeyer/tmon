@@ -25,6 +25,7 @@ Usage:
                            tmon hooks auto             Install for agents found on this machine
                            tmon hooks status
   tmon tint off          Restore all panes to default colors (undoes pane tints)
+  tmon border off        Clear status border strips and turn pane-border-status off
   tmon version           Print the installed version
 
 Environment (set by tmon.tmux from the @tmon-* tmux options):
@@ -45,8 +46,9 @@ Environment (set by tmon.tmux from the @tmon-* tmux options):
   TMON_THEME                  Theme preset: default, catppuccin, nord,
                               dracula, tokyonight, gruvbox, solarized, onedark
                               (default default)
-  TMON_COLOR_<SLOT>           Override a theme color slot (app|blocked|working|
-                              idle|dim|accent|warn|selbg); name, colourNNN, or hex
+  TMON_COLOR_<SLOT>           Override a theme color slot (bg|app|blocked|
+                              working|idle|dim|accent|warn|selbg); name,
+                              colourNNN, or hex
   TMON_ICON_<SLOT>            Override a status glyph (app|blocked|idle|
                               warn); working agents use the spinner
   TMON_CONTEXT_WARN           Context-usage % at which the ⚠️ warning appears
@@ -55,6 +57,10 @@ Environment (set by tmon.tmux from the @tmon-* tmux options):
                               on|off (default off)
   TMON_PANE_TINT              Tint agent panes by status (blocked/working get a
                               subtle darkened background glow): on|off (default off)
+  TMON_PANE_BORDER            Show a status-colored border strip on agent panes
+                              (blocked/working; idle clears to default): on|off
+                              (default on)
+  TMON_PANE_BORDER_POSITION   Where the strip sits: top|bottom (default top)
 `
 
 func main() {
@@ -78,6 +84,8 @@ func main() {
 		os.Exit(cmdHooks(os.Args[2:]))
 	case "tint":
 		os.Exit(cmdTint(os.Args[2:]))
+	case "border":
+		os.Exit(cmdBorder(os.Args[2:]))
 	case "version":
 		fmt.Println(version)
 	case "help", "-h", "--help":

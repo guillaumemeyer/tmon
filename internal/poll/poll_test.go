@@ -391,3 +391,177 @@ func TestTintDisabledNoOp(t *testing.T) {
 		t.Fatalf("tint calls with option disabled = %v, want none", *calls)
 	}
 }
+
+// ─── Pane border strip ────────────────────────────────────────────────────
+
+// borderCalls records set/clear/chrome operations for applyBorders tests.
+type borderRecorder struct {
+	sets   []string // "pane|value"
+	clears []string
+	chrome []string // positions
+}
+
+func borderCalls(t *testing.T) *borderRecorder {
+	t.Helper()
+	r := &borderRecorder{}
+	oldSet, oldClear, oldChrome := setPaneBorder, clearPaneBorder, ensureBorderChrome
+	setPaneBorder = func(pane, value string) { r.sets = append(r.sets, pane+"|"+value) }
+	clearPaneBorder = func(pane string) { r.clears = append(r.clears, pane) }
+	ensureBorderChrome = func(position string) { r.chrome = append(r.chrome, position) }
+	t.Cleanup(func() {
+		setPaneBorder, clearPaneBorder, ensureBorderChrome = oldSet, oldClear, oldChrome
+	})
+	return r
+}
+
+func TestBorderLine(t *testing.T) {
+	th := theme.Default
+	got := borderLine(th, agent.StatusBlocked)
+	want := "#[fg=colour208] " + th.Icons.Blocked + " blocked "
+	if got != want {
+		t.Fatalf("blocked line = %q, want %q", got, want)
+	}
+	got = borderLine(th, agent.StatusWorking)
+	want = "#[fg=green] " + th.Icons.Working + " working "
+	if got != want {
+		t.Fatalf("working line = %q, want %q", got, want)
+	}
+	if got := borderLine(th, agent.StatusIdle); got != "" {
+		t.Fatalf("idle line = %q, want empty", got)
+	}
+}
+
+func TestBorderLineASCII(t *testing.T) {
+	th := theme.Resolve(theme.Options{ASCII: true})
+	got := borderLine(th, agent.StatusBlocked)
+	want := "#[fg=colour208] B blocked "
+	if got != want {
+		t.Fatalf("ascii blocked = %q, want %q", got, want)
+	}
+	got = borderLine(th, agent.StatusWorking)
+	want = "#[fg=green] W working "
+	if got != want {
+		t.Fatalf("ascii working = %q, want %q", got, want)
+	}
+}
+
+func TestApplyBordersSyncsAllActive(t *testing.T) {
+	// Every blocked/working pane is rewritten each poll (including steady
+	// state), so enabling the feature mid-session still paints borders.
+	r := borderCalls(t)
+	prev := []agent.AgentState{
+		{PID: 1, Label: "Grok", Pane: "s:1.1", Status: agent.StatusWorking},
+		{PID: 2, Label: "Claude", Pane: "s:1.2", Status: agent.StatusBlocked},
+	}
+	snap := []agent.AgentState{
+		{PID: 1, Label: "Grok", Pane: "s:1.1", Status: agent.StatusWorking},
+		{PID: 2, Label: "Claude", Pane: "s:1.2", Status: agent.StatusBlocked},
+	}
+	applyBorders(theme.Default, "top", prev, snap)
+	want := map[string]bool{
+		"s:1.1|" + borderLine(theme.Default, agent.StatusWorking): true,
+		"s:1.2|" + borderLine(theme.Default, agent.StatusBlocked): true,
+	}
+	if len(r.sets) != 2 {
+		t.Fatalf("sets = %v, want 2 entries", r.sets)
+	}
+	for _, s := range r.sets {
+		if !want[s] {
+			t.Fatalf("unexpected set %q in %v", s, r.sets)
+		}
+	}
+	if len(r.clears) != 0 {
+		t.Fatalf("clears = %v, want none", r.clears)
+	}
+	if !reflect.DeepEqual(r.chrome, []string{"top"}) {
+		t.Fatalf("chrome = %v, want [top]", r.chrome)
+	}
+}
+
+func TestApplyBordersWorking(t *testing.T) {
+	r := borderCalls(t)
+	prev := []agent.AgentState{{PID: 1, Label: "Grok", Pane: "s:1.1", Status: agent.StatusIdle}}
+	snap := []agent.AgentState{{PID: 1, Label: "Grok", Pane: "s:1.1", Status: agent.StatusWorking}}
+	applyBorders(theme.Default, "bottom", prev, snap)
+	want := []string{"s:1.1|" + borderLine(theme.Default, agent.StatusWorking)}
+	if !reflect.DeepEqual(r.sets, want) {
+		t.Fatalf("sets = %v, want %v", r.sets, want)
+	}
+	if !reflect.DeepEqual(r.chrome, []string{"bottom"}) {
+		t.Fatalf("chrome = %v, want [bottom]", r.chrome)
+	}
+}
+
+func TestApplyBordersIdleClears(t *testing.T) {
+	// Idle reverts to the default (empty) border strip.
+	r := borderCalls(t)
+	prev := []agent.AgentState{{PID: 1, Label: "Grok", Pane: "s:1.1", Status: agent.StatusBlocked}}
+	snap := []agent.AgentState{{PID: 1, Label: "Grok", Pane: "s:1.1", Status: agent.StatusIdle}}
+	applyBorders(theme.Default, "top", prev, snap)
+	if len(r.sets) != 0 {
+		t.Fatalf("sets on idle = %v, want none", r.sets)
+	}
+	if !reflect.DeepEqual(r.clears, []string{"s:1.1"}) {
+		t.Fatalf("clears = %v, want [s:1.1]", r.clears)
+	}
+}
+
+func TestApplyBordersExitClears(t *testing.T) {
+	r := borderCalls(t)
+	prev := []agent.AgentState{{PID: 1, Label: "Grok", Pane: "s:1.1", Status: agent.StatusWorking}}
+	applyBorders(theme.Default, "top", prev, nil)
+	if !reflect.DeepEqual(r.clears, []string{"s:1.1"}) {
+		t.Fatalf("clears = %v, want [s:1.1]", r.clears)
+	}
+}
+
+func TestApplyBordersNewAgent(t *testing.T) {
+	r := borderCalls(t)
+	applyBorders(theme.Default, "top", nil, []agent.AgentState{
+		{PID: 9, Label: "Codex", Pane: "s:2.1", Status: agent.StatusIdle},
+	})
+	if len(r.sets) != 0 {
+		t.Fatalf("new idle sets = %v, want none", r.sets)
+	}
+	if !reflect.DeepEqual(r.clears, []string{"s:2.1"}) {
+		t.Fatalf("new idle clears = %v, want [s:2.1]", r.clears)
+	}
+
+	r = borderCalls(t)
+	applyBorders(theme.Default, "top", nil, []agent.AgentState{
+		{PID: 9, Label: "Codex", Pane: "s:2.1", Status: agent.StatusBlocked},
+	})
+	want := []string{"s:2.1|" + borderLine(theme.Default, agent.StatusBlocked)}
+	if !reflect.DeepEqual(r.sets, want) {
+		t.Fatalf("new blocked sets = %v, want %v", r.sets, want)
+	}
+}
+
+func TestApplyBordersSkipsUnmapped(t *testing.T) {
+	r := borderCalls(t)
+	prev := []agent.AgentState{
+		{PID: 1, Label: "Grok", Pane: "?", Status: agent.StatusWorking},
+		{PID: 2, Label: "Claude", Pane: "", Status: agent.StatusBlocked},
+	}
+	snap := []agent.AgentState{
+		{PID: 1, Label: "Grok", Pane: "?", Status: agent.StatusBlocked},
+		{PID: 2, Label: "Claude", Pane: "", Status: agent.StatusIdle},
+	}
+	applyBorders(theme.Default, "top", prev, snap)
+	if len(r.sets) != 0 || len(r.clears) != 0 {
+		t.Fatalf("unmapped: sets=%v clears=%v, want none", r.sets, r.clears)
+	}
+}
+
+func TestBorderDisabledNoOp(t *testing.T) {
+	stubDetect(t, []detect.Agent{{PID: 42, Label: "Grok", CWD: "code/tmon"}})
+	r := borderCalls(t)
+	cfg := testConfig(t)
+	cfg.PaneBorder = false
+	if _, err := run(cfg, nil, false, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.sets) != 0 || len(r.clears) != 0 || len(r.chrome) != 0 {
+		t.Fatalf("border traffic with option disabled: sets=%v clears=%v chrome=%v", r.sets, r.clears, r.chrome)
+	}
+}
