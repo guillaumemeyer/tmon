@@ -378,6 +378,18 @@ func loadHermesLocalSessions(home string) []hermesSession {
 	return out
 }
 
+// pairHermesSession binds a live CLI/TUI process to an open state.db session.
+// Pairing is conservative: a wrong title is worse than no title. Hermes leaves
+// many "open" rows (ended_at IS NULL) from prior TUIs, so guessing the newest
+// row attaches stale names (e.g. an old "Gateway Auth Failure" chat) to a
+// brand-new process in a different workspace.
+//
+// Match order:
+//  1. Session CWD equals the process CWD (strong signal).
+//  2. Sole open session with no recorded CWD, and only one live PID in this
+//     home — older Hermes rows omit cwd; safe only when there is nothing else
+//     to confuse them with.
+//  3. Otherwise unpaired (Title/Usage stay empty; model falls back to config).
 func pairHermesSession(p hermesProc, homePath string, sessions []hermesSession, pidsInHome int) *hermesSession {
 	if len(sessions) == 0 {
 		return nil
@@ -397,12 +409,13 @@ func pairHermesSession(p hermesProc, homePath string, sessions []hermesSession, 
 			}
 		}
 	}
-	// Single live PID in this home → newest open session.
-	if pidsInHome <= 1 {
+	// No CWD match. Do not fall back to "newest open session" — that is how
+	// stale titles leak into the popup. Only accept a sole empty-CWD row when
+	// a single process owns the home (nothing to disambiguate against).
+	if pidsInHome <= 1 && len(sessions) == 1 && sessions[0].CWD == "" {
 		return &sessions[0]
 	}
-	// Ambiguous: still take newest (documented best-effort).
-	return &sessions[0]
+	return nil
 }
 
 // ─── usage / model window ────────────────────────────────────────────────────

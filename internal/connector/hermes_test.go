@@ -343,3 +343,75 @@ func TestHermesFreshCollect(t *testing.T) {
 		t.Fatalf("collect = %+v", got)
 	}
 }
+
+// Stale open state.db rows with a different CWD must not steal the live
+// process's title (repro: new TUI in ~/code/tmon vs old "Gateway Auth" session).
+func TestHermesStaleSessionCWDMismatchNoTitle(t *testing.T) {
+	home := hermesFixtureHome(t)
+	writeHermesStateDB(t, home, hermesSession{
+		ID: "old", Source: "tui", Title: "Root Cause of Gateway Auth Failure",
+		Model: "deepseek-v4-flash", CWD: "/home/u",
+		InTokens: 100, OutTokens: 50, StartedAt: float64(time.Now().Add(-48 * time.Hour).Unix()),
+	}, 0)
+	stubHermesProcs(t, []hermesProc{{
+		pid: 42, cmdline: "hermes --tui",
+		cwdFull: "/home/u/code/tmon", cwd: "code/tmon",
+		envHome: home,
+	}})
+
+	recs, err := (Hermes{}).Probe(hermesTestCfg(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("records = %+v, want 1", recs)
+	}
+	r := recs[0]
+	if r.Title != "" {
+		t.Errorf("Title = %q, want empty (stale session must not pair)", r.Title)
+	}
+	if r.CWD != "code/tmon" {
+		t.Errorf("CWD = %q, want process cwd code/tmon (not stale session cwd)", r.CWD)
+	}
+	// Model may still come from config.yaml when no session is paired.
+	if r.Detail != "model:deepseek-v4-flash" {
+		t.Errorf("Detail = %q, want model from config fallback", r.Detail)
+	}
+}
+
+func TestPairHermesSessionByCWD(t *testing.T) {
+	sessions := []hermesSession{
+		{ID: "a", Title: "Wrong", CWD: "/home/u"},
+		{ID: "b", Title: "Right", CWD: "/home/u/code/tmon"},
+	}
+	p := hermesProc{cwdFull: "/home/u/code/tmon", cwd: "code/tmon"}
+	got := pairHermesSession(p, "", sessions, 1)
+	if got == nil || got.Title != "Right" {
+		t.Fatalf("got %+v, want Right by CWD", got)
+	}
+}
+
+func TestPairHermesSessionNoGuessOnCWDMismatch(t *testing.T) {
+	sessions := []hermesSession{
+		{ID: "stale", Title: "Gateway Auth Failure", CWD: "/home/u"},
+	}
+	p := hermesProc{cwdFull: "/home/u/code/tmon", cwd: "code/tmon"}
+	if got := pairHermesSession(p, "", sessions, 1); got != nil {
+		t.Fatalf("got %+v, want nil when CWD mismatches", got)
+	}
+}
+
+func TestPairHermesSessionSoleEmptyCWDFallback(t *testing.T) {
+	sessions := []hermesSession{
+		{ID: "only", Title: "Solo", CWD: ""},
+	}
+	p := hermesProc{cwdFull: "/work", cwd: "work"}
+	got := pairHermesSession(p, "", sessions, 1)
+	if got == nil || got.Title != "Solo" {
+		t.Fatalf("got %+v, want Solo (sole open session, no recorded CWD)", got)
+	}
+	// Multiple live PIDs: never guess even with empty CWD.
+	if got := pairHermesSession(p, "", sessions, 2); got != nil {
+		t.Fatalf("got %+v, want nil when multiple PIDs and no CWD match", got)
+	}
+}
