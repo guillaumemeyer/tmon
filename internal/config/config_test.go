@@ -250,20 +250,6 @@ func TestContextWarnFromEnv(t *testing.T) {
 	}
 }
 
-func TestBlockedBellFromEnv(t *testing.T) {
-	if c := Defaults(); !c.BlockedBell {
-		t.Fatal("default BlockedBell should be on")
-	}
-	t.Setenv("TMON_BLOCKED_BELL", "on")
-	if c := FromEnv(); !c.BlockedBell {
-		t.Fatal("BlockedBell should be on with TMON_BLOCKED_BELL=on")
-	}
-	t.Setenv("TMON_BLOCKED_BELL", "off")
-	if c := FromEnv(); c.BlockedBell {
-		t.Fatal("BlockedBell should be off with TMON_BLOCKED_BELL=off")
-	}
-}
-
 func TestClampInvalidValues(t *testing.T) {
 	t.Setenv("TMON_POLL_INTERVAL_MS", "0")
 	t.Setenv("TMON_IDLE_DECAY_POLLS", "0")

@@ -31,8 +31,6 @@
 #   @tmon-context-warn      85 (default) — context-usage % at which a ⚠️
 #                            warning appears in the status bar (and the
 #                            dashboard's usage bar turns yellow); "0" disables
-#   @tmon-blocked-bell      "on" (default) — ring the terminal bell when an
-#                            agent transitions to blocked; "off" disables
 #   @tmon-pane-border       "on" (default) — show a status-colored border
 #                            strip on agent panes (blocked/working icon+label;
 #                            idle clears to the default empty strip); "off"
@@ -138,7 +136,6 @@ CONNECTOR_FRESHNESS=$(get_tmux_option "@tmon-connector-freshness" "30")
 ASCII_ICONS=$(get_tmux_option "@tmon-ascii-icons" "0")
 BOLD_COUNTS=$(get_tmux_option "@tmon-bold-counts" "1")
 CONTEXT_WARN=$(get_tmux_option "@tmon-context-warn" "85")
-BLOCKED_BELL=$(get_tmux_option "@tmon-blocked-bell" "on")
 PANE_BORDER=$(get_tmux_option "@tmon-pane-border" "on")
 PANE_BORDER_POS=$(get_tmux_option "@tmon-pane-border-position" "top")
 case "$PANE_BORDER_POS" in
@@ -186,7 +183,6 @@ set_env_everywhere TMON_CONNECTOR_FRESHNESS "$CONNECTOR_FRESHNESS"
 set_env_everywhere TMON_ASCII_ICONS "$ASCII_ICONS"
 set_env_everywhere TMON_BOLD_COUNTS "$BOLD_COUNTS"
 set_env_everywhere TMON_CONTEXT_WARN "$CONTEXT_WARN"
-set_env_everywhere TMON_BLOCKED_BELL "$BLOCKED_BELL"
 set_env_everywhere TMON_PANE_BORDER "$PANE_BORDER"
 set_env_everywhere TMON_PANE_BORDER_POSITION "$PANE_BORDER_POS"
 set_env_everywhere TMON_THEME "$THEME"

@@ -1,7 +1,6 @@
 package poll
 
 import (
-	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -42,7 +41,7 @@ func TestAuthoritativeWinsOverBlockedPane(t *testing.T) {
 	records := []connector.Record{{
 		PID: 42, Label: "Grok", Status: agent.StatusWorking, Detail: "tool:Bash", At: time.Now(),
 	}}
-	res, err := run(cfg, nil, false, records)
+	res, err := run(cfg, records)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +63,7 @@ func TestPaneBlockedFallbackWithoutConnector(t *testing.T) {
 	paneBlocked = func(string) bool { return true }
 	t.Cleanup(func() { paneBlocked = old })
 
-	res, err := run(testConfig(t), nil, false, nil)
+	res, err := run(testConfig(t), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +93,7 @@ func TestSeedFromStateDetectsWorking(t *testing.T) {
 	readIO = func(pid int) (int64, error) { return 0, nil }
 	t.Cleanup(func() { readCPU, readIO = oldCPU, oldIO })
 
-	res, err := run(cfg, nil, false, nil)
+	res, err := run(cfg, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +114,7 @@ func TestNoStateFirstPollIsIdle(t *testing.T) {
 	readIO = func(int) (int64, error) { return 0, nil }
 	t.Cleanup(func() { readCPU, readIO = oldCPU, oldIO })
 
-	res, err := run(cfg, nil, false, nil)
+	res, err := run(cfg, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +131,7 @@ func TestConnectorOnlyInjection(t *testing.T) {
 		PID: 7777, Label: "Hermes", Status: agent.StatusBlocked, Detail: "approval:rm_rf", At: time.Now(),
 		Profile: "default", Title: "Fix build",
 	}}
-	res, err := run(cfg, nil, false, records)
+	res, err := run(cfg, records)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +159,7 @@ func TestUsageRidesConnectorRecord(t *testing.T) {
 		{PID: 42, Label: "Grok", Status: agent.StatusWorking, Detail: "tool:Bash", At: time.Now(), Usage: agent.Usage{TokensUsed: 13025, WindowTokens: 262144}},
 		{PID: 7777, Label: "Hermes", Status: agent.StatusIdle, Detail: "model:m", At: time.Now(), Profile: "coder", Usage: agent.Usage{TokensUsed: 5000, WindowTokens: 100000}},
 	}
-	res, err := run(cfg, nil, false, records)
+	res, err := run(cfg, records)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +178,7 @@ func TestUsageRidesConnectorRecord(t *testing.T) {
 	}
 
 	// A record with empty usage must not attach a zero-value pointer.
-	res2, err := run(cfg, nil, false, []connector.Record{
+	res2, err := run(cfg, []connector.Record{
 		{PID: 42, Label: "Grok", Status: agent.StatusIdle, At: time.Now()},
 	})
 	if err != nil {
@@ -199,7 +198,7 @@ func TestMergeBaselineAndConnectorOnly(t *testing.T) {
 		{PID: 42, Label: "Grok", Status: agent.StatusWorking, Detail: "tool:Bash", At: time.Now()},
 		{PID: 7777, Label: "Hermes", Status: agent.StatusIdle, Detail: "model:m", At: time.Now(), Profile: "default"},
 	}
-	res, err := run(cfg, nil, false, records)
+	res, err := run(cfg, records)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +224,7 @@ func TestStateFilePersistedWithConnectorDetail(t *testing.T) {
 		PID: 7777, Label: "Hermes", Status: agent.StatusWorking, Detail: "model:m", At: time.Now(),
 		Title: "Root Cause", Profile: "default",
 	}}
-	if _, err := run(cfg, nil, false, records); err != nil {
+	if _, err := run(cfg, records); err != nil {
 		t.Fatal(err)
 	}
 	sf, err := agent.LoadState(cfg.StateFilePath())
@@ -237,96 +236,6 @@ func TestStateFilePersistedWithConnectorDetail(t *testing.T) {
 	}
 	if sf.Agents[0].Title != "Root Cause" || sf.Agents[0].Profile != "default" {
 		t.Fatalf("state file agents = %+v, want title/profile persisted", sf.Agents)
-	}
-}
-
-// ─── Notifications ───────────────────────────────────────────────────────────
-
-func TestNotifyTransitionsOnChangeOnly(t *testing.T) {
-	var got []string
-	old := announce
-	announce = func(label string, old, new agent.Status, cwd string) {
-		got = append(got, fmt.Sprintf("%s:%s->%s", label, old, new))
-	}
-	t.Cleanup(func() { announce = old })
-
-	prev := map[int]agent.Status{
-		1: agent.StatusIdle,
-		2: agent.StatusWorking,
-		3: agent.StatusIdle,
-	}
-	snap := []agent.AgentState{
-		{PID: 1, Label: "Grok", Status: agent.StatusWorking},   // idle→working: announce
-		{PID: 2, Label: "Claude", Status: agent.StatusWorking}, // unchanged: silent
-		{PID: 3, Label: "Hermes", Status: agent.StatusBlocked}, // idle→blocked: announce
-		{PID: 4, Label: "Codex", Status: agent.StatusIdle},     // new agent: silent
-	}
-	notifyTransitions(prev, snap, false)
-	if len(got) != 2 {
-		t.Fatalf("announced %v, want 2", got)
-	}
-}
-
-func TestNotifyBellOnBlockedTransition(t *testing.T) {
-	var bells int
-	old := ringBell
-	ringBell = func() { bells++ }
-	t.Cleanup(func() { ringBell = old })
-	oldAnn := announce
-	announce = func(string, agent.Status, agent.Status, string) {}
-	t.Cleanup(func() { announce = oldAnn })
-
-	prev := map[int]agent.Status{1: agent.StatusWorking}
-	snap := []agent.AgentState{{PID: 1, Label: "Grok", Status: agent.StatusBlocked}}
-
-	// working→blocked with the bell enabled: rings once.
-	notifyTransitions(prev, snap, true)
-	if bells != 1 {
-		t.Fatalf("bells = %d, want 1 on working→blocked", bells)
-	}
-
-	// Disabled: no bell.
-	notifyTransitions(prev, snap, false)
-	if bells != 1 {
-		t.Fatalf("bells after disabled = %d, want still 1", bells)
-	}
-
-	// blocked→working with the bell enabled: no bell (only blocked rings).
-	notifyTransitions(map[int]agent.Status{1: agent.StatusBlocked}, []agent.AgentState{{PID: 1, Label: "Grok", Status: agent.StatusWorking}}, true)
-	if bells != 1 {
-		t.Fatalf("bells after blocked→working = %d, want still 1", bells)
-	}
-
-	// Steady state: no transition, no bell.
-	notifyTransitions(map[int]agent.Status{1: agent.StatusBlocked}, snap, true)
-	if bells != 1 {
-		t.Fatalf("bells after steady blocked = %d, want still 1", bells)
-	}
-
-	// A first sighting of a blocked agent is silent (not a transition).
-	notifyTransitions(nil, snap, true)
-	if bells != 1 {
-		t.Fatalf("bells after first sighting = %d, want still 1", bells)
-	}
-}
-
-func TestTransitionMessageFilter(t *testing.T) {
-	cases := []struct {
-		old, new agent.Status
-		want     string
-	}{
-		{agent.StatusIdle, agent.StatusWorking, "Grok is now working"},
-		{agent.StatusWorking, agent.StatusBlocked, "Grok needs input"},
-		{agent.StatusBlocked, agent.StatusIdle, ""},    // idling is silent
-		{agent.StatusWorking, agent.StatusWorking, ""}, // no transition
-	}
-	for _, c := range cases {
-		if got := transitionMessage("Grok", c.old, c.new, ""); got != c.want {
-			t.Errorf("transitionMessage(%s->%s) = %q, want %q", c.old, c.new, got, c.want)
-		}
-	}
-	if got := transitionMessage("Grok", agent.StatusIdle, agent.StatusWorking, "code/tmon"); got != "Grok is now working in code/tmon" {
-		t.Errorf("with cwd = %q, want \"Grok is now working in code/tmon\"", got)
 	}
 }
 
@@ -496,7 +405,7 @@ func TestBorderDisabledNoOp(t *testing.T) {
 	r := borderCalls(t)
 	cfg := testConfig(t)
 	cfg.PaneBorder = false
-	if _, err := run(cfg, nil, false, nil); err != nil {
+	if _, err := run(cfg, nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(r.sets) != 0 || len(r.clears) != 0 || len(r.chrome) != 0 {

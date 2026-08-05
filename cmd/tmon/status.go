@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/guillaumemeyer/tmon/internal/agent"
 	"github.com/guillaumemeyer/tmon/internal/config"
 	"github.com/guillaumemeyer/tmon/internal/poll"
 	"github.com/guillaumemeyer/tmon/internal/statusbar"
@@ -16,10 +15,6 @@ import (
 // network — all distribution concerns live in tmon.tmux and bootstrap.sh.
 // With --json it prints the full poll result instead (statuses plus each
 // agent's pane, cwd, detail and usage), for scripts, polybar and the like.
-//
-// Transitions (working/blocked toasts and the blocked bell) fire here:
-// prevStatus is loaded from state.json so a one-shot process can still
-// detect changes across status-interval refreshes.
 func cmdStatus(args []string) int {
 	jsonOut := false
 	if len(args) > 0 {
@@ -33,14 +28,7 @@ func cmdStatus(args []string) int {
 
 	cfg := config.FromEnv()
 
-	prevStatus := map[int]agent.Status{}
-	if sf, err := agent.LoadState(cfg.StateFilePath()); err == nil {
-		for _, s := range sf.Agents {
-			prevStatus[s.PID] = s.Status
-		}
-	}
-
-	res, err := poll.Run(cfg, prevStatus, true)
+	res, err := poll.Run(cfg)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "tmon: save state:", err)
 	}

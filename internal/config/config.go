@@ -29,10 +29,9 @@ type Config struct {
 	Theme               string            // theme preset name (default, catppuccin, nord, …)
 	ColorOverrides      map[string]string // @tmon-color-* overrides: slot → color string
 	IconOverrides       map[string]string // @tmon-icon-* overrides: slot → glyph
-	ContextWarn         int               // context-usage % at which the ⚠️ warning appears (0 disables)
-	BlockedBell         bool              // ring the terminal bell when an agent transitions to blocked
-	PaneBorder          bool              // show a status-colored border strip on agent panes
-	PaneBorderPosition  string            // "top" or "bottom" for pane-border-status
+	ContextWarn        int               // context-usage % at which the ⚠️ warning appears (0 disables)
+	PaneBorder         bool              // show a status-colored border strip on agent panes
+	PaneBorderPosition string            // "top" or "bottom" for pane-border-status
 }
 
 // DefaultStateDir is the durable runtime state directory used when
@@ -81,10 +80,9 @@ func Defaults() Config {
 		HookStateDir:        filepath.Join(stateDir, "hooks"),
 		BoldCounts:          true,
 		Theme:               "default",
-		ContextWarn:         85,
-		BlockedBell:         true,
-		PaneBorder:          true,
-		PaneBorderPosition:  "top",
+		ContextWarn:        85,
+		PaneBorder:         true,
+		PaneBorderPosition: "top",
 	}
 }
 
@@ -147,7 +145,6 @@ func FromEnv() Config {
 	c.ASCII = envBool("TMON_ASCII_ICONS", c.ASCII)
 	c.BoldCounts = envBool("TMON_BOLD_COUNTS", c.BoldCounts)
 	c.ContextWarn = envInt("TMON_CONTEXT_WARN", c.ContextWarn)
-	c.BlockedBell = envBool("TMON_BLOCKED_BELL", c.BlockedBell)
 	c.PaneBorder = envBool("TMON_PANE_BORDER", c.PaneBorder)
 	if v := os.Getenv("TMON_PANE_BORDER_POSITION"); v != "" {
 		switch strings.ToLower(v) {

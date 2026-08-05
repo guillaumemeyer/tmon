@@ -1,6 +1,6 @@
 // Package poll implements the single poll loop behind `tmon status`.
-// Consolidating the loop here keeps evaluation, notify, and persistence in
-// one place — the bash plugin had divergent copies that had already drifted.
+// Consolidating the loop here keeps evaluation and persistence in one
+// place — the bash plugin had divergent copies that had already drifted.
 package poll
 
 import (
@@ -26,16 +26,14 @@ type Result struct {
 }
 
 // Run performs one full poll: load the previous snapshot, detect baseline
-// agents, overlay fresh connector records, evaluate, persist, and (with
-// notify) announce transitions against prevStatus. prevStatus maps PID to
-// the previous poll's status; pass nil to skip notifications.
-func Run(cfg config.Config, prevStatus map[int]agent.Status, notify bool) (Result, error) {
-	return run(cfg, prevStatus, notify, connector.Collect(cfg, time.Now()))
+// agents, overlay fresh connector records, evaluate, and persist.
+func Run(cfg config.Config) (Result, error) {
+	return run(cfg, connector.Collect(cfg, time.Now()))
 }
 
 // run is Run with the connector records supplied, so tests can inject
 // records without touching the connector registry.
-func run(cfg config.Config, prevStatus map[int]agent.Status, notify bool, records []connector.Record) (Result, error) {
+func run(cfg config.Config, records []connector.Record) (Result, error) {
 	sf, err := agent.LoadState(cfg.StateFilePath())
 	if err != nil {
 		sf = agent.NewState() // corrupt state: start fresh rather than fail
@@ -123,10 +121,6 @@ func run(cfg config.Config, prevStatus map[int]agent.Status, notify bool, record
 	}
 	tracker.EndPoll()
 
-	if notify {
-		notifyTransitions(prevStatus, snapshot, cfg.BlockedBell)
-	}
-
 	// Opt-in border status strip: blocked/working panes get a colored
 	// pane-border-status line; idle and exited panes clear it so the
 	// border reverts to the default (empty) strip.
@@ -158,71 +152,6 @@ func resolvePane(paneMap *pane.Map, pid int) string {
 		return e.Target
 	}
 	return "?"
-}
-
-// notifyTransitions compares the fresh snapshot against the previous poll's
-// statuses and announces each change. Agents not present in prev (newly
-// seen, or the first poll after a fresh state file) are silent.
-// When bellOn is set, a transition into blocked also rings the terminal
-// bell — only transitions, never steady state. The status path loads
-// prevStatus from state.json so one-shot #() polls can still notify.
-func notifyTransitions(prev map[int]agent.Status, snap []agent.AgentState, bellOn bool) {
-	for _, s := range snap {
-		old, seen := prev[s.PID]
-		if !seen {
-			continue
-		}
-		if s.Status != old {
-			announce(s.Label, old, s.Status, s.CWD)
-			if bellOn && s.Status == agent.StatusBlocked {
-				ringBell()
-			}
-		}
-	}
-}
-
-// announce is the notification sink, overridable in tests.
-var announce = notifyTransition
-
-// ringBell rings the terminal bell via tmux, overridable in tests.
-var ringBell = func() {
-	if tmux.Available() {
-		_, _ = tmux.Run("run-shell", `printf '\a'`)
-	}
-}
-
-// notifyTransition pops a tmux display-message on notable transitions,
-// mirroring the bash plugin's notify_state_change.
-func notifyTransition(label string, old, new agent.Status, cwd string) {
-	msg := transitionMessage(label, old, new, cwd)
-	if msg == "" {
-		return
-	}
-	if tmux.Available() {
-		_, _ = tmux.Run("display-message", msg)
-	}
-}
-
-// transitionMessage returns the display-message for a transition, or "" for
-// silent ones. Working and blocked are announced; idle decay is quiet.
-// First sightings land in idle, so there is no "started" toast anymore.
-func transitionMessage(label string, old, new agent.Status, cwd string) string {
-	if old == new {
-		return ""
-	}
-	var msg string
-	switch new {
-	case agent.StatusWorking:
-		msg = label + " is now working"
-	case agent.StatusBlocked:
-		msg = label + " needs input"
-	default:
-		return ""
-	}
-	if cwd != "" {
-		msg += " in " + cwd
-	}
-	return msg
 }
 
 // Test seams: the poll loop touches live system state (process table, tmux,

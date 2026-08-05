@@ -405,7 +405,6 @@ are optional — the defaults are sensible for most people.
 | `@tmon-ascii-icons` | `0` | `1` renders icons as ASCII (`[@] B I`; working agents keep the spinner) |
 | `@tmon-bold-counts` | `1` | bold the per-status counts |
 | `@tmon-context-warn` | `85` | context % at which a ⚠️ warning appears (`0` disables) |
-| `@tmon-blocked-bell` | `on` | ring the bell when an agent transitions to blocked |
 | `@tmon-pane-border` | `on` | status-colored border strip on agent panes (blocked/working) |
 | `@tmon-pane-border-position` | `top` | where the strip sits (`top` or `bottom`) |
 | `@tmon-color-<slot>` | — | override one theme color slot |
@@ -588,22 +587,6 @@ set -g @tmon-bold-counts "0"
 set -g @tmon-context-warn "90"
 ```
 
-### `@tmon-blocked-bell`
-
-> Ring the terminal bell when an agent transitions to **blocked** — useful
-> when the status bar is out of view. The bell only fires on transitions,
-> never on steady state. Each `tmon status` refresh (the status-bar poller)
-> also shows a tmux `display-message` for working and blocked transitions.
-
-| | |
-|---|---|
-| **Default** | `on` |
-| **Options** | `on` or `off` |
-
-```tmux
-set -g @tmon-blocked-bell "off"   # silence the bell; messages still show
-```
-
 ### `@tmon-pane-border`
 
 > Draw a short status strip on each agent pane's border — themed icon and
@@ -670,18 +653,6 @@ set -g @tmon-color-blocked "#ff5555"
 set -g @tmon-icon-idle "😴"
 set -g @tmon-icon-app "@"    # ASCII-only crowd
 ```
-
----
-
-## Notifications
-
-Each status-bar refresh (`tmon status` on `status-interval`) compares the new
-snapshot to the previous `state.json` and:
-
-- shows a tmux `display-message` when an agent becomes **working** or **blocked**
-- rings the terminal bell on **blocked** when `@tmon-blocked-bell` is on (default)
-
-First sightings and idle decay stay silent. There is no separate daemon.
 
 ---
 
