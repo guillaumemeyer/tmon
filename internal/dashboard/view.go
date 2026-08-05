@@ -468,26 +468,28 @@ func trimTrailingEmpty(lines []string) []string {
 // asciiLogo lines, one per row.
 const mainHeaderHeight = len(asciiLogo)
 
-// asciiLogo is the tmon wordmark drawn across the header's three rows.
+// asciiLogo is the tmon wordmark drawn across the header's three rows. The
+// bottom row uses the lower one-eighth block (▁) rather than the overline
+// (▔) so it sits flush against row 2's baseline instead of floating near
+// its top, which reads as a properly grounded underline.
 var asciiLogo = [3]string{
 	"▀█▀ █▀▄▀█ █▀█ █▄░█",
 	"░█░ █░▀░█ █▄█ █░▀█",
-	"▔▔▔ ▔▔▔▔▔ ▔▔▔ ▔▔▔▔",
+	"▁▁▁ ▁▁▁▁▁ ▁▁▁ ▁▁▁▁",
 }
 
 // headerLines renders the popup title chrome: the ascii wordmark on the
-// left spanning all mainHeaderHeight rows, and the key hint right-aligned
-// on the vertically centered row.
+// left spanning all mainHeaderHeight rows, and the key hints right-aligned
+// on the top row, theme first.
 func (m Model) headerLines(w int) []string {
-	hint := m.st.dim.Render("[/] search  [esc/q] quit ")
+	hint := m.st.dim.Render("[t] theme  [/] search  [esc/q] quit ")
 	hintW := ansi.StringWidth(hint)
-	mid := mainHeaderHeight / 2
 
 	lines := make([]string, mainHeaderHeight)
 	for i, glyph := range asciiLogo {
 		logo := m.st.cyan.Bold(true).Render(" " + glyph)
 		right, rightW := "", 0
-		if i == mid {
+		if i == 0 {
 			right, rightW = hint, hintW
 		}
 		pad := w - ansi.StringWidth(logo) - rightW
@@ -728,11 +730,12 @@ func (m Model) footerLine(w int) string {
 }
 
 // footerRight is the right-aligned footer segment: match count while
-// filtering, resize/scroll tips for the preview, and the theme hint. Tips
-// are joined most-useful first and trailing ones are dropped until the
-// segment fits its budget, so the count and navigation hint always survive.
+// filtering, and resize/scroll tips for the preview. Tips are joined
+// most-useful first and trailing ones are dropped until the segment fits
+// its budget, so the count and navigation hint always survive. The theme
+// hint lives in the header, not here.
 func (m Model) footerRight(w int) string {
-	parts := make([]string, 0, 5)
+	parts := make([]string, 0, 4)
 	if m.query != "" || m.searching {
 		parts = append(parts, fmt.Sprintf("%d/%d", len(m.filtered), len(m.rows)))
 	}
@@ -742,7 +745,6 @@ func (m Model) footerRight(w int) string {
 	if m.previewNavTipVisible() {
 		parts = append(parts, "[C-u/C-d] scroll preview")
 	}
-	parts = append(parts, "[t] theme")
 	text := strings.Join(parts, "  ")
 	for ansi.StringWidth(text) > w && len(parts) > 1 {
 		parts = parts[:len(parts)-1]

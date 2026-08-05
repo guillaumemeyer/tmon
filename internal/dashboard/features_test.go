@@ -520,10 +520,18 @@ func TestFooterOmitsStatusCountsShowsPreviewTip(t *testing.T) {
 			t.Fatalf("footer should not show status count %q in:\n%s", bad, v)
 		}
 	}
-	for _, want := range []string{"[↑/↓ j/k] navigate", "[←/→ h/l · drag │] resize", "[C-u/C-d] scroll preview", "[t] theme"} {
+	for _, want := range []string{"[↑/↓ j/k] navigate", "[←/→ h/l · drag │] resize", "[C-u/C-d] scroll preview"} {
 		if !strings.Contains(v, want) {
 			t.Fatalf("footer missing %q in:\n%s", want, v)
 		}
+	}
+	// The theme hint lives in the header, not the footer.
+	if !strings.Contains(v, "[t] theme") {
+		t.Fatalf("header missing theme hint in:\n%s", v)
+	}
+	rawLines := strings.Split(v, "\n")
+	if !strings.Contains(rawLines[1], "[t] theme") {
+		t.Fatalf("theme hint should be on the top header row, got: %q", rawLines[1])
 	}
 }
 
