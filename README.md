@@ -687,15 +687,17 @@ First sightings and idle decay stay silent. There is no separate daemon.
 
 ## State location
 
-Runtime state (`state.json`, theme choice, hook session crumbs) lives under
-the system temporary directory:
+Runtime state (`state.json`, theme choice, dashboard prefs, hook session
+crumbs) lives under the XDG state directory so choices survive rebuilds,
+tmux reloads, and reboots:
 
 ```text
-$TMPDIR/tmon/          # or $TMP / $TEMP / /tmp when TMPDIR is unset
+$XDG_STATE_HOME/tmon/          # when XDG_STATE_HOME is set
+~/.local/state/tmon/           # default
 ```
 
 The plugin binary stays in the plugin tree (`<plugin>/bin`). Override the
-state path with `TMON_STATE_DIR` if you need a durable location across reboots.
+state path with `TMON_STATE_DIR` if you need a custom location.
 
 ---
 
@@ -739,7 +741,7 @@ still tracks it.
 **Stale agent counts after crash** — delete the state file and let it rebuild:
 
 ```bash
-rm "${TMPDIR:-/tmp}/tmon/state.json"
+rm "${XDG_STATE_HOME:-$HOME/.local/state}/tmon/state.json"
 ```
 
 **Binary won't download** — needs network access to GitHub Releases. Check

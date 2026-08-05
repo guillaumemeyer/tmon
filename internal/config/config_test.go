@@ -9,6 +9,7 @@ import (
 
 func TestFromEnvDefaults(t *testing.T) {
 	t.Setenv("HOME", "/home/tester")
+	t.Setenv("XDG_STATE_HOME", "")
 	for _, k := range []string{
 		"TMON_STATE_DIR", "TMON_BIN_DIR",
 		"TMON_POLL_INTERVAL_MS", "TMON_ACTIVITY_THRESHOLD_MS",
@@ -19,7 +20,8 @@ func TestFromEnvDefaults(t *testing.T) {
 	}
 
 	c := FromEnv()
-	wantState := filepath.Join(os.TempDir(), "tmon")
+	// Prefer DefaultStateDir() so UserHomeDir vs HOME stay consistent.
+	wantState := DefaultStateDir()
 	if c.StateDir != wantState {
 		t.Errorf("StateDir = %q, want %q", c.StateDir, wantState)
 	}
@@ -31,13 +33,39 @@ func TestFromEnvDefaults(t *testing.T) {
 	}
 }
 
-func TestDefaultsStateDirIsUnderTemp(t *testing.T) {
-	c := Defaults()
-	want := filepath.Join(os.TempDir(), "tmon")
-	if c.StateDir != want {
-		t.Fatalf("StateDir = %q, want %q", c.StateDir, want)
+func TestDefaultStateDirXDG(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", "/xdg/state")
+	if got := DefaultStateDir(); got != "/xdg/state/tmon" {
+		t.Fatalf("DefaultStateDir = %q, want /xdg/state/tmon", got)
 	}
-	if c.HookStateDir != filepath.Join(want, "hooks") {
+}
+
+func TestDefaultStateDirHomeFallback(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", "")
+	t.Setenv("HOME", "/home/tester")
+	// UserHomeDir may still win; force HOME-based path via empty XDG.
+	// When HOME is set, path is ~/.local/state/tmon.
+	got := DefaultStateDir()
+	// Accept either UserHomeDir() result or HOME-based when they match.
+	if !filepath.IsAbs(got) || filepath.Base(got) != "tmon" {
+		t.Fatalf("DefaultStateDir = %q, want absolute …/tmon", got)
+	}
+	if filepath.Base(filepath.Dir(got)) != "state" {
+		t.Fatalf("DefaultStateDir = %q, want …/state/tmon", got)
+	}
+}
+
+func TestDefaultsStateDirIsDurable(t *testing.T) {
+	t.Setenv("XDG_STATE_HOME", "")
+	c := Defaults()
+	// Must not use $TMPDIR/tmon — that collides with a binary named tmon.
+	if c.StateDir == filepath.Join(os.TempDir(), "tmon") {
+		t.Fatalf("StateDir must not be %q (file collision risk)", c.StateDir)
+	}
+	if filepath.Base(c.StateDir) != "tmon" {
+		t.Fatalf("StateDir = %q, want basename tmon", c.StateDir)
+	}
+	if c.HookStateDir != filepath.Join(c.StateDir, "hooks") {
 		t.Fatalf("HookStateDir = %q, want under StateDir/hooks", c.HookStateDir)
 	}
 }
@@ -103,7 +131,7 @@ func TestConnectorDefaults(t *testing.T) {
 	if c.ConnectorFreshness != 30*time.Second {
 		t.Errorf("ConnectorFreshness = %v, want 30s", c.ConnectorFreshness)
 	}
-	wantHooks := filepath.Join(os.TempDir(), "tmon", "hooks")
+	wantHooks := filepath.Join(DefaultStateDir(), "hooks")
 	if c.HookStateDir != wantHooks {
 		t.Errorf("HookStateDir = %q, want %q", c.HookStateDir, wantHooks)
 	}

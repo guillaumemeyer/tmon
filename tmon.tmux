@@ -50,20 +50,75 @@
 #                            this machine (set "on" to enable)
 #
 # The binary is downloaded on first load into <plugin>/bin (scripts/bootstrap.sh,
-# pinned + checksummed to VERSION). Runtime state (state.json, theme, hooks
-# crumbs) lives under the system temp directory at $TMPDIR/tmon (TMP/TEMP//tmp
-# fallbacks). Override with TMON_STATE_DIR if you need a durable path.
+# pinned + checksummed to VERSION). Runtime state (state.json, theme, dashboard
+# prefs, hooks crumbs) lives under $XDG_STATE_HOME/tmon (default
+# ~/.local/state/tmon) so theme choices survive rebuilds, reloads, and reboots.
+# Override with TMON_STATE_DIR. Do not use $TMPDIR/tmon: that path often collides
+# with a scratch binary named /tmp/tmon (a file), which breaks MkdirAll and
+# silently drops theme persistence.
 # ==============================================================================
 
 set -eu
 
 CURRENT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BIN_DIR="$CURRENT_DIR/bin"
-# System temp dir from the environment (TMPDIR, then TMP, then TEMP, else /tmp).
-TMP_ROOT="${TMPDIR:-${TMP:-${TEMP:-/tmp}}}"
-STATE_DIR="${TMP_ROOT%/}/tmon"
 BOOTSTRAP="$CURRENT_DIR/scripts/bootstrap.sh"
 BINARY="$BIN_DIR/tmon"
+TMP_ROOT="${TMPDIR:-${TMP:-${TEMP:-/tmp}}}"
+TMP_ROOT="${TMP_ROOT%/}"
+
+# Pick a writable state directory. Skip any candidate that already exists as
+# a non-directory (the common trap: a scratch binary at /tmp/tmon). Order:
+#   1. TMON_STATE_DIR (may be stale from a previous set-environment -g)
+#   2. $XDG_STATE_HOME/tmon
+#   3. ~/.local/state/tmon
+#   4. $TMPDIR/tmon-state  (never $TMPDIR/tmon)
+pick_state_dir() {
+  local c candidates=""
+  candidates="${TMON_STATE_DIR:-}"
+  candidates="$candidates
+${XDG_STATE_HOME:+${XDG_STATE_HOME%/}/tmon}
+${HOME:+${HOME}/.local/state/tmon}
+${TMP_ROOT}/tmon-state"
+  while IFS= read -r c; do
+    [ -n "$c" ] || continue
+    # Exists but is not a directory → unusable (binary collision).
+    if [ -e "$c" ] && [ ! -d "$c" ]; then
+      continue
+    fi
+    if mkdir -p "$c" 2>/dev/null; then
+      echo "$c"
+      return 0
+    fi
+  done <<EOF
+$candidates
+EOF
+  # Last resort: print a path even if mkdir failed so later ops are visible.
+  echo "${TMP_ROOT}/tmon-state"
+}
+
+STATE_DIR="$(pick_state_dir)"
+
+# Copy known preference files from a previous state location when the new
+# dir does not already have them (one-time migrate after the state-dir move).
+migrate_state_file() {
+  local src_dir="$1" name="$2"
+  [ -d "$src_dir" ] || return 0
+  [ -f "$src_dir/$name" ] || return 0
+  [ -e "$STATE_DIR/$name" ] && return 0
+  cp -a "$src_dir/$name" "$STATE_DIR/$name" 2>/dev/null || true
+}
+
+# Migrate from the plugin-local state/ (pre-temp layout) and from a real
+# $TMPDIR/tmon directory when present. Skip when the old path is a file
+# (e.g. a binary left at /tmp/tmon).
+migrate_state_file "$CURRENT_DIR/state" "theme"
+migrate_state_file "$CURRENT_DIR/state" "dashboard.json"
+OLD_TMP_STATE="${TMP_ROOT}/tmon"
+if [ -d "$OLD_TMP_STATE" ]; then
+  migrate_state_file "$OLD_TMP_STATE" "theme"
+  migrate_state_file "$OLD_TMP_STATE" "dashboard.json"
+fi
 
 # ─── Configuration ────────────────────────────────────────────────────────────
 

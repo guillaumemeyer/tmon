@@ -35,17 +35,39 @@ type Config struct {
 	PaneBorderPosition  string            // "top" or "bottom" for pane-border-status
 }
 
+// DefaultStateDir is the durable runtime state directory used when
+// TMON_STATE_DIR is unset: $XDG_STATE_HOME/tmon, or ~/.local/state/tmon.
+//
+// Theme, dashboard prefs, state.json, and hook crumbs live here so they
+// survive rebuilds, tmux reloads, and reboots. A path under $TMPDIR/tmon is
+// intentionally avoided: that name collides with a common scratch binary
+// (/tmp/tmon as a file), which made MkdirAll fail and wiped theme restore.
+func DefaultStateDir() string {
+	if xdg := os.Getenv("XDG_STATE_HOME"); xdg != "" {
+		return filepath.Join(xdg, "tmon")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		home = os.Getenv("HOME")
+	}
+	if home == "" {
+		// Last resort: still prefer a directory name that cannot collide
+		// with a "tmon" binary dropped in the temp root.
+		return filepath.Join(os.TempDir(), "tmon-state")
+	}
+	return filepath.Join(home, ".local", "state", "tmon")
+}
+
 // Defaults returns the configuration used when no TMON_* variables are set.
 // tmon.tmux exports the plugin values into the tmux environment; these
 // defaults apply to standalone/debug invocations. Runtime state lives under
-// the system temp directory ($TMPDIR/tmon via os.TempDir) so the plugin tree
-// stays read-mostly (binary + scripts only).
+// DefaultStateDir so the plugin tree stays read-mostly (binary + scripts).
 func Defaults() Config {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
 		home = os.Getenv("HOME")
 	}
-	stateDir := filepath.Join(os.TempDir(), "tmon")
+	stateDir := DefaultStateDir()
 	return Config{
 		StateDir:            stateDir,
 		BinDir:              filepath.Join(home, ".tmon", "bin"),
