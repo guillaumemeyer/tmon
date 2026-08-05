@@ -546,20 +546,20 @@ func TestMouseClickFocusesAgent(t *testing.T) {
 	}
 
 	// Body rows: each agent spans four (name, cwd, pane, usage). Clicking
-	// any of an agent's rows selects it and focuses its pane: y 5-8 = Grok,
-	// y 9-12 = Claude, y 13-16 = Codex (below the top border and the
+	// any of an agent's rows selects it and focuses its pane: y 4-7 = Grok,
+	// y 8-11 = Claude, y 12-15 = Codex (below the top border and the
 	// mainHeaderHeight-row wordmark + divider).
-	m = applyMsg(t, m, click(2, 6))
+	m = applyMsg(t, m, click(2, 4))
 	if focused != "main:0.0" {
 		t.Fatalf("click Grok: focused %q, want main:0.0", focused)
 	}
 
-	m = applyMsg(t, m, click(2, 9))
+	m = applyMsg(t, m, click(2, 8))
 	if focused != "main:0.1" {
 		t.Fatalf("click Claude: focused %q, want main:0.1", focused)
 	}
 
-	m = applyMsg(t, m, click(2, 13))
+	m = applyMsg(t, m, click(2, 12))
 	if focused != "side:3.0" {
 		t.Fatalf("click Codex: focused %q, want side:3.0", focused)
 	}
@@ -584,17 +584,17 @@ func TestMouseClickOnStatsLine(t *testing.T) {
 	}
 
 	// Rows are uniform (4 lines) whether or not usage is present, so a click
-	// on any line of an agent's block selects that agent: y 5-8 = Grok,
-	// y 9-12 = Claude, y 13-16 = Codex.
-	m = applyMsg(t, m, click(2, 5))
+	// on any line of an agent's block selects that agent: y 4-7 = Grok,
+	// y 8-11 = Claude, y 12-15 = Codex.
+	m = applyMsg(t, m, click(2, 4))
 	if focused != "main:0.0" {
 		t.Fatalf("click stats line: focused %q, want main:0.0", focused)
 	}
-	m = applyMsg(t, m, click(2, 9))
+	m = applyMsg(t, m, click(2, 8))
 	if focused != "main:0.1" {
 		t.Fatalf("click Claude after stats line: focused %q, want main:0.1", focused)
 	}
-	m = applyMsg(t, m, click(2, 13))
+	m = applyMsg(t, m, click(2, 12))
 	if focused != "side:3.0" {
 		t.Fatalf("click Codex after stats line: focused %q, want side:3.0", focused)
 	}
@@ -613,15 +613,15 @@ func TestMouseClickIgnoresHeadersAndChrome(t *testing.T) {
 	}
 
 	// Chrome rows: top border (y=0), the mainHeaderHeight-row wordmark
-	// (y=1-3), divider (y=4), footer (y=22, above the bottom border).
-	for _, y := range []int{0, 1, 2, 3, 4, 22} {
+	// (y=1-2), divider (y=3), footer (y=22, above the bottom border).
+	for _, y := range []int{0, 1, 2, 3, 22} {
 		m = applyMsg(t, m, click(2, y))
 		if focused != "" {
 			t.Fatalf("click on chrome row y=%d focused %q", y, focused)
 		}
 	}
-	// Clicks below the last agent (y=17+, past the 3 rows × 4 lines) no-op.
-	for _, y := range []int{17, 20} {
+	// Clicks below the last agent (y=16+, past the 3 rows × 4 lines) no-op.
+	for _, y := range []int{16, 20} {
 		m = applyMsg(t, m, click(2, y))
 		if focused != "" {
 			t.Fatalf("click below the list y=%d focused %q", y, focused)
@@ -652,7 +652,7 @@ func TestMouseClickFocusesInSearchFlatList(t *testing.T) {
 	}
 
 	// Narrow to a single agent: the flat list has one item at body row 0
-	// (screen row 5, below the top border, the wordmark header, and divider).
+	// (screen row 4, below the top border, the wordmark header, and divider).
 	m = applyMsg(t, m, key('/'))
 	for _, r := range []rune{'c', 'o', 'd', 'e', 'x'} {
 		m = applyMsg(t, m, key(r))
@@ -660,7 +660,7 @@ func TestMouseClickFocusesInSearchFlatList(t *testing.T) {
 	if len(m.agentList.Items()) != 1 {
 		t.Fatalf("filtered items = %d, want 1", len(m.agentList.Items()))
 	}
-	m = applyMsg(t, m, click(2, 5))
+	m = applyMsg(t, m, click(2, 4))
 	if focused != "side:3.0" {
 		t.Fatalf("click in search list: focused %q, want side:3.0", focused)
 	}

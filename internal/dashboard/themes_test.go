@@ -41,7 +41,7 @@ func TestThemeSelectorOpensAndListsThemes(t *testing.T) {
 		t.Fatalf("preview should show the highlighted theme's swatches:\n%s", v)
 	}
 	// Header and footer switch to theme-mode hints.
-	if !strings.Contains(v, "tmon — themes") ||
+	if !strings.Contains(v, asciiLogo[0]) ||
 		!strings.Contains(v, "[enter/space] apply") ||
 		!strings.Contains(v, "[esc/q] revert") {
 		t.Fatalf("theme-mode header/footer hints missing:\n%s", v)

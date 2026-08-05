@@ -92,7 +92,7 @@ func (m Model) View() string {
 	listW, panelW := m.panelWidths(innerW)
 
 	lines := make([]string, 0, innerH)
-	lines = append(lines, m.headerLines(innerW)...)
+	lines = append(lines, m.headerLines(innerW, "[t] theme  [/] search  [esc/q] quit ")...)
 	lines = append(lines, fit(m.st.dim.Render(strings.Repeat("━", innerW)), innerW))
 
 	bodyLines := bodyLinesFor(innerH, mainHeaderHeight)
@@ -468,21 +468,17 @@ func trimTrailingEmpty(lines []string) []string {
 // asciiLogo lines, one per row.
 const mainHeaderHeight = len(asciiLogo)
 
-// asciiLogo is the tmon wordmark drawn across the header's three rows. The
-// bottom row uses the lower one-eighth block (▁) rather than the overline
-// (▔) so it sits flush against row 2's baseline instead of floating near
-// its top, which reads as a properly grounded underline.
-var asciiLogo = [3]string{
+// asciiLogo is the tmon wordmark drawn across the header's two rows.
+var asciiLogo = [2]string{
 	"▀█▀ █▀▄▀█ █▀█ █▄░█",
 	"░█░ █░▀░█ █▄█ █░▀█",
-	"▁▁▁ ▁▁▁▁▁ ▁▁▁ ▁▁▁▁",
 }
 
-// headerLines renders the popup title chrome: the ascii wordmark on the
-// left spanning all mainHeaderHeight rows, and the key hints right-aligned
-// on the top row, theme first.
-func (m Model) headerLines(w int) []string {
-	hint := m.st.dim.Render("[t] theme  [/] search  [esc/q] quit ")
+// headerLines renders the popup title chrome shared by the agent view and
+// the theme selector: the ascii wordmark on the left spanning all
+// mainHeaderHeight rows, and hint right-aligned on the top row.
+func (m Model) headerLines(w int, hintText string) []string {
+	hint := m.st.dim.Render(hintText)
 	hintW := ansi.StringWidth(hint)
 
 	lines := make([]string, mainHeaderHeight)

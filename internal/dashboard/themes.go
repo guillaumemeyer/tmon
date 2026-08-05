@@ -8,7 +8,6 @@ import (
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/guillaumemeyer/tmon/internal/theme"
 	"github.com/guillaumemeyer/tmon/internal/tmux"
 )
@@ -179,10 +178,10 @@ func (m Model) applyThemePreview() Model {
 func (m Model) themeView(w, h int) string {
 	innerW, innerH := w-2, h-2
 	lines := make([]string, 0, innerH)
-	lines = append(lines, m.themeHeaderLine(innerW))
+	lines = append(lines, m.headerLines(innerW, "[enter/space] apply  [esc/q] revert ")...)
 	lines = append(lines, fit(m.st.dim.Render(strings.Repeat("━", innerW)), innerW))
 
-	bodyLines := bodyLinesFor(innerH, 1)
+	bodyLines := bodyLinesFor(innerH, mainHeaderHeight)
 	if bodyLines < 1 {
 		bodyLines = 1
 	}
@@ -260,18 +259,6 @@ func (m Model) themePreviewLines(w, n int, name string) []string {
 		out = append(out, fit("", w))
 	}
 	return out
-}
-
-// themeHeaderLine is the selector title with the apply/revert hint aligned
-// right.
-func (m Model) themeHeaderLine(w int) string {
-	title := m.st.cyan.Bold(true).Render(" " + m.theme.Icons.App + " tmon — themes")
-	hint := m.st.dim.Render("[enter/space] apply  [esc/q] revert ")
-	pad := w - ansi.StringWidth(title) - ansi.StringWidth(hint)
-	if pad < 1 {
-		return ansi.Truncate(title, w, "")
-	}
-	return title + strings.Repeat(" ", pad) + hint
 }
 
 // themeFooterLine is the selector footer: preview/apply/revert hints with
