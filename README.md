@@ -1,13 +1,5 @@
 # tmon — your AI coding agents, now with a leash
 
-```
-   ┌─────┐     ┌─────┐     ┌─────┐
-   │ ◉ ◉ │     │ ◉ ◉ │     │ ◉ ◉ │
-   │  ⌣  │     │  ⌣  │     │  ◠  │
-   └─────┘     └─────┘     └─────┘
-   ⚡ working   🚨 blocked   💤 idle
-```
-
 You've got Grok Build crunching through a refactor in one pane, Claude Code
 negotiating a design doc in another, and Hermes Agent off doing… whatever
 Hermes Agent does. Wouldn't it be nice to know who's actually working, who's
@@ -25,12 +17,6 @@ dashboard — or just **click the status bar indicator**.
 ![Go](https://img.shields.io/badge/Go-1.26-00ADD8?style=flat-square&logo=go&logoColor=white)
 ![tmux](https://img.shields.io/badge/tmux-%E2%89%A5%203.2-1B93DB?style=flat-square)
 ![agents](https://img.shields.io/badge/supports-11%20agents-4FC08D?style=flat-square)
-
-<img src="docs/demo/demo.gif" width="720" alt="tmon demo: an agent blocks, gets approved, springs back to work, dashboard tour" />
-
-> **The demo GIF** is recorded with [VHS](https://github.com/charmbracelet/vhs) —
-> run [`docs/demo/demo.sh`](docs/demo/demo.sh) (tape + notes in
-> [`docs/demo/`](docs/demo/)).
 
 ---
 
