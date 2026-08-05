@@ -178,10 +178,10 @@ func (m Model) applyThemePreview() Model {
 func (m Model) themeView(w, h int) string {
 	innerW, innerH := w-2, h-2
 	lines := make([]string, 0, innerH)
-	lines = append(lines, m.headerLines(innerW, "[enter/space] apply  [esc/q] revert ")...)
+	lines = append(lines, m.headerLines(innerW, [mainHeaderHeight]string{"[enter/space] apply  [esc/q] revert ", ""})...)
 	lines = append(lines, fit(m.st.dim.Render(strings.Repeat("━", innerW)), innerW))
 
-	bodyLines := bodyLinesFor(innerH, mainHeaderHeight)
+	bodyLines := bodyLinesFor(innerH, mainHeaderHeight+1)
 	if bodyLines < 1 {
 		bodyLines = 1
 	}
@@ -196,9 +196,10 @@ func (m Model) themeView(w, h int) string {
 	for i := range left {
 		lines = append(lines, left[i]+"│"+prev[i])
 	}
-	for len(lines) < innerH-1 {
+	for len(lines) < innerH-2 {
 		lines = append(lines, "")
 	}
+	lines = append(lines, fit(m.st.dim.Render(strings.Repeat("━", innerW)), innerW))
 	lines = append(lines, m.themeFooterLine(innerW))
 	return strings.Join(paintRows(w, framed(w, lines, m.st.white), m.st.bg), "\n")
 }

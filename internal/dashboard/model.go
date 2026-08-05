@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -69,8 +70,9 @@ type Model struct {
 	// Empty disables load/save (tests and ad-hoc construction).
 	settingsPath string
 
-	query     string
-	searching bool
+	query       string
+	searching   bool
+	searchInput textinput.Model // live query editor, shown above the list while searching
 
 	// theme carries the resolved palette and icons (preset + overrides);
 	// st are the lipgloss styles built from it. Both are set by New and
@@ -126,7 +128,18 @@ func New(loader Loader, ascii bool) Model {
 	m.themes = newThemesList()
 	m.spinner = newSpinner(m.theme.Palette)
 	m.preview = viewport.New(40, 20) // sized per render in View
+	m.searchInput = newSearchInput()
 	return m
+}
+
+// newSearchInput builds the query editor shown above the agent list while
+// searching. Styles are refreshed per render from the current theme (see
+// View), matching the pattern used for the agent list delegate.
+func newSearchInput() textinput.Model {
+	ti := textinput.New()
+	ti.Prompt = "/ "
+	ti.CharLimit = 200
+	return ti
 }
 
 // newSpinner builds the working-agent spinner, colored with the theme's

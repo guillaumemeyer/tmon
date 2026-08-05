@@ -4,10 +4,10 @@ import (
 	"sort"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/guillaumemeyer/tmon/internal/agent"
@@ -104,29 +104,23 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	if m.searching {
 		switch msg.String() {
 		case "esc":
-			m.searching = false // the filter stays applied
-		case "backspace":
-			if m.query != "" {
-				m.query = dropLastRune(m.query)
-				m.rebuildFilter()
-			}
+			m.searching = false
+			m.query = ""
+			m.searchInput.Reset()
+			m.searchInput.Blur()
+			m.rebuildFilter()
+			return m, nil
 		case "ctrl+c":
 			return m, tea.Quit
-		default:
-			if len(msg.Runes) > 0 {
-				changed := false
-				for _, r := range msg.Runes { // handles pasted text too
-					if unicode.IsPrint(r) {
-						m.query += string(r)
-						changed = true
-					}
-				}
-				if changed {
-					m.rebuildFilter()
-				}
-			}
 		}
-		return m, nil
+		prev := m.searchInput.Value()
+		var cmd tea.Cmd
+		m.searchInput, cmd = m.searchInput.Update(msg)
+		if v := m.searchInput.Value(); v != prev {
+			m.query = v
+			m.rebuildFilter()
+		}
+		return m, cmd
 	}
 
 	if m.themeMode {
@@ -136,6 +130,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	switch msg.String() {
 	case "/":
 		m.searching = true
+		m.query = ""
+		m.searchInput.Reset()
+		m.searchInput.Focus()
+		return m, textinput.Blink
 	case "t":
 		m.themeCommitted = m.theme
 		m.themeMode = true
@@ -253,10 +251,11 @@ func (m Model) handleMouse(msg tea.MouseMsg) (Model, tea.Cmd) {
 				return m, nil
 			}
 		}
-		// Rows 0..mainHeaderHeight-1 (header) and mainHeaderHeight (divider)
-		// are chrome; body rows start right after.
-		bodyRow := msg.Y - (mainHeaderHeight + 1)
-		if bodyRow < 0 || bodyRow >= bodyLinesFor(m.height-2, mainHeaderHeight) {
+		// The wordmark rows, divider, and (while searching) the query input
+		// row are chrome; body rows start right after.
+		topChrome := m.mainTopChrome()
+		bodyRow := msg.Y - topChrome
+		if bodyRow < 0 || bodyRow >= bodyLinesFor(m.height-2, topChrome) {
 			return m, nil
 		}
 		if m.clickAgentAt(bodyRow) {
@@ -279,7 +278,7 @@ func (m *Model) clickAgentAt(bodyRow int) bool {
 	}
 	// Only count fully rendered rows: a partially clipped item cannot be
 	// the click target.
-	if (idxInView+1)*itemH > bodyLinesFor(m.height-2, mainHeaderHeight) {
+	if (idxInView+1)*itemH > bodyLinesFor(m.height-2, m.mainTopChrome()) {
 		return false
 	}
 	hit, ok := visible[idxInView].(agentItem)
@@ -408,16 +407,6 @@ func (m Model) focusSelected() (Model, tea.Cmd) {
 		return m, nil
 	}
 	return m, m.focusCmd(*r)
-}
-
-// dropLastRune removes the final rune of s (backspace semantics — the query
-// can contain multi-byte runes).
-func dropLastRune(s string) string {
-	r := []rune(s)
-	if len(r) == 0 {
-		return s
-	}
-	return string(r[:len(r)-1])
 }
 
 // rebuildFilter re-applies the query with Telescope/fzy-style fuzzy matching

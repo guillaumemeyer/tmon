@@ -158,13 +158,14 @@ func TestPreviewLayoutAlignment(t *testing.T) {
 	}
 
 	// Top border, mainHeaderHeight header rows, divider, then the body;
-	// footer and bottom border below. The │ separator column lives on body
-	// rows only: body starts right after the divider, ends at h-3 inclusive.
+	// another divider, footer, and bottom border below. The │ separator
+	// column lives on body rows only: body starts right after the top
+	// divider, ends before the bottom divider.
 	listW, _ := m.panelWidths(w - 2)
 	sepCol := listW + 1 // 0-based index of │, one cell in from the left border
 	bodyStart := 1 + mainHeaderHeight + 1
 
-	for i := bodyStart; i < h-2; i++ {
+	for i := bodyStart; i < h-3; i++ {
 		line := rows[i]
 		if got := ansi.StringWidth(line); got != w {
 			t.Fatalf("body row %d width = %d, want %d:\n%q", i, got, w, line)

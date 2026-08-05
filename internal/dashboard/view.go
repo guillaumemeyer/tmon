@@ -91,13 +91,19 @@ func (m Model) View() string {
 	innerW, innerH := w-2, h-2
 	listW, panelW := m.panelWidths(innerW)
 
+	topChrome := m.mainTopChrome()
+
 	lines := make([]string, 0, innerH)
-	lines = append(lines, m.headerLines(innerW, "[t] theme  [/] search  [esc/q] quit ")...)
+	lines = append(lines, m.headerLines(innerW, [mainHeaderHeight]string{"[t] theme  [esc/q] quit ", "[/] search "})...)
 	lines = append(lines, fit(m.st.dim.Render(strings.Repeat("━", innerW)), innerW))
 
-	bodyLines := bodyLinesFor(innerH, mainHeaderHeight)
+	bodyLines := bodyLinesFor(innerH, topChrome)
 	if bodyLines < 1 {
 		bodyLines = 1
+	}
+
+	if m.searching {
+		lines = append(lines, m.searchInputLine(listW, panelW))
 	}
 
 	listLines := m.listLines(listW, bodyLines)
@@ -107,9 +113,10 @@ func (m Model) View() string {
 		lines = append(lines, listLines[i]+"│"+prev[i])
 	}
 
-	for len(lines) < innerH-1 {
+	for len(lines) < innerH-2 {
 		lines = append(lines, "")
 	}
+	lines = append(lines, fit(m.st.dim.Render(strings.Repeat("━", innerW)), innerW))
 	lines = append(lines, m.footerLine(innerW))
 
 	return strings.Join(paintRows(w, framed(w, lines, m.st.white), m.st.bg), "\n")
@@ -132,10 +139,11 @@ func framed(w int, rows []string, border lipgloss.Style) []string {
 }
 
 // bodyLinesFor is the row count available for the list/preview body of a
-// canvas innerH cells tall: headerHeight rows of title chrome, one divider
-// below it, and one footer row at the bottom.
-func bodyLinesFor(innerH, headerHeight int) int {
-	n := innerH - headerHeight - 2
+// canvas innerH cells tall: topChrome rows above it (title chrome, its
+// divider, and — in the agent view while searching — the query input row),
+// plus the fixed divider+footer pair below.
+func bodyLinesFor(innerH, topChrome int) int {
+	n := innerH - topChrome - 2
 	if n < 1 {
 		return 1
 	}
@@ -344,6 +352,21 @@ func backgroundSeq(bg lipgloss.Style) string {
 	return seq
 }
 
+// searchInputLine renders the live query editor as a full-width body row
+// (list column + separator + blank preview column) shown above the agent
+// list while searching. Styled fresh from the current theme on this copy,
+// matching the pattern used for the list delegate.
+func (m Model) searchInputLine(listW, panelW int) string {
+	ti := m.searchInput
+	ti.PromptStyle = m.st.cyan.Bold(true)
+	ti.TextStyle = m.st.white
+	ti.Width = listW - ansi.StringWidth(ti.Prompt) - 2
+	if ti.Width < 1 {
+		ti.Width = 1
+	}
+	return fit(" "+ti.View(), listW) + "│" + fit("", panelW)
+}
+
 // listLines renders the flat agent list into exactly bodyLines lines of
 // listW cells each, so the preview separator stays vertically aligned. The
 // bubbles list is sized and given a fresh delegate on this copy — rendering
@@ -474,21 +497,26 @@ var asciiLogo = [2]string{
 	"░█░ █░▀░█ █▄█ █░▀█",
 }
 
-// headerLines renders the popup title chrome shared by the agent view and
-// the theme selector: the ascii wordmark on the left spanning all
-// mainHeaderHeight rows, and hint right-aligned on the top row.
-func (m Model) headerLines(w int, hintText string) []string {
-	hint := m.st.dim.Render(hintText)
-	hintW := ansi.StringWidth(hint)
+// mainTopChrome is the row count above the agent-view body: the wordmark
+// rows, their divider, and — while searching — the query input row.
+func (m Model) mainTopChrome() int {
+	n := mainHeaderHeight + 1
+	if m.searching {
+		n++
+	}
+	return n
+}
 
+// headerLines renders the popup title chrome shared by the agent view and
+// the theme selector: the ascii wordmark on the left spanning both
+// mainHeaderHeight rows, with hints[i] right-aligned on row i (an empty
+// entry leaves that row's right side blank).
+func (m Model) headerLines(w int, hints [mainHeaderHeight]string) []string {
 	lines := make([]string, mainHeaderHeight)
 	for i, glyph := range asciiLogo {
 		logo := m.st.cyan.Bold(true).Render(" " + glyph)
-		right, rightW := "", 0
-		if i == 0 {
-			right, rightW = hint, hintW
-		}
-		pad := w - ansi.StringWidth(logo) - rightW
+		right := m.st.dim.Render(hints[i])
+		pad := w - ansi.StringWidth(logo) - ansi.StringWidth(right)
 		if pad < 1 {
 			lines[i] = ansi.Truncate(logo, w, "")
 			continue
@@ -695,29 +723,19 @@ func displayCWD(cwd string) string {
 	return cwd
 }
 
-// footerLine varies with the mode: search input, active filter, or the
-// navigation hint, with the match count aligned right. When a selectable
-// agent with a real pane is focused, a preview scroll tip is shown. The
-// right-side tips get a width budget after the left segment so narrow
-// footers degrade gracefully instead of truncating the query.
+// footerLine shows the active status filter (if any) with the match count
+// aligned right; the live query itself is edited in its own row above the
+// list, not here. When a selectable agent with a real pane is focused, a
+// preview scroll tip is shown. The right-side tips get a width budget after
+// the left segment so narrow footers degrade gracefully.
 func (m Model) footerLine(w int) string {
 	// Version pinned bottom-left, one cell in from the border.
 	left := ""
 	if m.version != "" {
 		left = " " + m.st.dim.Render(m.version) + "  "
 	}
-	switch {
-	case m.searching:
-		left += m.st.white.Render("▌ "+m.query) + m.st.dim.Render("▌")
-	case m.query != "":
-		left += m.st.dim.Render("▌ " + m.query)
-		if m.filterStatus != "" {
-			left += m.st.dim.Render(" · " + m.filterLabel())
-		}
-	default:
-		if m.filterStatus != "" {
-			left += m.st.dim.Render("▌ " + m.filterLabel() + " (press again to clear)")
-		}
+	if m.filterStatus != "" {
+		left += m.st.dim.Render("▌ " + m.filterLabel() + " (press again to clear)")
 	}
 	// Reserve one cell for a right margin after the tips plus one so
 	// twoSided always has a pad between the segments.

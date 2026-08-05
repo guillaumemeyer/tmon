@@ -248,13 +248,16 @@ func TestSearchModeKeys(t *testing.T) {
 		t.Fatalf("query changed by F1: %q", m.query)
 	}
 
-	// Esc leaves search mode but the filter stays.
+	// Esc leaves search mode and resets the query, restoring the full list.
 	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyEsc})
 	if m.searching {
 		t.Fatal("expected search mode to end on Esc")
 	}
-	if m.query != "codex" || len(m.filtered) != 1 {
-		t.Fatalf("filter should persist after Esc (query=%q filtered=%d)", m.query, len(m.filtered))
+	if m.query != "" || len(m.filtered) != len(m.rows) {
+		t.Fatalf("query/filter should reset after Esc (query=%q filtered=%d)", m.query, len(m.filtered))
+	}
+	if m.searchInput.Value() != "" {
+		t.Fatalf("search input should reset after Esc, got %q", m.searchInput.Value())
 	}
 }
 
@@ -652,7 +655,8 @@ func TestMouseClickFocusesInSearchFlatList(t *testing.T) {
 	}
 
 	// Narrow to a single agent: the flat list has one item at body row 0
-	// (screen row 4, below the top border, the wordmark header, and divider).
+	// (screen row 5, below the top border, the wordmark header, divider, and
+	// the search input row shown while m.searching is still true).
 	m = applyMsg(t, m, key('/'))
 	for _, r := range []rune{'c', 'o', 'd', 'e', 'x'} {
 		m = applyMsg(t, m, key(r))
@@ -660,7 +664,7 @@ func TestMouseClickFocusesInSearchFlatList(t *testing.T) {
 	if len(m.agentList.Items()) != 1 {
 		t.Fatalf("filtered items = %d, want 1", len(m.agentList.Items()))
 	}
-	m = applyMsg(t, m, click(2, 4))
+	m = applyMsg(t, m, click(2, 5))
 	if focused != "side:3.0" {
 		t.Fatalf("click in search list: focused %q, want side:3.0", focused)
 	}
@@ -675,20 +679,6 @@ func TestQuitKeys(t *testing.T) {
 		_, cmd := m.Update(k)
 		if cmd == nil {
 			t.Fatalf("key %s: expected a quit command", k)
-		}
-	}
-}
-
-func TestDropLastRune(t *testing.T) {
-	cases := []struct{ in, want string }{
-		{"abc", "ab"},
-		{"café", "caf"}, // multi-byte rune removed whole
-		{"", ""},
-		{"a", ""},
-	}
-	for _, c := range cases {
-		if got := dropLastRune(c.in); got != c.want {
-			t.Fatalf("dropLastRune(%q) = %q, want %q", c.in, got, c.want)
 		}
 	}
 }
