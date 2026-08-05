@@ -448,28 +448,48 @@ func (m Model) previewLines(w, n int) []string {
 			out = append(out, fit("", w))
 		}
 	}
-	// Re-pin a bottom-pinned viewport after a size change: growing or
-	// shrinking the panel changes the maximum scroll offset, so a pinned
-	// preview must follow the new bottom. A preview the user scrolled away
-	// from stays where it is.
-	pinned := m.preview.AtBottom()
+	// Size the viewport to the body under the header. The default height
+	// from New (20) is not the real panel height — re-pin using the real
+	// height so the tail stays visible when the popup is taller or shorter
+	// than that default. previewFollowBottom is the source of truth: the
+	// viewport's AtBottom() is unreliable here because Height may have
+	// changed since the last GotoBottom.
+	bodyH := n - len(out)
+	if bodyH < 1 {
+		bodyH = 1
+	}
 	m.preview.Width = w
-	m.preview.Height = n - 1
-	if pinned {
+	m.preview.Height = bodyH
+	if m.previewFollowBottom {
 		m.preview.GotoBottom()
 	}
-	if vp := strings.Split(m.preview.View(), "\n"); len(vp) > 0 {
-		// lipgloss's height padding can leave a trailing empty element.
-		if vp[len(vp)-1] == "" {
-			vp = vp[:len(vp)-1]
+	vp := strings.Split(m.preview.View(), "\n")
+	// lipgloss width/height padding turns blank rows into space-filled
+	// cells (and may leave a trailing empty split element). Treat
+	// whitespace-only rows as blank so short content can be re-aligned.
+	isBlank := func(s string) bool {
+		return strings.TrimSpace(ansi.Strip(s)) == ""
+	}
+	for len(vp) > 0 && isBlank(vp[len(vp)-1]) {
+		vp = vp[:len(vp)-1]
+	}
+	// Short captures are top-aligned by the viewport. When following the
+	// tail, pad above so the last real line sits on the bottom of the panel
+	// (terminal-style) instead of floating mid-panel.
+	if m.previewFollowBottom {
+		for len(vp) < bodyH {
+			vp = append([]string{""}, vp...)
 		}
-		// The captured pane may paint its own backgrounds; force them all
-		// back to the theme fill so the preview is a solid theme-colored
-		// panel with no transparency.
-		seq := backgroundSeq(m.st.bg)
-		for _, l := range vp {
-			out = append(out, fit(forceBackground(l, seq), w))
+	}
+	// The captured pane may paint its own backgrounds; force them all
+	// back to the theme fill so the preview is a solid theme-colored
+	// panel with no transparency.
+	seq := backgroundSeq(m.st.bg)
+	for _, l := range vp {
+		if len(out) >= n {
+			break
 		}
+		out = append(out, fit(forceBackground(l, seq), w))
 	}
 	for len(out) < n {
 		out = append(out, fit("", w))
@@ -477,8 +497,26 @@ func (m Model) previewLines(w, n int) []string {
 	return out
 }
 
-// trimTrailingEmpty drops empty lines at the end of a pane capture so the
-// bottom pin lands on real content rather than blank viewport padding.
+// trimEmptyEdges drops blank lines at both ends of a pane capture so the
+// bottom pin lands on real content (tmux pads empty rows and ends with a
+// newline). Blank means empty after stripping ANSI and whitespace.
+func trimEmptyEdges(lines []string) []string {
+	isBlank := func(s string) bool {
+		return strings.TrimSpace(ansi.Strip(s)) == ""
+	}
+	start := 0
+	for start < len(lines) && isBlank(lines[start]) {
+		start++
+	}
+	end := len(lines)
+	for end > start && isBlank(lines[end-1]) {
+		end--
+	}
+	return lines[start:end]
+}
+
+// trimTrailingEmpty drops empty lines at the end of a pane capture.
+// Kept as a thin wrapper for older tests and call sites.
 func trimTrailingEmpty(lines []string) []string {
 	i := len(lines)
 	for i > 0 && strings.TrimSpace(lines[i-1]) == "" {

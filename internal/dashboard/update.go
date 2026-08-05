@@ -141,6 +141,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	case "t":
 		m.themeCommitted = m.theme
 		m.themeMode = true
+		// Highlight the theme already in effect so the list and the
+		// palette preview match the popup (not the first preset).
+		m = m.selectThemeByName(m.theme.Name)
 	case "esc", "q", "ctrl+c":
 		return m, tea.Quit
 	case "left", "h":
@@ -148,9 +151,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	case "right", "l":
 		m.resizePreview(-previewResizeStep)
 	case "ctrl+u":
+		before := m.preview.YOffset
 		m.preview.HalfPageUp()
+		// Leave the tail only when the offset actually moved up.
+		if m.preview.YOffset < before {
+			m.previewFollowBottom = false
+		}
 	case "ctrl+d":
 		m.preview.HalfPageDown()
+		m.previewFollowBottom = m.preview.AtBottom()
 	case "enter", " ":
 		return m.focusSelected()
 	case "b", "w", "i":
@@ -231,7 +240,13 @@ func (m Model) handleMouse(msg tea.MouseMsg) (Model, tea.Cmd) {
 		if msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown {
 			if m.width > 2 {
 				if listW, _ := m.panelWidths(m.width - 2); msg.X >= listW {
+					before := m.preview.YOffset
 					m.preview.Update(msg)
+					if msg.Button == tea.MouseButtonWheelUp && m.preview.YOffset < before {
+						m.previewFollowBottom = false
+					} else if msg.Button == tea.MouseButtonWheelDown {
+						m.previewFollowBottom = m.preview.AtBottom()
+					}
 				}
 			}
 			return m, nil
@@ -361,8 +376,9 @@ func (m *Model) toggleStatusFilter(st agent.Status) {
 
 // refreshPreview points the preview panel at the selected agent's pane.
 // With force, content is re-read from the cache (or captured if missing)
-// even when the pane target is unchanged. Changing panes pins the new pane
-// to the bottom of the viewport.
+// even when the pane target is unchanged. Changing panes (and refreshes
+// while the user is still following the tail) pin the content to the
+// bottom of the viewport.
 func (m *Model) refreshPreview(force bool) {
 	r := m.selectedRow()
 	if r == nil {
@@ -380,12 +396,16 @@ func (m *Model) refreshPreview(force bool) {
 		delete(m.paneCache, pane)
 	}
 	changed := pane != m.previewPane
+	if changed {
+		// A new pane always follows the tail; the user can scroll up later.
+		m.previewFollowBottom = true
+	}
 	m.previewPane = pane
 	m.previewText = m.cachedPane(pane)
-	// Trim trailing blanks so the bottom pin lands on real content (tmux
-	// pane captures end with a newline).
-	m.preview.SetContent(strings.Join(trimTrailingEmpty(strings.Split(m.previewText, "\n")), "\n"))
-	if changed {
+	// Trim blank edges so the bottom pin lands on real content (tmux pane
+	// captures pad with empty lines and end with a newline).
+	m.preview.SetContent(strings.Join(trimEmptyEdges(strings.Split(m.previewText, "\n")), "\n"))
+	if m.previewFollowBottom {
 		m.preview.GotoBottom()
 	}
 }

@@ -35,10 +35,13 @@ func TestThemeSelectorOpensAndListsThemes(t *testing.T) {
 			t.Fatalf("selector view missing theme %q", n)
 		}
 	}
-	// The first preset (catppuccin, alphabetically) is highlighted, so its
-	// palette preview shows its app swatch color.
-	if !strings.Contains(v, "#cba6f7") {
-		t.Fatalf("preview should show the highlighted theme's swatches:\n%s", v)
+	// The theme already in effect (default for New) is highlighted, so its
+	// palette preview shows a default slot value.
+	if m.themeNames()[m.themes.Index()] != "default" {
+		t.Fatalf("selected theme = %q, want default (current theme)", m.themeNames()[m.themes.Index()])
+	}
+	if !strings.Contains(v, "colour235") {
+		t.Fatalf("preview should show the current theme's swatches:\n%s", v)
 	}
 	// Header and footer switch to theme-mode hints.
 	if !strings.Contains(v, asciiLogo[0]) ||
@@ -64,20 +67,18 @@ func TestThemeSelectorMoveUpdatesPreview(t *testing.T) {
 	m.width, m.height = 100, 24
 
 	m = applyMsg(t, m, key('t'))
-	if !strings.Contains(ansi.Strip(m.View()), "#cba6f7") {
-		t.Fatalf("expected catppuccin preview before moving")
+	if m.themeNames()[m.themes.Index()] != "default" {
+		t.Fatalf("open should select current theme default, got %q", m.themeNames()[m.themes.Index()])
 	}
 
-	// Move down twice: catppuccin → default → dracula. The dracula app
-	// swatch (#bd93f9) appears only once the cursor lands on dracula, and
-	// the catppuccin swatch leaves.
-	m = applyMsg(t, m, key('j'))
+	// Move down once: default → dracula. The dracula app swatch (#bd93f9)
+	// appears only once the cursor lands on dracula.
 	m = applyMsg(t, m, key('j'))
 	v := ansi.Strip(m.View())
 	if !strings.Contains(v, "#bd93f9") {
 		t.Fatalf("preview should show dracula's swatches after moving:\n%s", v)
 	}
-	if strings.Contains(v, "#cba6f7") {
+	if strings.Contains(v, "colour235") {
 		t.Fatal("preview still shows the previous theme's swatches")
 	}
 	// Browsing applies the highlighted theme live to the whole popup…
@@ -109,8 +110,7 @@ func TestThemeSelectorApplyPersists(t *testing.T) {
 	m.width, m.height = 100, 24
 
 	m = applyMsg(t, m, key('t'))
-	m = applyMsg(t, m, key('j'))
-	m = applyMsg(t, m, key('j')) // dracula
+	m = applyMsg(t, m, key('j')) // default → dracula
 	m = applyMsg(t, m, key(' ')) // apply (space, like agent focus)
 
 	if m.themeMode {
@@ -149,8 +149,7 @@ func TestThemeSelectorApplyPersistsToFile(t *testing.T) {
 	m.width, m.height = 100, 24
 
 	m = applyMsg(t, m, key('t'))
-	m = applyMsg(t, m, key('j'))
-	m = applyMsg(t, m, key('j')) // dracula
+	m = applyMsg(t, m, key('j')) // default → dracula
 	m = applyMsg(t, m, key(' ')) // apply (space, like agent focus)
 
 	data, err := os.ReadFile(dir + "/theme")
@@ -197,8 +196,7 @@ func TestThemeSelectorEscKeepsTheme(t *testing.T) {
 			orig := m.theme.Name
 
 			m = applyMsg(t, m, key('t'))
-			m = applyMsg(t, m, key('j'))
-			m = applyMsg(t, m, key('j'))
+			m = applyMsg(t, m, key('j')) // leave the current theme
 			if m.theme.Name == orig {
 				t.Fatal("browsing should preview the highlighted theme live")
 			}
@@ -232,20 +230,19 @@ func TestThemeSelectorHonorsOverrides(t *testing.T) {
 	})
 	m.width, m.height = 100, 24
 
-	// The highlighted preset (catppuccin) is re-resolved with the stored
-	// override, so its app swatch shows #ff00ff instead of #cba6f7.
+	// The current theme (default) is re-resolved with the stored override,
+	// so its app swatch shows #ff00ff instead of the preset cyan.
 	m = applyMsg(t, m, key('t'))
+	if m.themeNames()[m.themes.Index()] != "default" {
+		t.Fatalf("selected = %q, want default", m.themeNames()[m.themes.Index()])
+	}
 	v := ansi.Strip(m.View())
 	if !strings.Contains(v, "#ff00ff") {
 		t.Fatalf("preview should apply the stored app override:\n%s", v)
 	}
-	if strings.Contains(v, "#cba6f7") {
-		t.Fatal("preview ignored the override and showed the preset color")
-	}
 
-	// Applying keeps the override on the chosen preset: catppuccin(0) →
-	// default(1) → dracula(2) → gruvbox(3) → nord(4).
-	m = applyMsg(t, m, key('j'))
+	// Applying keeps the override on the chosen preset. Open selects
+	// default(1); move to nord(4): j×3.
 	m = applyMsg(t, m, key('j'))
 	m = applyMsg(t, m, key('j'))
 	m = applyMsg(t, m, key('j'))
@@ -255,5 +252,36 @@ func TestThemeSelectorHonorsOverrides(t *testing.T) {
 	}
 	if m.theme.Palette.App != "#ff00ff" {
 		t.Fatalf("applied palette ignored the override: app = %q", m.theme.Palette.App)
+	}
+}
+
+// TestThemeSelectorOpensOnCurrentTheme checks that opening the selector
+// highlights the theme already applied to the popup, not the first preset.
+func TestThemeSelectorOpensOnCurrentTheme(t *testing.T) {
+	old := capturePane
+	capturePane = func(p string) string { return "x" }
+	t.Cleanup(func() { capturePane = old })
+
+	f := &fakeLoader{data: Data{Rows: testRows()}}
+	m := New(f.load, true).WithTheme(theme.Resolve(theme.Options{Name: "nord"}))
+	m = applyMsg(t, m, initMsg{})
+	m.width, m.height = 100, 24
+
+	m = applyMsg(t, m, key('t'))
+	if !m.themeMode {
+		t.Fatal("expected theme mode")
+	}
+	sel := m.themeNames()[m.themes.Index()]
+	if sel != "nord" {
+		t.Fatalf("selected theme = %q, want nord", sel)
+	}
+	v := ansi.Strip(m.View())
+	// Nord app swatch.
+	if !strings.Contains(v, "#88c0d0") {
+		t.Fatalf("preview should show nord swatches:\n%s", v)
+	}
+	// Not the first preset (catppuccin).
+	if strings.Contains(v, "#cba6f7") {
+		t.Fatal("preview should not show catppuccin when nord is current")
 	}
 }

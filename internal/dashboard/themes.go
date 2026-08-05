@@ -88,6 +88,18 @@ func (m Model) themeNames() []string {
 	return names
 }
 
+// selectThemeByName moves the theme list cursor onto name when present.
+// Unknown names leave the selection unchanged.
+func (m Model) selectThemeByName(name string) Model {
+	for i, n := range m.themeNames() {
+		if n == name {
+			m.themes.Select(i)
+			break
+		}
+	}
+	return m
+}
+
 // persistTheme writes the chosen theme back to tmux so the status bar
 // matches the popup after it closes. Both the global environment and every
 // live session are updated: tmux copies globals into each session at

@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -501,6 +502,149 @@ func TestTrimTrailingEmpty(t *testing.T) {
 	}
 	if got := trimTrailingEmpty([]string{"", ""}); len(got) != 0 {
 		t.Fatalf("all-empty = %v, want empty slice", got)
+	}
+}
+
+func TestTrimEmptyEdges(t *testing.T) {
+	got := trimEmptyEdges([]string{"", "  ", "a", "b", "", "\x1b[0m", ""})
+	if len(got) != 2 || got[0] != "a" || got[1] != "b" {
+		t.Fatalf("trimEmptyEdges = %v, want [a b]", got)
+	}
+	if got := trimEmptyEdges([]string{"", ""}); len(got) != 0 {
+		t.Fatalf("all-empty = %v, want empty slice", got)
+	}
+}
+
+// TestPreviewFollowsBottomOnRefresh covers the "content mid-panel" bug: a
+// force reload grows the capture while the user is still following the
+// tail. The preview must stay on the latest lines, not the old YOffset.
+func TestPreviewFollowsBottomOnRefresh(t *testing.T) {
+	var n int
+	old := capturePane
+	capturePane = func(p string) string {
+		n++
+		var lines []string
+		// First capture is short (fits in the default viewport height);
+		// second is long enough that YOffset 0 would leave the tail off-screen.
+		count := 10
+		if n > 1 {
+			count = 40
+		}
+		for i := 1; i <= count; i++ {
+			lines = append(lines, fmt.Sprintf("LINE-%02d", i))
+		}
+		return strings.Join(lines, "\n")
+	}
+	t.Cleanup(func() { capturePane = old })
+
+	f := &fakeLoader{data: Data{Rows: testRows()}}
+	m := New(f.load, true)
+	m = applyMsg(t, m, initMsg{})
+	m.width, m.height = 80, 12 // body preview rows ≈ 8
+
+	if !m.previewFollowBottom {
+		t.Fatal("expected follow-bottom after init")
+	}
+	// Force a second load with longer content (same pane).
+	m = applyMsg(t, m, tickMsg{})
+	if !m.previewFollowBottom {
+		t.Fatal("force refresh must keep follow-bottom")
+	}
+	v := ansi.Strip(m.View())
+	if !strings.Contains(v, "LINE-40") {
+		t.Fatalf("after refresh, want tail LINE-40:\n%s", v)
+	}
+	if strings.Contains(v, "LINE-01") {
+		t.Fatalf("after refresh, still showing top of capture:\n%s", v)
+	}
+}
+
+// TestPreviewShortContentBottomAligned checks that a short pane capture
+// sits on the bottom of the preview panel (terminal style), not mid-panel
+// with empty rows underneath.
+func TestPreviewShortContentBottomAligned(t *testing.T) {
+	old := capturePane
+	capturePane = func(p string) string {
+		return "only\nthree\nlines"
+	}
+	t.Cleanup(func() { capturePane = old })
+
+	f := &fakeLoader{data: Data{Rows: testRows()}}
+	m := New(f.load, true)
+	m = applyMsg(t, m, initMsg{})
+	const w, h = 80, 24
+	m.width, m.height = w, h
+
+	v := ansi.Strip(m.View())
+	rows := strings.Split(v, "\n")
+	listW, _ := m.panelWidths(w - 2)
+	sepCol := listW + 1 // 0-based │ index, one cell in from the left border
+	// body: after top border + header rows + top divider; before bottom
+	// divider + footer + bottom border.
+	bodyStart := 1 + mainHeaderHeight + 1
+	bodyEnd := h - 3
+
+	var prevBody []string
+	for i := bodyStart; i < bodyEnd; i++ {
+		runes := []rune(rows[i])
+		if sepCol+1 >= len(runes) {
+			t.Fatalf("row %d too short for sepCol %d: %q", i, sepCol, rows[i])
+		}
+		// Preview cells sit after the separator; drop the outer right border.
+		cell := string(runes[sepCol+1:])
+		if len(cell) > 0 {
+			// strip trailing border glyph if present
+			cr := []rune(cell)
+			if cr[len(cr)-1] == '│' {
+				cell = string(cr[:len(cr)-1])
+			}
+		}
+		prevBody = append(prevBody, strings.TrimSpace(cell))
+	}
+	if len(prevBody) < 5 {
+		t.Fatalf("too few preview body rows: %v\n%s", prevBody, v)
+	}
+	// First body row is the agent header; the rest is the viewport.
+	body := prevBody[1:]
+	if len(body) < 3 {
+		t.Fatalf("viewport body too short: %v", body)
+	}
+	got := body[len(body)-3:]
+	want := []string{"only", "three", "lines"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("bottom of preview = %v, want %v\nfull body: %v\n%s", got, want, body, v)
+	}
+	for _, row := range body[:len(body)-3] {
+		if row != "" {
+			t.Fatalf("non-blank row above short content %q in %v", row, body)
+		}
+	}
+}
+
+// TestPreviewHeightMismatchStillPins covers GotoBottom under the default
+// viewport height (20) while View uses a smaller body: without follow-
+// bottom, AtBottom() is false and the mid-capture is shown.
+func TestPreviewHeightMismatchStillPins(t *testing.T) {
+	var lines []string
+	for i := 1; i <= 50; i++ {
+		lines = append(lines, fmt.Sprintf("LINE-%02d", i))
+	}
+	old := capturePane
+	capturePane = func(p string) string { return strings.Join(lines, "\n") }
+	t.Cleanup(func() { capturePane = old })
+
+	f := &fakeLoader{data: Data{Rows: testRows()}}
+	m := New(f.load, true)
+	m = applyMsg(t, m, initMsg{})
+	// Height 10 → body preview rows well under the default viewport height 20.
+	m.width, m.height = 80, 10
+
+	v := ansi.Strip(m.View())
+	if !strings.Contains(v, "LINE-50") {
+		t.Fatalf("want bottom line with short panel height:\n%s", v)
+	}
+	if strings.Contains(v, "LINE-01") || strings.Contains(v, "LINE-20") {
+		t.Fatalf("showed mid/top of capture instead of tail:\n%s", v)
 	}
 }
 

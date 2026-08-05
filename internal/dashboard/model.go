@@ -59,12 +59,13 @@ type Model struct {
 
 	filterStatus agent.Status // "" = no status filter
 
-	previewText   string            // pane capture of the selected pane (colors preserved)
-	previewPane   string            // pane target the preview currently shows
-	paneCache     map[string]string // pane target → full capture (for search + preview)
-	previewPct    int               // preview panel width as % of popup (default 50)
-	draggingSplit bool              // true while the user is dragging the │ separator
-	preview       viewport.Model    // right-side pane preview (scrollable, bottom-pinned)
+	previewText         string            // pane capture of the selected pane (colors preserved)
+	previewPane         string            // pane target the preview currently shows
+	paneCache           map[string]string // pane target → full capture (for search + preview)
+	previewPct          int               // preview panel width as % of popup (default 50)
+	draggingSplit       bool              // true while the user is dragging the │ separator
+	preview             viewport.Model    // right-side pane preview (scrollable, bottom-pinned)
+	previewFollowBottom bool              // keep the viewport on the latest lines (default true)
 
 	// settingsPath is where UI prefs (e.g. preview width) are persisted.
 	// Empty disables load/save (tests and ad-hoc construction).
@@ -117,10 +118,11 @@ type Model struct {
 // overrides), which supersedes the ascii flag for icons.
 func New(loader Loader, ascii bool) Model {
 	m := Model{
-		loader:      loader,
-		focusCmd:    defaultFocusCmd,
-		previewPct:  defaultPreviewPct,
-		contextWarn: defaultContextWarn,
+		loader:              loader,
+		focusCmd:            defaultFocusCmd,
+		previewPct:          defaultPreviewPct,
+		contextWarn:         defaultContextWarn,
+		previewFollowBottom: true,
 	}
 	m.theme = theme.Resolve(theme.Options{ASCII: ascii})
 	m.st = buildStyles(m.theme.Palette)
