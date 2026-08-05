@@ -1,9 +1,16 @@
 # tmon — build, test, and release helpers
 # The repo root is also the plugin directory when installed via TPM, so the
 # default BIN_DIR (./bin) is exactly where the plugin expects its binary.
+#
+# BIN_DIR uses := rather than ?= on purpose: it's a generic enough name that
+# a stray `export BIN_DIR=...` in someone's shell (unrelated to tmon) can
+# silently clobber it under ?=, and a broken export then breaks every `make`
+# target with a cryptic parse error. := makes the Makefile's value win over
+# the environment by default; `make BIN_DIR=foo build` still overrides it
+# explicitly from the command line.
 
 VERSION  := $(shell cat VERSION)
-BIN_DIR  ?= ./bin
+BIN_DIR  := ./bin
 GO       ?= go
 LDFLAGS  := -s -w -X main.version=$(VERSION)
 
