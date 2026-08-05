@@ -5,6 +5,25 @@ connector** — the interface is tiny, and new agents are how tmon stays useful
 as the ecosystem multiplies (same growth model that made TPM the default
 tmux plugin story).
 
+## Who can do what
+
+| Action | Who |
+| --- | --- |
+| Open issues | Anyone |
+| Suggest a release | Anyone (use the **Release suggestion** issue template) |
+| Open pull requests | Anyone (fork the repo) |
+| Approve and merge pull requests | Maintainer only (`@guillaumemeyer`) |
+
+`main` is protected. A change needs a pull request, a passing **CI**
+check (`test`), and an approving review from the code owner before merge.
+Only the maintainer can give that approval. Direct pushes to `main` are
+blocked for non-admins.
+
+To suggest a release without a code change: open a **Release suggestion**
+issue. To propose a version bump in a PR: change `VERSION` (or run
+`make bump-patch` / `bump-minor` / `bump-major`) and open a PR. The
+release workflow ships a release when the new `VERSION` lands on `main`.
+
 ## Prerequisites
 
 - **Go** matching `go.mod` (currently 1.26+)
