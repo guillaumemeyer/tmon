@@ -112,3 +112,10 @@ native fallback.
 
 Questions? Open an issue describing the agent’s state surface (files, hooks,
 or “heuristic only”) and we can point you at the closest existing connector.
+
+## Community
+
+- [Code of Conduct](CODE_OF_CONDUCT.md) — expected behaviour in the project
+- [Security policy](SECURITY.md) — how to report vulnerabilities privately
+- [Bug report](.github/ISSUE_TEMPLATE/bug_report.md) and
+  [feature request](.github/ISSUE_TEMPLATE/feature_request.md) templates
