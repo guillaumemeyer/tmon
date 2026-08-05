@@ -210,10 +210,11 @@ token stats come from each home's `state.db`. Dangerous-command waits become
 **blocked** when approval hooks are installed (`tmon hooks install hermes`);
 Hermes may prompt once to allowlist the shell hook.
 
-Hooks install automatically at plugin load unless `@tmon-auto-hooks` is
-`off` — or by hand with `tmon hooks install <agent>`. Codex additionally
-requires the hooks to be trusted in-session via `/hooks`. Without hooks, the
-Cursor/Copilot native fallback only reports the agent as idle.
+Hooks are **off by default** (`@tmon-auto-hooks off`). Install them with
+`tmon hooks auto` or `tmon hooks install <agent>` when you want authoritative
+status. Codex additionally requires the hooks to be trusted in-session via
+`/hooks`. Without hooks, the Cursor/Copilot native fallback only reports the
+agent as idle; other agents still use CPU/IO heuristics across status refreshes.
 
 ### Add your agent
 
@@ -394,17 +395,17 @@ are optional — the defaults are sensible for most people.
 | Option | Default | What it does |
 |--------|---------|--------------|
 | `@tmon-status-position` | `right` | Which side of the status bar carries the indicator |
-| `@tmon-poll-interval` | `3000` | ms between agent scans |
+| `@tmon-poll-interval` | `3000` | ms between agent scans; also sets tmux `status-interval` |
 | `@tmon-activity-threshold` | `500` | CPU ms/s to call an agent "working" |
 | `@tmon-io-threshold` | `102400` | min IO bytes/poll to call an agent "working" |
 | `@tmon-dashboard-key` | `a` | chord leader for the popup (`prefix <key> <key>`) |
 | `@tmon-connectors` | `auto` | which connectors to enable (`auto` or a comma list) |
 | `@tmon-connector-freshness` | `30` | seconds a connector signal stays authoritative |
-| `@tmon-auto-hooks` | `on` | auto-install lifecycle hooks at plugin load |
+| `@tmon-auto-hooks` | `off` | auto-install lifecycle hooks at plugin load |
 | `@tmon-ascii-icons` | `0` | `1` renders icons as ASCII (`[@] B I`; working agents keep the spinner) |
 | `@tmon-bold-counts` | `1` | bold the per-status counts |
 | `@tmon-context-warn` | `85` | context % at which a ⚠️ warning appears (`0` disables) |
-| `@tmon-blocked-bell` | `off` | ring the bell when an agent transitions to blocked |
+| `@tmon-blocked-bell` | `on` | ring the bell when an agent transitions to blocked |
 | `@tmon-pane-border` | `on` | status-colored border strip on agent panes (blocked/working) |
 | `@tmon-pane-border-position` | `top` | where the strip sits (`top` or `bottom`) |
 | `@tmon-color-<slot>` | — | override one theme color slot |
@@ -412,7 +413,11 @@ are optional — the defaults are sensible for most people.
 
 ### `@tmon-poll-interval`
 
-> How often tmon scans for agents and samples their activity.
+> How often tmon scans for agents and samples their activity. The plugin also
+> sets tmux `status-interval` to this value in whole seconds (`ms / 1000`,
+> minimum 1). That is how often `tmon status` runs in the status bar. It also
+> feeds the CPU/IO threshold arithmetic. Note that `status-interval` is global
+> for the tmux server (other widgets refresh at the same rate).
 
 | | |
 |---|---|
@@ -512,22 +517,25 @@ set -g @tmon-connector-freshness "60"   # keep connector state longer
 ### `@tmon-auto-hooks`
 
 > Auto-install lifecycle hooks at plugin load for agents that need them
-> (Claude Code, Codex, Cursor, Copilot, Windsurf). Install is idempotent and
-> backs up each config once (`.tmon.bak`) before the first change. Set `off`
-> to manage hooks by hand.
+> (Claude Code, Codex, Cursor, Copilot, Windsurf). **Default is off** so a
+> status-bar plugin never rewrites other tools' configs without consent.
+> Install is idempotent and backs up each config once (`.tmon.bak`) before
+> the first change. Set `on` only if you want that install on every plugin
+> load.
 
 | | |
 |---|---|
-| **Default** | `on` |
+| **Default** | `off` |
 | **Options** | `on` or `off` |
 
 ```tmux
-set -g @tmon-auto-hooks off   # manage hooks manually
+set -g @tmon-auto-hooks on    # install hooks at plugin load
 ```
 
-Manual hook install (if auto-hooks are off):
+Manual hook install (recommended):
 
 ```bash
+~/.tmux/plugins/tmon/bin/tmon hooks auto             # every supported agent found
 ~/.tmux/plugins/tmon/bin/tmon hooks install claude
 ~/.tmux/plugins/tmon/bin/tmon hooks install codex     # also run /hooks once inside Codex to trust them
 ~/.tmux/plugins/tmon/bin/tmon hooks install cursor
@@ -584,16 +592,16 @@ set -g @tmon-context-warn "90"
 
 > Ring the terminal bell when an agent transitions to **blocked** — useful
 > when the status bar is out of view. The bell only fires on transitions,
-> never on steady state, and only in the daemon path (`tmon daemon --notify`);
-> `tmon status` is transition-free by design.
+> never on steady state. Each `tmon status` refresh (the status-bar poller)
+> also shows a tmux `display-message` for working and blocked transitions.
 
 | | |
 |---|---|
-| **Default** | `off` |
+| **Default** | `on` |
 | **Options** | `on` or `off` |
 
 ```tmux
-set -g @tmon-blocked-bell "on"
+set -g @tmon-blocked-bell "off"   # silence the bell; messages still show
 ```
 
 ### `@tmon-pane-border`
@@ -667,19 +675,27 @@ set -g @tmon-icon-app "@"    # ASCII-only crowd
 
 ## Notifications
 
-tmon can send tmux popups when an agent becomes blocked, working, or idle.
-Run the daemon in notify mode:
+Each status-bar refresh (`tmon status` on `status-interval`) compares the new
+snapshot to the previous `state.json` and:
 
-```bash
-~/.tmux/plugins/tmon/bin/tmon daemon --notify
+- shows a tmux `display-message` when an agent becomes **working** or **blocked**
+- rings the terminal bell on **blocked** when `@tmon-blocked-bell` is on (default)
+
+First sightings and idle decay stay silent. There is no separate daemon.
+
+---
+
+## State location
+
+Runtime state (`state.json`, theme choice, hook session crumbs) lives under
+the system temporary directory:
+
+```text
+$TMPDIR/tmon/          # or $TMP / $TEMP / /tmp when TMPDIR is unset
 ```
 
-Notifications are opt-in and off by default. To start them with tmux, add
-to `~/.tmux.conf`:
-
-```tmux
-run-shell -b "~/.tmux/plugins/tmon/bin/tmon daemon --notify"
-```
+The plugin binary stays in the plugin tree (`<plugin>/bin`). Override the
+state path with `TMON_STATE_DIR` if you need a durable location across reboots.
 
 ---
 
@@ -723,7 +739,7 @@ still tracks it.
 **Stale agent counts after crash** — delete the state file and let it rebuild:
 
 ```bash
-rm ~/.tmux/plugins/tmon/state/state.json
+rm "${TMPDIR:-/tmp}/tmon/state.json"
 ```
 
 **Binary won't download** — needs network access to GitHub Releases. Check

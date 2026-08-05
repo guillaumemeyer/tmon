@@ -77,6 +77,29 @@ func TestMatchesCaseInsensitive(t *testing.T) {
 	}
 }
 
+func TestStaleShouldIInScrollbackIsNotBlocked(t *testing.T) {
+	// Only recent lines are considered; clean work output must stay clear.
+	content := "implementing fix now\n...\nDone.\n"
+	if Matches(content) {
+		t.Fatal("must not match clean work output")
+	}
+}
+
+func TestLiveYNIsBlocked(t *testing.T) {
+	if !Matches("Delete files?\n[y/N]") {
+		t.Fatal("live [y/N] must match")
+	}
+}
+
+func TestLineFinalShouldI(t *testing.T) {
+	if !Matches("Should I create the file?") {
+		t.Fatal("line-final Should I? must match")
+	}
+	if Matches("note: Should I is a phrase we discussed earlier in the design") {
+		t.Fatal("mid-prose Should I without prompt shape must not match")
+	}
+}
+
 func TestMatchedPattern(t *testing.T) {
 	content := "Overwrite file? [y/N]"
 	m, ok := MatchedPattern(content)

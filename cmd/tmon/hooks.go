@@ -24,8 +24,9 @@ var hermesApprovalScript string
 // give tmon authoritative state for agents that do not expose a readable
 // state file (Claude Code, Codex, Cursor, Copilot, Windsurf, Hermes
 // approvals). Installing modifies the agent's own config, so it is
-// strictly opt-in: `tmon hooks install <agent>` with a backup,
+// opt-in by default: `tmon hooks install <agent>` with a backup,
 // `tmon hooks remove <agent>` to strip, `tmon hooks status` to inspect.
+// Plugin load only auto-installs when @tmon-auto-hooks is explicitly on.
 func cmdHooks(args []string) int {
 	if len(args) < 1 {
 		fmt.Fprint(os.Stderr, hooksUsage)
@@ -65,14 +66,14 @@ const hooksUsage = `tmon hooks — install lifecycle hook scripts into AI agents
 
 Hooks give tmon authoritative agent state (exact phase, running tool,
 permission waits) for agents that expose no readable state file. They are
-strictly opt-in: installing edits the agent's own config file.
+opt-in by default: installing edits the agent's own config file.
 
 Usage:
   tmon hooks install <agent>   Install hooks (backup + merge config)
   tmon hooks remove  <agent>   Strip tmon's hook entries from the config
   tmon hooks auto              Install hooks for every supported agent found
-                               on this machine (run at plugin load unless
-                               @tmon-auto-hooks is off)
+                               on this machine (also run at plugin load when
+                               @tmon-auto-hooks is on; default is off)
   tmon hooks status            Show which agents have hooks installed
 
 Supported agents: claude codex cursor copilot windsurf hermes
@@ -349,9 +350,9 @@ func hooksStatus() int {
 
 // hooksAuto installs hooks for every supported agent found on this machine —
 // a binary on PATH, or the agent's config file already present. It is the
-// startup path: tmon.tmux runs it at plugin load unless @tmon-auto-hooks is
-// off. Idempotent: agents already configured are skipped silently, so a
-// steady-state tmux reload prints nothing.
+// startup path when @tmon-auto-hooks is on (default is off). Idempotent:
+// agents already configured are skipped silently, so a steady-state tmux
+// reload prints nothing.
 func hooksAuto() int {
 	names := make([]string, 0, len(hookTargets)+1)
 	for n := range hookTargets {

@@ -64,12 +64,14 @@ func (m Model) doLoad() (Model, tea.Cmd) {
 		return m, nil
 	}
 	m.rows = data.Rows
-	// Capture every agent pane so fuzzy search can match preview content
-	// that is not currently visible in the right-hand panel.
-	m.refreshPaneCache()
+	// Full multi-pane capture is only needed while the user is searching
+	// (fuzzy match over pane text). Otherwise the selected-row preview
+	// alone is enough and avoids N capture-pane spawns per tick.
+	if m.searching {
+		m.refreshPaneCache()
+	}
 	m.rebuildFilter()
-	// Point the preview panel at the (possibly moved) selection using the
-	// cache filled above.
+	// Point the preview panel at the (possibly moved) selection.
 	m.refreshPreview(true)
 	return m, nil
 }
@@ -130,6 +132,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	switch msg.String() {
 	case "/":
 		m.searching = true
+		// One full capture when search opens so fuzzy match has pane text.
+		m.refreshPaneCache()
 		m.query = ""
 		m.searchInput.Reset()
 		m.searchInput.Focus()
@@ -369,6 +373,11 @@ func (m *Model) refreshPreview(force bool) {
 	pane := r.Pane
 	if !force && pane == m.previewPane {
 		return
+	}
+	// On a forced reload, drop the selected pane's cache entry so the
+	// preview shows fresh content without re-capturing every agent pane.
+	if force && m.paneCache != nil {
+		delete(m.paneCache, pane)
 	}
 	changed := pane != m.previewPane
 	m.previewPane = pane

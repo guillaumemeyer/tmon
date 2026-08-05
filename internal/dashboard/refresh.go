@@ -207,6 +207,10 @@ func sessionIDsByName(rows []Row) map[string]string {
 	return out
 }
 
+// maxPreviewLines bounds how much pane history we pull into memory. Unbounded
+// captures grow with agent count and scrollback depth.
+const maxPreviewLines = 200
+
 // capturePane grabs the pane's visible content for the preview panel,
 // including SGR/color escape sequences (-e) so the preview matches the
 // live pane. A seam so tests can inject deterministic captures.
@@ -214,7 +218,7 @@ var capturePane = func(paneTarget string) string {
 	if paneTarget == "" || paneTarget == "?" || !tmux.Available() {
 		return ""
 	}
-	out, err := tmux.Run("capture-pane", "-t", paneTarget, "-p", "-e")
+	out, err := tmux.Run("capture-pane", "-t", paneTarget, "-p", "-e", "-S", "-"+strconv.Itoa(maxPreviewLines))
 	if err != nil {
 		return ""
 	}

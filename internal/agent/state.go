@@ -102,6 +102,20 @@ func NewTracker(opts Options) *Tracker {
 	return &Tracker{opts: opts, prev: map[int]*AgentState{}}
 }
 
+// SeedPrev loads prior agent states so the first Evaluate can compute
+// CPU/IO deltas without a warm-up poll. Call before BeginPoll.
+// Each entry is copied so the caller may reuse or mutate the slice.
+func (t *Tracker) SeedPrev(agents []AgentState) {
+	if len(agents) == 0 {
+		return
+	}
+	t.prev = make(map[int]*AgentState, len(agents))
+	for i := range agents {
+		a := agents[i] // copy
+		t.prev[a.PID] = &a
+	}
+}
+
 // BeginPoll starts a new poll cycle.
 func (t *Tracker) BeginPoll() {
 	t.curr = make(map[int]*AgentState)

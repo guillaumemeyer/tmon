@@ -26,6 +26,42 @@ func TestFirstSightingIsIdle(t *testing.T) {
 	}
 }
 
+func TestSeedPrevEnablesCPUDelta(t *testing.T) {
+	// Simulate a prior poll that only wrote CPU baselines to disk.
+	tr := NewTracker(testOptions())
+	tr.SeedPrev([]AgentState{{
+		PID: 1, Label: "Grok", Status: StatusIdle, CPU: 1000, IO: 0,
+	}})
+	tr.BeginPoll()
+	// +200 ticks ≥ threshold (150) → working
+	got := tr.Evaluate(1, "Grok", "c", "?", 1200, 0, false)
+	if got != StatusWorking {
+		t.Errorf("seeded CPU-active poll = %q, want working", got)
+	}
+}
+
+func TestSeedPrevEmptyIsNoop(t *testing.T) {
+	tr := NewTracker(testOptions())
+	tr.SeedPrev(nil)
+	tr.BeginPoll()
+	if got := tr.Evaluate(1, "Grok", "c", "?", 1000, 0, false); got != StatusIdle {
+		t.Errorf("empty seed first sighting = %q, want idle", got)
+	}
+}
+
+func TestSeedPrevCopiesState(t *testing.T) {
+	// Caller mutates the slice after SeedPrev; tracker must not see it.
+	agents := []AgentState{{PID: 1, Label: "Grok", CPU: 1000, IO: 0}}
+	tr := NewTracker(testOptions())
+	tr.SeedPrev(agents)
+	agents[0].CPU = 999999
+	tr.BeginPoll()
+	got := tr.Evaluate(1, "Grok", "c", "?", 1200, 0, false)
+	if got != StatusWorking {
+		t.Errorf("after caller mutation got %q, want working (seed must copy)", got)
+	}
+}
+
 func TestZeroCPUStaysIdle(t *testing.T) {
 	// A just-forked process with no ticks yet must not be mislabeled; the
 	// delta math needs a baseline poll anyway.

@@ -1,7 +1,6 @@
-// Package poll implements the single shared poll loop behind both `tmon
-// status` and `tmon daemon`. Consolidating the loop here guarantees the two
-// subcommands can never drift apart — the bash plugin had two divergent
-// copies of this logic that had already drifted.
+// Package poll implements the single poll loop behind `tmon status`.
+// Consolidating the loop here keeps evaluation, notify, and persistence in
+// one place — the bash plugin had divergent copies that had already drifted.
 package poll
 
 import (
@@ -49,6 +48,10 @@ func run(cfg config.Config, prevStatus map[int]agent.Status, notify bool, record
 	}
 
 	tracker := agent.NewTracker(agent.NewOptions(cfg))
+	// Seed from the last persisted snapshot so one-shot `tmon status`
+	// invocations can compute CPU/IO deltas (the tracker is otherwise
+	// empty on every process start).
+	tracker.SeedPrev(sf.Agents)
 	tracker.BeginPoll()
 
 	connByPID := make(map[int]connector.Record, len(records))
@@ -74,8 +77,8 @@ func run(cfg config.Config, prevStatus map[int]agent.Status, notify bool, record
 			}
 			st = tracker.EvaluateAuthoritative(a.PID, a.Label, cwd, paneTarget, rec.Status, rec.Detail, rec.Title)
 		} else {
-			cpu, _ := proc.ReadCPUTicks(a.PID)
-			io, _ := proc.ReadIOBytes(a.PID)
+			cpu, _ := readCPU(a.PID)
+			io, _ := readIO(a.PID)
 			st = tracker.Evaluate(a.PID, a.Label, a.CWD, paneTarget, cpu, io, paneBlocked(paneTarget))
 		}
 		statuses = append(statuses, st)
@@ -159,10 +162,10 @@ func resolvePane(paneMap *pane.Map, pid int) string {
 
 // notifyTransitions compares the fresh snapshot against the previous poll's
 // statuses and announces each change. Agents not present in prev (newly
-// seen, or the daemon's first poll after a fresh state file) are silent.
+// seen, or the first poll after a fresh state file) are silent.
 // When bellOn is set, a transition into blocked also rings the terminal
-// bell — only transitions, never steady state (the daemon path carries
-// prevStatus; `tmon status` is transition-free by design).
+// bell — only transitions, never steady state. The status path loads
+// prevStatus from state.json so one-shot #() polls can still notify.
 func notifyTransitions(prev map[int]agent.Status, snap []agent.AgentState, bellOn bool) {
 	for _, s := range snap {
 		old, seen := prev[s.PID]
@@ -201,7 +204,7 @@ func notifyTransition(label string, old, new agent.Status, cwd string) {
 }
 
 // transitionMessage returns the display-message for a transition, or "" for
-// silent ones. Only "working" is announced; blocked and idling are quiet.
+// silent ones. Working and blocked are announced; idle decay is quiet.
 // First sightings land in idle, so there is no "started" toast anymore.
 func transitionMessage(label string, old, new agent.Status, cwd string) string {
 	if old == new {
@@ -211,6 +214,8 @@ func transitionMessage(label string, old, new agent.Status, cwd string) string {
 	switch new {
 	case agent.StatusWorking:
 		msg = label + " is now working"
+	case agent.StatusBlocked:
+		msg = label + " needs input"
 	default:
 		return ""
 	}
@@ -225,6 +230,8 @@ func transitionMessage(label string, old, new agent.Status, cwd string) string {
 // fakes without a tmux session or real agents.
 var (
 	detectAgents = detect.All
+	readCPU      = proc.ReadCPUTicks
+	readIO       = proc.ReadIOBytes
 	paneBlocked  = func(paneTarget string) bool {
 		return paneTarget != "?" && tmux.Available() && blocked.DetectPane(paneTarget)
 	}

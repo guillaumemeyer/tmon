@@ -10,7 +10,8 @@
 # Configuration options (set in tmux.conf):
 #   @tmon-status-position    "right" (default) or "left" — which side of the
 #                            status bar carries the agent indicator
-#   @tmon-poll-interval      3000 (default) — ms between agent scans
+#   @tmon-poll-interval      3000 (default) — ms between agent scans; also
+#                            sets tmux status-interval (seconds = ms/1000)
 #   @tmon-activity-threshold 500 (default) — CPU ms/s to consider "working"
 #   @tmon-io-threshold       102400 (default) — min IO bytes/poll for "working"
 #   @tmon-dashboard-key      "a" (default) — chord leader for the popup
@@ -30,8 +31,8 @@
 #   @tmon-context-warn      85 (default) — context-usage % at which a ⚠️
 #                            warning appears in the status bar (and the
 #                            dashboard's usage bar turns yellow); "0" disables
-#   @tmon-blocked-bell      "off" (default) — ring the terminal bell when an
-#                            agent transitions to blocked; "on" enables
+#   @tmon-blocked-bell      "on" (default) — ring the terminal bell when an
+#                            agent transitions to blocked; "off" disables
 #   @tmon-pane-border       "on" (default) — show a status-colored border
 #                            strip on agent panes (blocked/working icon+label;
 #                            idle clears to the default empty strip); "off"
@@ -44,21 +45,23 @@
 #   @tmon-icon-<slot>       override one status glyph; slot is one of
 #                            app|blocked|idle|warn (working agents use the
 #                            animated spinner instead of an icon)
-#   @tmon-auto-hooks        "on" (default) — auto-install lifecycle hooks at
+#   @tmon-auto-hooks        "off" (default) — auto-install lifecycle hooks at
 #                            plugin load for every supported agent found on
-#                            this machine (set "off" to disable)
+#                            this machine (set "on" to enable)
 #
-# Everything else is internal and self-contained: the binary is downloaded on
-# first load into <plugin>/bin (scripts/bootstrap.sh, pinned + checksummed to
-# the VERSION file) and all state lives in <plugin>/state. Nothing is written
-# to ~/.cache or /tmp.
+# The binary is downloaded on first load into <plugin>/bin (scripts/bootstrap.sh,
+# pinned + checksummed to VERSION). Runtime state (state.json, theme, hooks
+# crumbs) lives under the system temp directory at $TMPDIR/tmon (TMP/TEMP//tmp
+# fallbacks). Override with TMON_STATE_DIR if you need a durable path.
 # ==============================================================================
 
 set -eu
 
 CURRENT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BIN_DIR="$CURRENT_DIR/bin"
-STATE_DIR="$CURRENT_DIR/state"
+# System temp dir from the environment (TMPDIR, then TMP, then TEMP, else /tmp).
+TMP_ROOT="${TMPDIR:-${TMP:-${TEMP:-/tmp}}}"
+STATE_DIR="${TMP_ROOT%/}/tmon"
 BOOTSTRAP="$CURRENT_DIR/scripts/bootstrap.sh"
 BINARY="$BIN_DIR/tmon"
 
@@ -80,7 +83,7 @@ CONNECTOR_FRESHNESS=$(get_tmux_option "@tmon-connector-freshness" "30")
 ASCII_ICONS=$(get_tmux_option "@tmon-ascii-icons" "0")
 BOLD_COUNTS=$(get_tmux_option "@tmon-bold-counts" "1")
 CONTEXT_WARN=$(get_tmux_option "@tmon-context-warn" "85")
-BLOCKED_BELL=$(get_tmux_option "@tmon-blocked-bell" "off")
+BLOCKED_BELL=$(get_tmux_option "@tmon-blocked-bell" "on")
 PANE_BORDER=$(get_tmux_option "@tmon-pane-border" "on")
 PANE_BORDER_POS=$(get_tmux_option "@tmon-pane-border-position" "top")
 case "$PANE_BORDER_POS" in
@@ -96,7 +99,7 @@ if [ -s "$STATE_DIR/theme" ]; then
   THEME=$(tr -d '[:space:]' < "$STATE_DIR/theme")
   [ -n "$THEME" ] || THEME="default"
 fi
-AUTO_HOOKS=$(get_tmux_option "@tmon-auto-hooks" "on")
+AUTO_HOOKS=$(get_tmux_option "@tmon-auto-hooks" "off")
 
 # ─── Runtime environment ──────────────────────────────────────────────────────
 
@@ -189,6 +192,16 @@ main() {
   elif [ -x "$BINARY" ]; then
     "$BINARY" border off
   fi
+
+  # Align tmux's status redraw with @tmon-poll-interval. Without this,
+  # status-interval stays at the tmux default (15s) and the activity
+  # threshold math (ticks per poll interval) is miscalibrated by ~5×.
+  # tmon status is the only poller; this interval is the real poll rate.
+  STATUS_INTERVAL_SEC=$((POLL_INTERVAL / 1000))
+  if [ "$STATUS_INTERVAL_SEC" -lt 1 ]; then
+    STATUS_INTERVAL_SEC=1
+  fi
+  tmux set -g status-interval "$STATUS_INTERVAL_SEC"
 
   # Make `git pull` a complete update. TPM's `prefix U` runs exactly `git pull`
   # in the plugin dir and then does nothing else — so without help the new

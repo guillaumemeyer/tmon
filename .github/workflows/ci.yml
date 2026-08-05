@@ -34,6 +34,11 @@ jobs:
           sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
           shellcheck tmon.tmux scripts/bootstrap.sh scripts/bump-version.sh
 
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.64.5
+
   test-darwin:
     runs-on: macos-latest
     steps:

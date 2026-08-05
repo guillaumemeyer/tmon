@@ -36,15 +36,16 @@ type Config struct {
 }
 
 // Defaults returns the configuration used when no TMON_* variables are set.
-// tmon.tmux always exports the real values (pointing inside the plugin dir);
-// these defaults only apply to standalone/debug invocations and deliberately
-// avoid the system cache and temp dirs.
+// tmon.tmux exports the plugin values into the tmux environment; these
+// defaults apply to standalone/debug invocations. Runtime state lives under
+// the system temp directory ($TMPDIR/tmon via os.TempDir) so the plugin tree
+// stays read-mostly (binary + scripts only).
 func Defaults() Config {
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
 		home = os.Getenv("HOME")
 	}
-	stateDir := filepath.Join(home, ".tmon", "state")
+	stateDir := filepath.Join(os.TempDir(), "tmon")
 	return Config{
 		StateDir:            stateDir,
 		BinDir:              filepath.Join(home, ".tmon", "bin"),
@@ -59,6 +60,7 @@ func Defaults() Config {
 		BoldCounts:          true,
 		Theme:               "default",
 		ContextWarn:         85,
+		BlockedBell:         true,
 		PaneBorder:          true,
 		PaneBorderPosition:  "top",
 	}
@@ -152,7 +154,36 @@ func FromEnv() Config {
 	}
 	c.ColorOverrides = envMap("TMON_COLOR_")
 	c.IconOverrides = envMap("TMON_ICON_")
+	// Clamp invalid values so a bad env never produces a 0ms sleep or
+	// nonsense threshold math on the status-bar path.
+	c.clamp()
 	return c
+}
+
+// clamp rewrites nonsensical config values to safe defaults. The status-bar
+// #() path must never fail closed on a bad TMON_* value.
+func (c *Config) clamp() {
+	if c.PollIntervalMs <= 0 {
+		c.PollIntervalMs = 3000
+	}
+	if c.IdleDecayPolls < 1 {
+		c.IdleDecayPolls = 1
+	}
+	if c.ActivityThresholdMs < 0 {
+		c.ActivityThresholdMs = 500
+	}
+	if c.IOThreshold < 0 {
+		c.IOThreshold = 102400
+	}
+	if c.ContextWarn < 0 {
+		c.ContextWarn = 0
+	}
+	if c.ContextWarn > 100 {
+		c.ContextWarn = 100
+	}
+	if c.CLKTicks <= 0 {
+		c.CLKTicks = 100
+	}
 }
 
 // envMap collects every environment variable with the given prefix into a

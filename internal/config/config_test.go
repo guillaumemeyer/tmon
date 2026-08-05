@@ -19,14 +19,26 @@ func TestFromEnvDefaults(t *testing.T) {
 	}
 
 	c := FromEnv()
-	if c.StateDir != "/home/tester/.tmon/state" {
-		t.Errorf("StateDir = %q, want %q", c.StateDir, filepath.Join("/home/tester", ".tmon", "state"))
+	wantState := filepath.Join(os.TempDir(), "tmon")
+	if c.StateDir != wantState {
+		t.Errorf("StateDir = %q, want %q", c.StateDir, wantState)
 	}
 	if c.BinDir != "/home/tester/.tmon/bin" {
 		t.Errorf("BinDir = %q, want %q", c.BinDir, filepath.Join("/home/tester", ".tmon", "bin"))
 	}
 	if c.PollIntervalMs != 3000 || c.ActivityThresholdMs != 500 || c.IOThreshold != 102400 || c.IdleDecayPolls != 3 {
 		t.Errorf("unexpected defaults: %+v", c)
+	}
+}
+
+func TestDefaultsStateDirIsUnderTemp(t *testing.T) {
+	c := Defaults()
+	want := filepath.Join(os.TempDir(), "tmon")
+	if c.StateDir != want {
+		t.Fatalf("StateDir = %q, want %q", c.StateDir, want)
+	}
+	if c.HookStateDir != filepath.Join(want, "hooks") {
+		t.Fatalf("HookStateDir = %q, want under StateDir/hooks", c.HookStateDir)
 	}
 }
 
@@ -91,8 +103,9 @@ func TestConnectorDefaults(t *testing.T) {
 	if c.ConnectorFreshness != 30*time.Second {
 		t.Errorf("ConnectorFreshness = %v, want 30s", c.ConnectorFreshness)
 	}
-	if c.HookStateDir != "/home/tester/.tmon/state/hooks" {
-		t.Errorf("HookStateDir = %q, want state/hooks", c.HookStateDir)
+	wantHooks := filepath.Join(os.TempDir(), "tmon", "hooks")
+	if c.HookStateDir != wantHooks {
+		t.Errorf("HookStateDir = %q, want %q", c.HookStateDir, wantHooks)
 	}
 }
 
@@ -210,8 +223,8 @@ func TestContextWarnFromEnv(t *testing.T) {
 }
 
 func TestBlockedBellFromEnv(t *testing.T) {
-	if c := Defaults(); c.BlockedBell {
-		t.Fatal("default BlockedBell should be off")
+	if c := Defaults(); !c.BlockedBell {
+		t.Fatal("default BlockedBell should be on")
 	}
 	t.Setenv("TMON_BLOCKED_BELL", "on")
 	if c := FromEnv(); !c.BlockedBell {
@@ -220,6 +233,34 @@ func TestBlockedBellFromEnv(t *testing.T) {
 	t.Setenv("TMON_BLOCKED_BELL", "off")
 	if c := FromEnv(); c.BlockedBell {
 		t.Fatal("BlockedBell should be off with TMON_BLOCKED_BELL=off")
+	}
+}
+
+func TestClampInvalidValues(t *testing.T) {
+	t.Setenv("TMON_POLL_INTERVAL_MS", "0")
+	t.Setenv("TMON_IDLE_DECAY_POLLS", "0")
+	t.Setenv("TMON_ACTIVITY_THRESHOLD_MS", "-1")
+	t.Setenv("TMON_IO_ACTIVITY_THRESHOLD", "-5")
+	t.Setenv("TMON_CONTEXT_WARN", "150")
+	t.Setenv("TMON_CLK_TCK", "0")
+	c := FromEnv()
+	if c.PollIntervalMs != 3000 {
+		t.Errorf("PollIntervalMs = %d, want 3000 clamp", c.PollIntervalMs)
+	}
+	if c.IdleDecayPolls != 1 {
+		t.Errorf("IdleDecayPolls = %d, want 1 clamp", c.IdleDecayPolls)
+	}
+	if c.ActivityThresholdMs != 500 {
+		t.Errorf("ActivityThresholdMs = %d, want 500 clamp", c.ActivityThresholdMs)
+	}
+	if c.IOThreshold != 102400 {
+		t.Errorf("IOThreshold = %d, want 102400 clamp", c.IOThreshold)
+	}
+	if c.ContextWarn != 100 {
+		t.Errorf("ContextWarn = %d, want 100 clamp", c.ContextWarn)
+	}
+	if c.CLKTicks != 100 {
+		t.Errorf("CLKTicks = %d, want 100 clamp", c.CLKTicks)
 	}
 }
 

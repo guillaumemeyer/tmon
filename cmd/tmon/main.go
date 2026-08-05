@@ -14,7 +14,6 @@ const usageText = `tmon — tmux AI agent monitor
 Usage:
   tmon status [--json]   Print the status-bar indicator (used by tmux #());
                           with --json, the full agent state as JSON
-  tmon daemon [--notify] Run the polling loop (optionally with notifications)
   tmon dashboard         Open the interactive agent navigation popup
   tmon doctor [--json]   Environment health report (✓/✗); --json for CI
   tmon theme             List theme presets
@@ -28,7 +27,7 @@ Usage:
   tmon version           Print the installed version
 
 Environment (set by tmon.tmux from the @tmon-* tmux options):
-  TMON_STATE_DIR              State dir; default <plugin>/state
+  TMON_STATE_DIR              State dir; default $TMPDIR/tmon (system temp)
   TMON_BIN_DIR                Binary dir; default <plugin>/bin
   TMON_POLL_INTERVAL_MS       Poll interval in ms (default 3000)
   TMON_ACTIVITY_THRESHOLD_MS  CPU floor for "working" in ms/s (default 500)
@@ -53,7 +52,7 @@ Environment (set by tmon.tmux from the @tmon-* tmux options):
   TMON_CONTEXT_WARN           Context-usage % at which the ⚠️ warning appears
                               in the status bar (default 85; 0 disables)
   TMON_BLOCKED_BELL           Ring the terminal bell when an agent blocks:
-                              on|off (default off)
+                              on|off (default on)
   TMON_PANE_BORDER            Show a status-colored border strip on agent panes
                               (blocked/working; idle clears to default): on|off
                               (default on)
@@ -69,8 +68,6 @@ func main() {
 	switch os.Args[1] {
 	case "status":
 		os.Exit(cmdStatus(os.Args[2:]))
-	case "daemon":
-		os.Exit(cmdDaemon(os.Args[2:]))
 	case "dashboard":
 		os.Exit(cmdDashboard(os.Args[2:]))
 	case "doctor":

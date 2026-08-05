@@ -75,23 +75,23 @@ func TestPreviewAlwaysCapturesSelection(t *testing.T) {
 	m := New(f.load, true)
 	m = applyMsg(t, m, initMsg{})
 
-	// Preview is always on: initial load captures every agent pane so search
-	// can match non-visible content. First selectable is main:0.0.
-	if len(captured) != 3 {
-		t.Fatalf("captured = %v, want 3 pane captures on load", captured)
+	// Idle load only captures the selected pane for the preview panel
+	// (full multi-pane cache waits until the user opens search with /).
+	if len(captured) != 1 || captured[0] != "main:0.0" {
+		t.Fatalf("captured = %v, want only selected pane main:0.0 on load", captured)
 	}
 	if m.previewText == "" || m.previewPane != "main:0.0" {
 		t.Fatalf("preview = %q @ %q, want captured text for main:0.0", m.previewText, m.previewPane)
 	}
 
-	// Selection change switches preview from the cache (no extra capture).
+	// Selection change re-captures the new selection (no full-cache).
 	n := len(captured)
 	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyDown})
-	if len(captured) != n {
-		t.Fatalf("captured after selection change = %v, want no extra captures", captured)
+	if len(captured) != n+1 {
+		t.Fatalf("captured after selection change = %v, want one extra capture", captured)
 	}
 	if m.previewPane != "main:0.1" || m.previewText != "capture of main:0.1" {
-		t.Fatalf("preview = %q @ %q, want cached capture of main:0.1", m.previewText, m.previewPane)
+		t.Fatalf("preview = %q @ %q, want capture of main:0.1", m.previewText, m.previewPane)
 	}
 }
 
@@ -104,14 +104,14 @@ func TestPreviewRecapturesOnReload(t *testing.T) {
 	f := &fakeLoader{data: Data{Rows: testRows()}}
 	m := New(f.load, true)
 	m = applyMsg(t, m, initMsg{})
-	if len(captures) != 3 {
-		t.Fatalf("captures after init = %d, want 3 (one per agent pane)", len(captures))
+	// Without search mode, only the selected pane is captured per load.
+	if len(captures) != 1 {
+		t.Fatalf("captures after init = %d, want 1 (selected pane only)", len(captures))
 	}
-	// Every auto-refresh tick is a full reload: every agent pane re-captures.
 	n := len(captures)
 	m = applyMsg(t, m, tickMsg{})
-	if len(captures) != n+3 {
-		t.Fatalf("captures after reload = %d, want %d (3 panes re-captured)", len(captures), n+3)
+	if len(captures) != n+1 {
+		t.Fatalf("captures after reload = %d, want %d (selected pane re-captured)", len(captures), n+1)
 	}
 }
 

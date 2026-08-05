@@ -83,6 +83,8 @@ func TestCursorNativeSilentWithoutProcess(t *testing.T) {
 func TestCursorHookStateWinsOverNativeFallback(t *testing.T) {
 	home := withHome(t)
 	cfg := config.Defaults()
+	cfg.StateDir = t.TempDir()
+	cfg.HookStateDir = filepath.Join(cfg.StateDir, "hooks")
 	// Hook state present: authoritative blocked record.
 	writeFile(t, filepath.Join(cfg.HookStateDir, "cursor", "s1.json"),
 		`{"status":"blocked","detail":"permission:Bash","cwd":"/home/guillaume/code/tmon"}`)

@@ -73,6 +73,57 @@ func TestPaneBlockedFallbackWithoutConnector(t *testing.T) {
 	}
 }
 
+func TestSeedFromStateDetectsWorking(t *testing.T) {
+	stubDetect(t, []detect.Agent{{PID: 42, Label: "Grok", CWD: "code"}})
+	oldB := paneBlocked
+	paneBlocked = func(string) bool { return false }
+	t.Cleanup(func() { paneBlocked = oldB })
+
+	cfg := testConfig(t)
+	// Prior poll left a baseline in state.json
+	sf := agent.NewState()
+	sf.Agents = []agent.AgentState{{
+		PID: 42, Label: "Grok", Status: agent.StatusIdle, CPU: 1000, IO: 0, CWD: "code",
+	}}
+	if err := sf.Save(cfg.StateFilePath()); err != nil {
+		t.Fatal(err)
+	}
+
+	oldCPU, oldIO := readCPU, readIO
+	readCPU = func(pid int) (int64, error) { return 1200, nil } // +200 ≥ 150
+	readIO = func(pid int) (int64, error) { return 0, nil }
+	t.Cleanup(func() { readCPU, readIO = oldCPU, oldIO })
+
+	res, err := run(cfg, nil, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Agents) != 1 || res.Agents[0].Status != agent.StatusWorking {
+		t.Fatalf("agents = %+v, want working after seed from state", res.Agents)
+	}
+}
+
+func TestNoStateFirstPollIsIdle(t *testing.T) {
+	// Regression: first ever sighting stays idle (baseline poll).
+	stubDetect(t, []detect.Agent{{PID: 42, Label: "Grok", CWD: "code"}})
+	oldB := paneBlocked
+	paneBlocked = func(string) bool { return false }
+	t.Cleanup(func() { paneBlocked = oldB })
+	cfg := testConfig(t)
+	oldCPU, oldIO := readCPU, readIO
+	readCPU = func(int) (int64, error) { return 5000, nil }
+	readIO = func(int) (int64, error) { return 0, nil }
+	t.Cleanup(func() { readCPU, readIO = oldCPU, oldIO })
+
+	res, err := run(cfg, nil, false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Agents[0].Status != agent.StatusIdle {
+		t.Errorf("cold start = %q, want idle", res.Agents[0].Status)
+	}
+}
+
 func TestConnectorOnlyInjection(t *testing.T) {
 	// A record whose PID the /proc signature table misses becomes a new agent.
 	stubDetect(t, nil)
@@ -265,7 +316,7 @@ func TestTransitionMessageFilter(t *testing.T) {
 		want     string
 	}{
 		{agent.StatusIdle, agent.StatusWorking, "Grok is now working"},
-		{agent.StatusWorking, agent.StatusBlocked, ""}, // blocked is silent
+		{agent.StatusWorking, agent.StatusBlocked, "Grok needs input"},
 		{agent.StatusBlocked, agent.StatusIdle, ""},    // idling is silent
 		{agent.StatusWorking, agent.StatusWorking, ""}, // no transition
 	}
