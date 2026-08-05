@@ -434,7 +434,8 @@ func TestDragSeparatorResizesPreview(t *testing.T) {
 	m = applyMsg(t, m, initMsg{})
 	m.width, m.height = 100, 24
 
-	listW, _ := m.panelWidths(100)
+	// The separator is one cell in from the left border.
+	listW, _ := m.panelWidths(100 - 2)
 	var focused string
 	m.focusCmd = func(r Row) tea.Cmd {
 		focused = r.Pane
@@ -443,7 +444,7 @@ func TestDragSeparatorResizesPreview(t *testing.T) {
 
 	// Press on the separator starts a drag; no agent focus.
 	m = applyMsg(t, m, tea.MouseMsg{
-		Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: listW, Y: 4,
+		Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: listW + 1, Y: 4,
 	})
 	if !m.draggingSplit {
 		t.Fatal("expected draggingSplit after press on separator")
@@ -488,7 +489,8 @@ func TestDragSeparatorPressWithoutMotionDoesNotFocus(t *testing.T) {
 	m = applyMsg(t, m, initMsg{})
 	m.width, m.height = 100, 24
 
-	listW, _ := m.panelWidths(100)
+	// The separator is one cell in from the left border.
+	listW, _ := m.panelWidths(100 - 2)
 	var focused string
 	m.focusCmd = func(r Row) tea.Cmd {
 		focused = r.Pane
@@ -496,10 +498,10 @@ func TestDragSeparatorPressWithoutMotionDoesNotFocus(t *testing.T) {
 	}
 
 	m = applyMsg(t, m, tea.MouseMsg{
-		Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: listW, Y: 4,
+		Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: listW + 1, Y: 4,
 	})
 	m = applyMsg(t, m, tea.MouseMsg{
-		Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft, X: listW, Y: 4,
+		Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft, X: listW + 1, Y: 4,
 	})
 	if focused != "" {
 		t.Fatalf("separator click focused %q", focused)
@@ -544,19 +546,19 @@ func TestMouseClickFocusesAgent(t *testing.T) {
 	}
 
 	// Body rows: each agent spans four (name, cwd, pane, usage). Clicking
-	// any of an agent's rows selects it and focuses its pane: y 2-5 = Grok,
-	// y 6-9 = Claude, y 10-13 = Codex.
+	// any of an agent's rows selects it and focuses its pane: y 3-6 = Grok,
+	// y 7-10 = Claude, y 11-14 = Codex (one row below the top border).
 	m = applyMsg(t, m, click(2, 4))
 	if focused != "main:0.0" {
 		t.Fatalf("click Grok: focused %q, want main:0.0", focused)
 	}
 
-	m = applyMsg(t, m, click(2, 6))
+	m = applyMsg(t, m, click(2, 7))
 	if focused != "main:0.1" {
 		t.Fatalf("click Claude: focused %q, want main:0.1", focused)
 	}
 
-	m = applyMsg(t, m, click(2, 10))
+	m = applyMsg(t, m, click(2, 11))
 	if focused != "side:3.0" {
 		t.Fatalf("click Codex: focused %q, want side:3.0", focused)
 	}
@@ -581,8 +583,8 @@ func TestMouseClickOnStatsLine(t *testing.T) {
 	}
 
 	// Rows are uniform (4 lines) whether or not usage is present, so a click
-	// on any line of an agent's block selects that agent: y 2-5 = Grok,
-	// y 6-9 = Claude, y 10-13 = Codex.
+	// on any line of an agent's block selects that agent: y 3-6 = Grok,
+	// y 7-10 = Claude, y 11-14 = Codex.
 	m = applyMsg(t, m, click(2, 3))
 	if focused != "main:0.0" {
 		t.Fatalf("click stats line: focused %q, want main:0.0", focused)
@@ -609,15 +611,16 @@ func TestMouseClickIgnoresHeadersAndChrome(t *testing.T) {
 		return nil
 	}
 
-	// Chrome rows: header (y=0), divider (y=1), footer (y=23).
-	for _, y := range []int{0, 1, 23} {
+	// Chrome rows: top border (y=0), header (y=1), divider (y=2), footer
+	// (y=22, above the bottom border).
+	for _, y := range []int{0, 1, 2, 22} {
 		m = applyMsg(t, m, click(2, y))
 		if focused != "" {
 			t.Fatalf("click on chrome row y=%d focused %q", y, focused)
 		}
 	}
-	// Clicks below the last agent (y=14+, past the 3 rows × 4 lines) no-op.
-	for _, y := range []int{14, 18} {
+	// Clicks below the last agent (y=15+, past the 3 rows × 4 lines) no-op.
+	for _, y := range []int{15, 18} {
 		m = applyMsg(t, m, click(2, y))
 		if focused != "" {
 			t.Fatalf("click below the list y=%d focused %q", y, focused)
@@ -647,7 +650,8 @@ func TestMouseClickFocusesInSearchFlatList(t *testing.T) {
 		return nil
 	}
 
-	// Narrow to a single agent: the flat list has one item at body row 0.
+	// Narrow to a single agent: the flat list has one item at body row 0
+	// (screen row 3, below the top border, header and divider).
 	m = applyMsg(t, m, key('/'))
 	for _, r := range []rune{'c', 'o', 'd', 'e', 'x'} {
 		m = applyMsg(t, m, key(r))
@@ -655,7 +659,7 @@ func TestMouseClickFocusesInSearchFlatList(t *testing.T) {
 	if len(m.agentList.Items()) != 1 {
 		t.Fatalf("filtered items = %d, want 1", len(m.agentList.Items()))
 	}
-	m = applyMsg(t, m, click(2, 2))
+	m = applyMsg(t, m, click(2, 3))
 	if focused != "side:3.0" {
 		t.Fatalf("click in search list: focused %q, want side:3.0", focused)
 	}
@@ -714,6 +718,38 @@ func pidsOf(rows []Row) []int {
 	return out
 }
 
+func TestTmuxPathFormat(t *testing.T) {
+	cases := []struct {
+		name string
+		row  Row
+		want string
+	}{
+		{"names preferred over indices",
+			Row{Pane: "main:0.0", SessionName: "main", SessionID: "1", WindowIndex: "0", WindowName: "shell", PaneIndex: "0"},
+			"main / shell / 0"},
+		{"window index fallback when unnamed",
+			Row{Pane: "main:0.0", SessionName: "main", SessionID: "1", WindowIndex: "0", PaneIndex: "0"},
+			"main / 0 / 0"},
+		{"session index fallback when unnamed",
+			Row{Pane: "main:0.0", SessionID: "1", WindowIndex: "0", WindowName: "shell", PaneIndex: "0"},
+			"1 / shell / 0"},
+		{"unknown markers fall back to indices",
+			Row{Pane: "main:0.0", SessionName: "?", SessionID: "1", WindowIndex: "0", WindowName: "?", PaneIndex: "0"},
+			"1 / 0 / 0"},
+		{"unpaned",
+			Row{Pane: "?"},
+			"?"},
+		{"no structured fields keeps the raw target",
+			Row{Pane: "main:0.0"},
+			"main:0.0"},
+	}
+	for _, c := range cases {
+		if got := tmuxPath(c.row); got != c.want {
+			t.Errorf("%s: tmuxPath(%+v) = %q, want %q", c.name, c.row, got, c.want)
+		}
+	}
+}
+
 func TestViewEmptyState(t *testing.T) {
 	m := New(func() (Data, error) { return Data{}, nil }, true)
 	m = applyMsg(t, m, initMsg{})
@@ -755,10 +791,10 @@ func TestViewRendersFlatList(t *testing.T) {
 		"[@] tmon",
 		"Popup preview scroll (Grok Build)", // session title + name
 		"Claude Code", "Codex CLI",
-		"code/tmon",      // cwd
-		"tmux: main:0.0", // pane location line
-		"tmux: main:0.1",
-		"tmux: side:3.0",
+		"code/tmon",       // cwd
+		"tmux: main / shell / 0", // pane location line (session / window / pane, names preferred)
+		"tmux: main / shell / 1",
+		"tmux: side / code / 0",
 	} {
 		if !strings.Contains(v, want) {
 			t.Fatalf("view missing %q:\n%s", want, v)

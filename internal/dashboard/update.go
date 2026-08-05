@@ -137,6 +137,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	case "/":
 		m.searching = true
 	case "t":
+		m.themeCommitted = m.theme
 		m.themeMode = true
 	case "esc", "q", "ctrl+c":
 		return m, tea.Quit
@@ -152,8 +153,6 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		return m.focusSelected()
 	case "b", "w", "i":
 		m.toggleStatusFilter(statusKey(msg.String()))
-	case "1", "2", "3", "4", "5", "6", "7", "8", "9":
-		m.jumpTo(msg.String())
 	default:
 		// Everything else is list navigation: j/k/up/down/g/G/home/end.
 		var cmd tea.Cmd
@@ -166,15 +165,19 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleThemeKey dispatches keys in the theme selector: esc/q return to the
-// agent list without applying, enter/space apply the highlighted theme (and
-// persist it), ctrl+c quits the popup, and everything else (j/k/up/down/
-// g/G/…) is forwarded to the themes list, which re-resolves the palette
-// preview on selection.
+// handleThemeKey dispatches keys in the theme selector: browsing forwards
+// to the themes list and previews the highlighted preset live on the whole
+// popup; enter/space commit the highlighted theme (persist it and close
+// the selector); esc/q revert to the theme that was in effect when the
+// selector opened (nothing persists); ctrl+c quits the popup.
 func (m Model) handleThemeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc", "q":
 		m.themeMode = false
+		m = m.WithTheme(m.themeCommitted) // discard the live preview
+		// Reverting replaced the spinner (committed theme color); re-arm
+		// its tick so the animation keeps running after the old chain.
+		return m, func() tea.Msg { return m.spinner.Tick() }
 	case "ctrl+c":
 		return m, tea.Quit
 	case "enter", " ":
@@ -189,6 +192,7 @@ func (m Model) handleThemeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		if cmd != nil {
 			return m, cmd
 		}
+		m = m.applyThemePreview()
 	}
 	return m, nil
 }
@@ -196,11 +200,15 @@ func (m Model) handleThemeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 // handleMouse maps mouse events: drag the │ separator to resize the preview,
 // or left-click an agent row to focus its pane (same as Enter). Clicks on
 // chrome rows, the preview panel body, and blank padding are ignored. The
-// theme selector is keyboard-only.
+// theme selector is keyboard-only. Screen coordinates are shifted one cell
+// in from each edge first, because the popup's rounded border is drawn
+// inside the canvas.
 func (m Model) handleMouse(msg tea.MouseMsg) (Model, tea.Cmd) {
 	if m.themeMode {
 		return m, nil
 	}
+	msg.X--
+	msg.Y--
 	switch msg.Action {
 	case tea.MouseActionRelease:
 		if m.draggingSplit {
@@ -219,8 +227,8 @@ func (m Model) handleMouse(msg tea.MouseMsg) (Model, tea.Cmd) {
 		// The mouse wheel scrolls the preview panel; the viewport moves
 		// itself (up = older content, down = toward the bottom).
 		if msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown {
-			if m.width > 0 {
-				if listW, _ := m.panelWidths(m.width); msg.X >= listW {
+			if m.width > 2 {
+				if listW, _ := m.panelWidths(m.width - 2); msg.X >= listW {
 					m.preview.Update(msg)
 				}
 			}
@@ -230,8 +238,8 @@ func (m Model) handleMouse(msg tea.MouseMsg) (Model, tea.Cmd) {
 			return m, nil
 		}
 		// Drag the list|preview separator (hit target ±1 cell).
-		if m.width > 0 {
-			listW, _ := m.panelWidths(m.width)
+		if m.width > 2 {
+			listW, _ := m.panelWidths(m.width - 2)
 			if msg.X >= listW-1 && msg.X <= listW+1 {
 				m.draggingSplit = true
 				m.setPreviewPctFromX(msg.X)
@@ -239,15 +247,15 @@ func (m Model) handleMouse(msg tea.MouseMsg) (Model, tea.Cmd) {
 			}
 		}
 		// Only clicks on the list column act; the preview panel is a no-op.
-		if m.width > 0 {
-			_, panelW := m.panelWidths(m.width)
-			if listW := m.width - panelW - 1; msg.X >= listW {
+		if m.width > 2 {
+			_, panelW := m.panelWidths(m.width - 2)
+			if listW := m.width - 2 - panelW - 1; msg.X >= listW {
 				return m, nil
 			}
 		}
 		// Rows 0 (header) and 1 (divider) are chrome; body rows start at 2.
 		bodyRow := msg.Y - 2
-		if bodyRow < 0 || bodyRow >= m.height-3 {
+		if bodyRow < 0 || bodyRow >= bodyLinesFor(m.height-2) {
 			return m, nil
 		}
 		if m.clickAgentAt(bodyRow) {
@@ -270,7 +278,7 @@ func (m *Model) clickAgentAt(bodyRow int) bool {
 	}
 	// Only count fully rendered rows: a partially clipped item cannot be
 	// the click target.
-	if (idxInView+1)*itemH > m.height-3 {
+	if (idxInView+1)*itemH > bodyLinesFor(m.height-2) {
 		return false
 	}
 	hit, ok := visible[idxInView].(agentItem)
@@ -288,21 +296,24 @@ func (m *Model) clickAgentAt(bodyRow int) bool {
 }
 
 // setPreviewPctFromX sets previewPct so the separator sits near column x.
-// Does not persist; the caller saves on drag release.
+// x is in content coordinates (inside the popup's drawn border), and the
+// split only ever moves within the inner canvas. Does not persist; the
+// caller saves on drag release.
 func (m *Model) setPreviewPctFromX(x int) {
-	if m.width < 2 {
+	innerW := m.width - 2 // content width inside the border
+	if innerW < 2 {
 		return
 	}
-	// list | sep | preview  →  preview fraction of (width - 1) after the sep.
+	// list | sep | preview  →  preview fraction of (innerW - 1) after the sep.
 	listW := x
 	if listW < 0 {
 		listW = 0
 	}
-	if listW > m.width-1 {
-		listW = m.width - 1
+	if listW > innerW-1 {
+		listW = innerW - 1
 	}
-	panelW := m.width - 1 - listW
-	pct := (panelW * 100) / (m.width - 1)
+	panelW := innerW - 1 - listW
+	pct := (panelW * 100) / (innerW - 1)
 	m.previewPct = clampPreviewPct(pct)
 }
 
@@ -342,19 +353,6 @@ func (m *Model) toggleStatusFilter(st agent.Status) {
 		m.filterStatus = st
 	}
 	m.rebuildFilter()
-}
-
-// jumpTo selects the Nth (1-based) agent in the filtered list.
-func (m *Model) jumpTo(n string) {
-	if len(m.filtered) == 0 {
-		return
-	}
-	idx := int(n[0] - '1')
-	if idx >= len(m.filtered) {
-		idx = len(m.filtered) - 1
-	}
-	m.agentList.Select(idx)
-	m.refreshPreview(false)
 }
 
 // refreshPreview points the preview panel at the selected agent's pane.

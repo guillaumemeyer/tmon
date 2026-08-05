@@ -1,3 +1,8 @@
+```
+▀█▀ █▀▄▀█ █▀█ █▄░█
+░█░ █░▀░█ █▄█ █░▀█
+```
+
 # tmon — your AI coding agents, now with a leash
 
 ```

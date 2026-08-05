@@ -96,6 +96,37 @@ func TestIncrementalTokensRotation(t *testing.T) {
 	}
 }
 
+// TestIncrementalTokensVersionBump verifies a cache entry written by an
+// older parse version (e.g. before a parser fix) is ignored and the source
+// is recounted, even when the file size is unchanged — otherwise the stale
+// count would be served forever.
+func TestIncrementalTokensVersionBump(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "session.jsonl")
+	content := []byte(`{"usage":{"tokens":40}}
+`)
+	if err := os.WriteFile(src, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// A pre-versioning entry (no "version" field) claiming 0 tokens at the
+	// current size — the shape the old Claude parser left behind. The size
+	// matches, so only the version mismatch can force the recount.
+	writeFile(t, usageCachePath(dir, src),
+		`{"src":"`+src+`","size":`+strconv.Itoa(len(content))+`,"tokens":0}`)
+
+	n, err := incrementalTokens(dir, src, countUsage)
+	if err != nil || n != 40 {
+		t.Fatalf("stale entry ignored: n=%d err=%v, want 40 (recounted)", n, err)
+	}
+
+	// The recount persisted; a second call is served from the cache.
+	n, err = incrementalTokens(dir, src, countUsage)
+	if err != nil || n != 40 {
+		t.Fatalf("cached after recount: n=%d err=%v, want 40", n, err)
+	}
+}
+
 func TestPruneUsageCache(t *testing.T) {
 	dir := t.TempDir()
 	usageDir := filepath.Join(dir, "usage")

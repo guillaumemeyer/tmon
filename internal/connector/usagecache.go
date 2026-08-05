@@ -30,11 +30,19 @@ import (
 // whose source file is gone are pruned. A var so tests can lower it.
 var usageCacheMaxEntries = 64
 
+// usageCacheVersion bumps whenever the parsing logic changes such that
+// previously cached token counts are no longer valid (e.g. a parser fix).
+// Entries written by an older version are ignored and the source is
+// recounted from scratch — without this, a stale count would be served
+// forever while the transcript file stays the same size.
+const usageCacheVersion = 2
+
 // usageEntry is one incremental-transcript cache record.
 type usageEntry struct {
-	Src    string `json:"src"`    // source file path this entry mirrors
-	Size   int64  `json:"size"`   // source size at last parse
-	Tokens int64  `json:"tokens"` // cumulative tokens counted so far
+	Version int    `json:"version"` // usageCacheVersion that produced this count
+	Src     string `json:"src"`     // source file path this entry mirrors
+	Size    int64  `json:"size"`    // source size at last parse
+	Tokens  int64  `json:"tokens"`  // cumulative tokens counted so far
 }
 
 func usageCachePath(stateDir, src string) string {
@@ -55,6 +63,9 @@ func incrementalTokens(stateDir, src string, parseTokens func([]byte) int64) (in
 	entry := usageEntry{Src: src}
 	if b, err := os.ReadFile(usageCachePath(stateDir, src)); err == nil {
 		_ = json.Unmarshal(b, &entry)
+	}
+	if entry.Version != usageCacheVersion {
+		entry = usageEntry{Src: src} // stale parser output: recount from zero
 	}
 	if entry.Size > fi.Size() {
 		entry = usageEntry{Src: src} // rotated/truncated: restart the count
@@ -121,8 +132,11 @@ func lineStart(f *os.File, pos int64) int64 {
 	return 0
 }
 
-// saveUsageEntry writes the entry atomically, then opportunistically prunes.
+// saveUsageEntry writes the entry atomically, stamping the current cache
+// version so older entries are recognized and ignored, then
+// opportunistically prunes.
 func saveUsageEntry(stateDir, src string, e usageEntry) {
+	e.Version = usageCacheVersion
 	dir := filepath.Join(stateDir, "usage")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return

@@ -18,19 +18,21 @@ import (
 // dashboard renders through these so the popup always matches the theme.
 type styles struct {
 	dim, green, orange, blue, cyan, white, warn lipgloss.Style
+	bg                                          lipgloss.Style // popup background fill (theme background)
+	bgColor                                     lipgloss.Color
 	selBg                                       lipgloss.Style // background-only, for padding + wraps
-	// selBgColor is the raw selection background color; the per-line styles
-	// below are the selection variants for the agent rows.
-	selBgColor lipgloss.Color
-	selText    lipgloss.Style // selected name row: accent bold on selBg
-	selDim     lipgloss.Style // selected cwd/stats rows: dim on selBg
+	selBgColor                                  lipgloss.Color
+	// The per-line styles below are the selection variants for the agent rows.
+	selText lipgloss.Style // selected name row: accent bold on selBg
+	selDim  lipgloss.Style // selected cwd/stats rows: dim on selBg
 }
 
 // buildStyles converts a theme palette into lipgloss styles. tmux-style
 // "colourNNN" values are translated for lipgloss; names and hex pass through.
 func buildStyles(pal theme.Palette) styles {
 	col := func(c string) lipgloss.Color { return lipgloss.Color(theme.Lipgloss(c)) }
-	bg := col(pal.SelBg)
+	bg := col(pal.Background)
+	sbg := col(pal.SelBg)
 	return styles{
 		dim:    lipgloss.NewStyle().Foreground(col(pal.Dim)),
 		green:  lipgloss.NewStyle().Foreground(col(pal.Working)),
@@ -39,11 +41,14 @@ func buildStyles(pal theme.Palette) styles {
 		cyan:   lipgloss.NewStyle().Foreground(col(pal.App)),
 		white:  lipgloss.NewStyle().Foreground(col(pal.Accent)),
 		warn:   lipgloss.NewStyle().Foreground(col(pal.Warn)),
-		selBg:  lipgloss.NewStyle().Background(bg),
+		bg:     lipgloss.NewStyle().Background(bg),
 
-		selBgColor: bg,
-		selText:    lipgloss.NewStyle().Foreground(col(pal.Accent)).Bold(true).Background(bg),
-		selDim:     lipgloss.NewStyle().Foreground(col(pal.Dim)).Background(bg),
+		bgColor: bg,
+		selBg:   lipgloss.NewStyle().Background(sbg),
+
+		selBgColor: sbg,
+		selText:    lipgloss.NewStyle().Foreground(col(pal.Accent)).Bold(true).Background(sbg),
+		selDim:     lipgloss.NewStyle().Foreground(col(pal.Dim)).Background(sbg),
 	}
 }
 
@@ -60,10 +65,11 @@ var (
 	styleWhite  = defaultStyles.white
 )
 
-// View renders the popup: header, divider, agent list with a always-on
-// right-side pane preview, and footer. It always emits exactly height lines
-// so the footer lands on the last row. In theme mode it shows the theme
-// selector instead.
+// View renders the popup: a rounded border drawn inside the canvas (the
+// tmux popup itself opens borderless), then header, divider, agent list
+// with an always-on right-side pane preview, and footer. It always emits
+// exactly height lines of width cells so the popup fills its pane. In
+// theme mode it shows the theme selector instead.
 func (m Model) View() string {
 	w, h := m.width, m.height
 	if w < 1 {
@@ -72,17 +78,24 @@ func (m Model) View() string {
 	if h < 1 {
 		h = 24
 	}
+	if w < 3 {
+		w = 3 // the border needs a corner on each side
+	}
+	if h < 3 {
+		h = 3
+	}
 	if m.themeMode {
 		return m.themeView(w, h)
 	}
 
-	listW, panelW := m.panelWidths(w)
+	innerW, innerH := w-2, h-2
+	listW, panelW := m.panelWidths(innerW)
 
-	lines := make([]string, 0, h)
-	lines = append(lines, m.headerLine(w))
-	lines = append(lines, fit(m.st.dim.Render(strings.Repeat("━", w)), w))
+	lines := make([]string, 0, innerH)
+	lines = append(lines, m.headerLine(innerW))
+	lines = append(lines, fit(m.st.dim.Render(strings.Repeat("━", innerW)), innerW))
 
-	bodyLines := h - 3
+	bodyLines := bodyLinesFor(innerH)
 	if bodyLines < 1 {
 		bodyLines = 1
 	}
@@ -94,12 +107,241 @@ func (m Model) View() string {
 		lines = append(lines, listLines[i]+"│"+prev[i])
 	}
 
-	for len(lines) < h-1 {
+	for len(lines) < innerH-1 {
 		lines = append(lines, "")
 	}
-	lines = append(lines, m.footerLine(w))
+	lines = append(lines, m.footerLine(innerW))
 
-	return strings.Join(lines, "\n")
+	return strings.Join(paintRows(w, framed(w, lines, m.st.white), m.st.bg), "\n")
+}
+
+// framed draws the popup's rounded border inside the canvas: a ╭─╮/╰─╯
+// top/bottom line and a │ on each side of every row. The tmux popup opens
+// borderless (display-popup -B), so this is the only frame; it is drawn in
+// the theme's accent color. rows must each be w-2 cells wide, and the
+// result is exactly w cells per row.
+func framed(w int, rows []string, border lipgloss.Style) []string {
+	horiz := strings.Repeat("─", w-2)
+	out := make([]string, 0, len(rows)+2)
+	out = append(out, border.Render("╭"+horiz+"╮"))
+	for _, r := range rows {
+		out = append(out, border.Render("│")+r+border.Render("│"))
+	}
+	out = append(out, border.Render("╰"+horiz+"╯"))
+	return out
+}
+
+// bodyLinesFor is the row count available for the list/preview body of a
+// canvas innerH cells tall: the header and divider above it, the footer
+// below.
+func bodyLinesFor(innerH int) int {
+	n := innerH - 3
+	if n < 1 {
+		return 1
+	}
+	return n
+}
+
+// paintRows fills every row with the theme background so the popup is a
+// solid panel rather than a transparent window over the terminal. Each row
+// is padded to exactly w cells first. SGR resets inside the content — from
+// colored pane captures — would clear the background mid-row, so the
+// background sequence is re-asserted after every reset form.
+func paintRows(w int, rows []string, bg lipgloss.Style) []string {
+	seq := backgroundSeq(bg)
+	out := make([]string, len(rows))
+	for i, r := range rows {
+		r = fit(r, w)
+		if seq == "" {
+			out[i] = r
+			continue
+		}
+		r = reassertBackground(r, seq)
+		out[i] = seq + r + sgrReset
+	}
+	return out
+}
+
+// sgrReset clears all SGR attributes. The popup background re-asserts after
+// it (see paintRows) so captures cannot punch transparent holes in the panel.
+const sgrReset = "\x1b[0m"
+
+// reassertBackground scans s for CSI sequences and re-asserts the theme
+// background (seq) after every SGR sequence whose net effect leaves the
+// background at the terminal default. Pane captures use every reset form —
+// "\x1b[0m", "\x1b[49m", combined "\x1b[39;49m", bare "\x1b[m",
+// "\x1b[0;31m", ... — and any of them would otherwise punch a transparent
+// hole through the painted panel. The background state is tracked across
+// the whole string, so a deliberate explicit background ("\x1b[48;5;0m")
+// is preserved and only a later reset falls back to the theme fill.
+func reassertBackground(s, seq string) string {
+	var b strings.Builder
+	b.Grow(len(s) + 8)
+	bgDefault := false // rows start with the theme background already set
+	for i := 0; i < len(s); {
+		if s[i] != '\x1b' || i+1 >= len(s) || s[i+1] != '[' {
+			b.WriteByte(s[i])
+			i++
+			continue
+		}
+		// A CSI sequence: ESC [ parameter bytes, intermediate bytes, final.
+		j := i + 2
+		for j < len(s) && s[j] >= 0x20 && s[j] <= 0x3f {
+			j++
+		}
+		if j >= len(s) || s[j] < 0x40 || s[j] > 0x7e {
+			b.WriteByte(s[i]) // unterminated/malformed: copy the ESC
+			i++
+			continue
+		}
+		esc := s[i : j+1]
+		b.WriteString(esc)
+		if s[j] == 'm' && sgrLeavesDefaultBg(esc, &bgDefault) {
+			b.WriteString(seq)
+			bgDefault = false
+		}
+		i = j + 1
+	}
+	return b.String()
+}
+
+// sgrLeavesDefaultBg applies an SGR sequence ("\x1b[...m") to the tracked
+// background state and reports whether it ends at the terminal default.
+// Parameters are applied left to right: "0"/"49" reset the background, the
+// background codes 40-47/48/100-107 set it explicitly, and everything else
+// (foreground, attributes) leaves it alone. Extended color specs after
+// "38"/"48" are skipped so their index/component fields (e.g. "5;49" in
+// "\x1b[38;5;49m") are not misread as background codes.
+func sgrLeavesDefaultBg(esc string, bgDefault *bool) bool {
+	body := esc[2 : len(esc)-1] // drop ESC [ and the trailing m
+	if body == "" {
+		*bgDefault = true // bare "\x1b[m" resets everything
+		return true
+	}
+	fields := strings.Split(body, ";")
+	for i := 0; i < len(fields); i++ {
+		switch fields[i] {
+		case "0", "49":
+			*bgDefault = true
+		case "48":
+			*bgDefault = false
+			i += colorSpecLen(fields, i)
+		case "38":
+			i += colorSpecLen(fields, i) // foreground only; skip its spec
+		default:
+			if isBgCode(fields[i]) {
+				*bgDefault = false
+			}
+		}
+	}
+	return *bgDefault
+}
+
+// colorSpecLen is the number of fields an extended color code ("38"/"48")
+// consumes after itself: "5;N" for indexed colors, "2;r;g;b" for truecolor.
+func colorSpecLen(fields []string, i int) int {
+	if i+1 >= len(fields) {
+		return 0
+	}
+	switch fields[i+1] {
+	case "5":
+		return 2
+	case "2":
+		return 4
+	}
+	return 0
+}
+
+// isBgCode reports whether an SGR parameter sets an explicit background:
+// 40-47, 48 (extended, handled by the caller), or 100-107.
+func isBgCode(f string) bool {
+	if len(f) == 2 && f[0] == '4' && f[1] >= '0' && f[1] <= '7' {
+		return true
+	}
+	if len(f) == 3 && f[0] == '1' && f[1] == '0' && f[2] >= '0' && f[2] <= '7' {
+		return true
+	}
+	return false
+}
+
+// forceBackground rewrites s so the theme background (seq) always wins over
+// the content's own colors: after every SGR sequence that touches the
+// background — resets ("\x1b[0m", "\x1b[49m", bare "\x1b[m", ...) and
+// explicit backgrounds ("\x1b[48;5;0m", "\x1b[41m", truecolor, ...) alike —
+// the theme sequence is re-asserted, overriding whatever the content set.
+// Foreground colors and attributes pass through untouched, and because every
+// background-touching sequence is neutralized immediately, the background
+// between sequences is always the theme's, so foreground-only codes never
+// need a re-assertion. Used for the preview pane, where a captured terminal
+// may paint its own backgrounds.
+func forceBackground(s, seq string) string {
+	if seq == "" {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s) + 8)
+	for i := 0; i < len(s); {
+		if s[i] != '\x1b' || i+1 >= len(s) || s[i+1] != '[' {
+			b.WriteByte(s[i])
+			i++
+			continue
+		}
+		// A CSI sequence: ESC [ parameter bytes, intermediate bytes, final.
+		j := i + 2
+		for j < len(s) && s[j] >= 0x20 && s[j] <= 0x3f {
+			j++
+		}
+		if j >= len(s) || s[j] < 0x40 || s[j] > 0x7e {
+			b.WriteByte(s[i]) // unterminated/malformed: copy the ESC
+			i++
+			continue
+		}
+		esc := s[i : j+1]
+		b.WriteString(esc)
+		if s[j] == 'm' && sgrTouchesBackground(esc) {
+			b.WriteString(seq)
+		}
+		i = j + 1
+	}
+	return b.String()
+}
+
+// sgrTouchesBackground reports whether an SGR sequence changes the
+// background at all: a reset ("0"/"49"/bare "\x1b[m") or an explicit
+// background (40-47, 48, 100-107). Extended color specs after "38"/"48" are
+// skipped so their fields (e.g. "5;49" in "\x1b[38;5;49m") are not misread.
+func sgrTouchesBackground(esc string) bool {
+	body := esc[2 : len(esc)-1] // drop ESC [ and the trailing m
+	if body == "" {
+		return true
+	}
+	fields := strings.Split(body, ";")
+	for i := 0; i < len(fields); i++ {
+		switch fields[i] {
+		case "0", "49":
+			return true
+		case "48":
+			return true
+		case "38":
+			i += colorSpecLen(fields, i) // foreground only; skip its spec
+		default:
+			if isBgCode(fields[i]) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// backgroundSeq extracts the ANSI background sequence a lipgloss style emits
+// (e.g. "\x1b[48;5;235m"), or "" when the style sets no background.
+func backgroundSeq(bg lipgloss.Style) string {
+	rendered := bg.Render("X")
+	seq, _, ok := strings.Cut(rendered, "X")
+	if !ok {
+		return ""
+	}
+	return seq
 }
 
 // listLines renders the flat agent list into exactly bodyLines lines of
@@ -108,9 +350,9 @@ func (m Model) View() string {
 // state (theme, spinner frame) is always current, with no shared state.
 func (m Model) listLines(w, bodyLines int) []string {
 	if len(m.filtered) == 0 {
-		msg := "    No agents detected."
+		msg := " No agents detected."
 		if m.query != "" {
-			msg = `    No agents match "` + m.query + `"`
+			msg = ` No agents match "` + m.query + `"`
 		}
 		out := []string{fit(m.st.dim.Render(msg), w)}
 		for len(out) < bodyLines {
@@ -150,10 +392,6 @@ func (m Model) panelWidths(w int) (listW, panelW int) {
 	return listW, panelW
 }
 
-// sgrReset clears SGR attributes so preview colors cannot bleed into the
-// next list row (terminals carry style across newlines).
-const sgrReset = "\x1b[0m"
-
 // previewLines renders the right-side preview panel: a header line naming
 // the selected agent, then the bubbles viewport holding the pane capture
 // (scrollable with ctrl+u/ctrl+d and the mouse wheel). Every line is
@@ -192,8 +430,12 @@ func (m Model) previewLines(w, n int) []string {
 		if vp[len(vp)-1] == "" {
 			vp = vp[:len(vp)-1]
 		}
+		// The captured pane may paint its own backgrounds; force them all
+		// back to the theme fill so the preview is a solid theme-colored
+		// panel with no transparency.
+		seq := backgroundSeq(m.st.bg)
 		for _, l := range vp {
-			out = append(out, fit(l, w))
+			out = append(out, fit(forceBackground(l, seq), w))
 		}
 	}
 	for len(out) < n {
@@ -423,9 +665,10 @@ func displayCWD(cwd string) string {
 
 // footerLine varies with the mode: search input, active filter, or the
 // navigation hint, with the match count aligned right. When a selectable
-// agent with a real pane is focused, a preview scroll tip is shown.
+// agent with a real pane is focused, a preview scroll tip is shown. The
+// right-side tips get a width budget after the left segment so narrow
+// footers degrade gracefully instead of truncating the query.
 func (m Model) footerLine(w int) string {
-	right := m.footerRight()
 	// Version pinned bottom-left, one cell in from the border.
 	left := ""
 	if m.version != "" {
@@ -434,25 +677,28 @@ func (m Model) footerLine(w int) string {
 	switch {
 	case m.searching:
 		left += m.st.white.Render("▌ "+m.query) + m.st.dim.Render("▌")
-		return m.twoSided(left, right, w)
 	case m.query != "":
 		left += m.st.dim.Render("▌ " + m.query)
 		if m.filterStatus != "" {
 			left += m.st.dim.Render(" · " + m.filterLabel())
 		}
-		return m.twoSided(left, right, w)
 	default:
 		if m.filterStatus != "" {
 			left += m.st.dim.Render("▌ " + m.filterLabel() + " (press again to clear)")
 		}
-		return m.twoSided(left, right, w)
 	}
+	// Reserve one cell for a right margin after the tips plus one so
+	// twoSided always has a pad between the segments.
+	right := m.footerRight(w-ansi.StringWidth(left)-2) + " "
+	return m.twoSided(left, right, w)
 }
 
 // footerRight is the right-aligned footer segment: match count while
-// filtering, resize/scroll tips for the preview, and the jump hint.
-func (m Model) footerRight() string {
-	parts := make([]string, 0, 4)
+// filtering, resize/scroll tips for the preview, and the theme hint. Tips
+// are joined most-useful first and trailing ones are dropped until the
+// segment fits its budget, so the count and navigation hint always survive.
+func (m Model) footerRight(w int) string {
+	parts := make([]string, 0, 5)
 	if m.query != "" || m.searching {
 		parts = append(parts, fmt.Sprintf("%d/%d", len(m.filtered), len(m.rows)))
 	}
@@ -462,9 +708,13 @@ func (m Model) footerRight() string {
 	if m.previewNavTipVisible() {
 		parts = append(parts, "[C-u/C-d] scroll preview")
 	}
-	parts = append(parts, "[1-9] jump ")
 	parts = append(parts, "[t] theme")
-	return m.st.dim.Render(strings.Join(parts, "  "))
+	text := strings.Join(parts, "  ")
+	for ansi.StringWidth(text) > w && len(parts) > 1 {
+		parts = parts[:len(parts)-1]
+		text = strings.Join(parts, "  ")
+	}
+	return m.st.dim.Render(text)
 }
 
 // previewNavTipVisible is true when an agent with a resolvable pane is

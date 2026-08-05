@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -40,7 +41,9 @@ func TestThemeSelectorOpensAndListsThemes(t *testing.T) {
 		t.Fatalf("preview should show the highlighted theme's swatches:\n%s", v)
 	}
 	// Header and footer switch to theme-mode hints.
-	if !strings.Contains(v, "tmon — themes") || !strings.Contains(v, "[enter] apply") {
+	if !strings.Contains(v, "tmon — themes") ||
+		!strings.Contains(v, "[enter/space] apply") ||
+		!strings.Contains(v, "[esc/q] revert") {
 		t.Fatalf("theme-mode header/footer hints missing:\n%s", v)
 	}
 }
@@ -49,6 +52,11 @@ func TestThemeSelectorMoveUpdatesPreview(t *testing.T) {
 	old := capturePane
 	capturePane = func(p string) string { return "x" }
 	t.Cleanup(func() { capturePane = old })
+
+	var persisted []string
+	oldPersist := persistTheme
+	persistTheme = func(name string) { persisted = append(persisted, name) }
+	t.Cleanup(func() { persistTheme = oldPersist })
 
 	f := &fakeLoader{data: Data{Rows: testRows()}}
 	m := New(f.load, true)
@@ -71,6 +79,17 @@ func TestThemeSelectorMoveUpdatesPreview(t *testing.T) {
 	}
 	if strings.Contains(v, "#cba6f7") {
 		t.Fatal("preview still shows the previous theme's swatches")
+	}
+	// Browsing applies the highlighted theme live to the whole popup…
+	if m.theme.Name != "dracula" {
+		t.Fatalf("live preview theme = %q, want dracula", m.theme.Name)
+	}
+	if m.theme.Palette.App != "#bd93f9" {
+		t.Fatalf("live preview app color = %q, want dracula's", m.theme.Palette.App)
+	}
+	// …but must not persist anything: only enter/space commits.
+	if len(persisted) != 0 {
+		t.Fatalf("browsing must not persist a theme, got %v", persisted)
 	}
 }
 
@@ -113,7 +132,7 @@ func TestThemeSelectorApplyPersists(t *testing.T) {
 	}
 }
 
-func TestThemeSelectorEscKeepsTheme(t *testing.T) {
+func TestThemeSelectorApplyPersistsToFile(t *testing.T) {
 	old := capturePane
 	capturePane = func(p string) string { return "x" }
 	t.Cleanup(func() { capturePane = old })
@@ -123,25 +142,79 @@ func TestThemeSelectorEscKeepsTheme(t *testing.T) {
 	persistTheme = func(name string) { persisted = append(persisted, name) }
 	t.Cleanup(func() { persistTheme = oldPersist })
 
+	dir := t.TempDir()
 	f := &fakeLoader{data: Data{Rows: testRows()}}
-	m := New(f.load, true)
+	m := New(f.load, true).WithSettingsPath(dir + "/dashboard.json")
 	m = applyMsg(t, m, initMsg{})
 	m.width, m.height = 100, 24
-	orig := m.theme.Name
 
 	m = applyMsg(t, m, key('t'))
 	m = applyMsg(t, m, key('j'))
-	m = applyMsg(t, m, key('j'))
-	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	m = applyMsg(t, m, key('j')) // dracula
+	m = applyMsg(t, m, key(' ')) // apply (space, like agent focus)
 
-	if m.themeMode {
-		t.Fatal("esc should close the theme selector")
+	data, err := os.ReadFile(dir + "/theme")
+	if err != nil {
+		t.Fatalf("theme file not written: %v", err)
 	}
-	if m.theme.Name != orig {
-		t.Fatalf("theme changed to %q after esc, want %q", m.theme.Name, orig)
+	if got := string(data); got != "dracula" {
+		t.Fatalf("theme file = %q, want dracula", got)
 	}
-	if len(persisted) != 0 {
-		t.Fatalf("esc should not persist a theme, got %v", persisted)
+
+	// A fresh model over the same settings path re-reads the preview width;
+	// the theme itself is restored by tmon.tmux at load from this file.
+	m2 := New(f.load, true).WithSettingsPath(dir + "/dashboard.json")
+	if m2.settingsPath == "" {
+		t.Fatal("settings path should carry over")
+	}
+	if got := m2.themeStateDir(); got != dir {
+		t.Fatalf("themeStateDir = %q, want %q", got, dir)
+	}
+}
+
+func TestThemeSelectorEscKeepsTheme(t *testing.T) {
+	old := capturePane
+	capturePane = func(p string) string { return "x" }
+	t.Cleanup(func() { capturePane = old })
+
+	for _, tc := range []struct {
+		name string
+		key  tea.KeyMsg
+	}{
+		{"esc", tea.KeyMsg{Type: tea.KeyEsc}},
+		{"q", key('q')},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var persisted []string
+			oldPersist := persistTheme
+			persistTheme = func(name string) { persisted = append(persisted, name) }
+			t.Cleanup(func() { persistTheme = oldPersist })
+
+			f := &fakeLoader{data: Data{Rows: testRows()}}
+			m := New(f.load, true)
+			m = applyMsg(t, m, initMsg{})
+			m.width, m.height = 100, 24
+			orig := m.theme.Name
+
+			m = applyMsg(t, m, key('t'))
+			m = applyMsg(t, m, key('j'))
+			m = applyMsg(t, m, key('j'))
+			if m.theme.Name == orig {
+				t.Fatal("browsing should preview the highlighted theme live")
+			}
+			m = applyMsg(t, m, tc.key)
+
+			if m.themeMode {
+				t.Fatal(tc.name + " should close the theme selector")
+			}
+			if m.theme.Name != orig {
+				t.Fatalf("theme = %q after %s, want %q (revert the live preview)",
+					m.theme.Name, tc.name, orig)
+			}
+			if len(persisted) != 0 {
+				t.Fatalf("%s should not persist a theme, got %v", tc.name, persisted)
+			}
+		})
 	}
 }
 

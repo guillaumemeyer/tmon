@@ -6,8 +6,11 @@
 // hermes.go, claude.go, ...). Connectors are dormant when the agent is not
 // installed: Enabled() gates on the presence of the agent's state paths, so
 // uninstalled agents cost nothing. Records carry a timestamp; the poll loop
-// drops stale ones, so a vanished signal decays back to the heuristic path
-// instead of leaving the agent "stuck active".
+// drops stale non-idle ones, so a vanished active signal decays back to the
+// heuristic path instead of leaving the agent "stuck active". Stale idle
+// records from live processes are kept (refreshed) so their cumulative
+// enrichment — title, profile, token usage — survives an idle agent that
+// has stopped emitting events.
 package connector
 
 import (
@@ -85,7 +88,16 @@ func collect(cfg config.Config, now time.Time, conns []Connector) []Record {
 				continue // process exited: drop the record
 			}
 			if now.Sub(r.At) > cfg.ConnectorFreshness {
-				continue // stale signal: fall through to heuristic decay
+				// Stale non-idle signals decay to the heuristic path so an
+				// agent cannot get "stuck active". A stale idle signal from
+				// a live process is kept (refreshed) instead: its
+				// cumulative enrichment — session title, profile, token
+				// usage — is not time-sensitive and would otherwise vanish
+				// the moment an idle agent stops emitting events.
+				if r.Status != agent.StatusIdle {
+					continue
+				}
+				r.At = now
 			}
 			cur, seen := byPID[r.PID]
 			if !seen || r.At.After(cur.At) {

@@ -2,6 +2,8 @@ package dashboard
 
 import (
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/list"
@@ -88,22 +90,47 @@ func (m Model) themeNames() []string {
 }
 
 // persistTheme writes the chosen theme back to tmux so the status bar
-// matches the popup after it closes: the @tmon-theme option plus the
-// TMON_THEME environment (the config reads TMON_THEME first). Both commands
-// are best-effort; failures and headless runs are ignored. Package-level so
-// tests can capture it.
+// matches the popup after it closes, via the TMON_THEME environment (the
+// config reads TMON_THEME first). Best-effort; failures and headless runs
+// are ignored. Package-level so tests can capture it.
 var persistTheme = func(name string) {
 	if !tmux.Available() {
 		return
 	}
-	_, _ = tmux.Run("set-option", "-g", "@tmon-theme", name)
 	_, _ = tmux.Run("set-environment", "-g", "TMON_THEME", name)
+}
+
+// themeStateDir is where the persisted theme file lives: the same state
+// directory as the dashboard settings file. Empty when no settings path is
+// set (tests and ad-hoc construction), which disables file persistence.
+func (m Model) themeStateDir() string {
+	if m.settingsPath == "" {
+		return ""
+	}
+	return filepath.Dir(m.settingsPath)
+}
+
+// writeThemeFile persists the chosen theme name next to the dashboard
+// settings so it survives a tmux server restart — tmux's TMON_THEME variable
+// is server-state only and is wiped on restart. tmon.tmux restores from
+// this file at load. Failures are ignored so a read-only state dir never
+// breaks the popup.
+func writeThemeFile(dir, name string) {
+	if dir == "" {
+		return
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return
+	}
+	_ = os.WriteFile(filepath.Join(dir, "theme"), []byte(name), 0o644)
 }
 
 // applyThemeSelection resolves and applies the highlighted theme to the
 // whole popup and persists it so the tmux status bar matches after the
-// popup closes. The stored resolution options (overrides, ASCII) keep
-// applying to the chosen preset.
+// popup closes — live in tmux (see persistTheme) and to state/theme for the
+// next tmux server start. The stored resolution options (overrides, ASCII)
+// keep applying to the chosen preset. Only this path (enter/space)
+// persists.
 func (m Model) applyThemeSelection() Model {
 	names := m.themeNames()
 	if len(names) == 0 {
@@ -112,22 +139,39 @@ func (m Model) applyThemeSelection() Model {
 	name := names[m.themes.Index()]
 	m.themeOpts.Name = name
 	persistTheme(name)
+	writeThemeFile(m.themeStateDir(), name)
 	return m.WithTheme(theme.Resolve(m.themeOpts))
 }
 
-// themeView renders the theme selector: the preset list on the left and the
-// live palette preview for the highlighted theme on the right. It always
-// emits exactly h lines so the footer lands on the last row.
-func (m Model) themeView(w, h int) string {
-	lines := make([]string, 0, h)
-	lines = append(lines, m.themeHeaderLine(w))
-	lines = append(lines, fit(m.st.dim.Render(strings.Repeat("━", w)), w))
+// applyThemePreview restyles the whole popup with the highlighted preset —
+// the live preview while browsing — without persisting anything. The
+// stored overrides/ASCII keep applying; themeOpts.Name is left untouched
+// so a later esc/q revert has nothing to undo.
+func (m Model) applyThemePreview() Model {
+	names := m.themeNames()
+	if len(names) == 0 {
+		return m
+	}
+	opts := m.themeOpts
+	opts.Name = names[m.themes.Index()]
+	return m.WithTheme(theme.Resolve(opts))
+}
 
-	bodyLines := h - 3
+// themeView renders the theme selector: the preset list on the left and the
+// live palette preview for the highlighted theme on the right, framed by the
+// same rounded border as the agent view. It always emits exactly h lines so
+// the footer lands on the last row.
+func (m Model) themeView(w, h int) string {
+	innerW, innerH := w-2, h-2
+	lines := make([]string, 0, innerH)
+	lines = append(lines, m.themeHeaderLine(innerW))
+	lines = append(lines, fit(m.st.dim.Render(strings.Repeat("━", innerW)), innerW))
+
+	bodyLines := bodyLinesFor(innerH)
 	if bodyLines < 1 {
 		bodyLines = 1
 	}
-	listW, panelW := m.panelWidths(w)
+	listW, panelW := m.panelWidths(innerW)
 
 	sel := ""
 	if names := m.themeNames(); len(names) > 0 {
@@ -138,11 +182,11 @@ func (m Model) themeView(w, h int) string {
 	for i := range left {
 		lines = append(lines, left[i]+"│"+prev[i])
 	}
-	for len(lines) < h-1 {
+	for len(lines) < innerH-1 {
 		lines = append(lines, "")
 	}
-	lines = append(lines, m.themeFooterLine(w))
-	return strings.Join(lines, "\n")
+	lines = append(lines, m.themeFooterLine(innerW))
+	return strings.Join(paintRows(w, framed(w, lines, m.st.white), m.st.bg), "\n")
 }
 
 // themeListLines renders the theme list into exactly bodyLines lines of
@@ -203,10 +247,11 @@ func (m Model) themePreviewLines(w, n int, name string) []string {
 	return out
 }
 
-// themeHeaderLine is the selector title with the back hint aligned right.
+// themeHeaderLine is the selector title with the apply/revert hint aligned
+// right.
 func (m Model) themeHeaderLine(w int) string {
 	title := m.st.cyan.Bold(true).Render(" " + m.theme.Icons.App + " tmon — themes")
-	hint := m.st.dim.Render("[enter] apply  [esc] back ")
+	hint := m.st.dim.Render("[enter/space] apply  [esc/q] revert ")
 	pad := w - ansi.StringWidth(title) - ansi.StringWidth(hint)
 	if pad < 1 {
 		return ansi.Truncate(title, w, "")
@@ -214,10 +259,10 @@ func (m Model) themeHeaderLine(w int) string {
 	return title + strings.Repeat(" ", pad) + hint
 }
 
-// themeFooterLine is the selector footer: browse/apply/back hints with the
-// highlighted theme name aligned right.
+// themeFooterLine is the selector footer: preview/apply/revert hints with
+// the highlighted theme name aligned right.
 func (m Model) themeFooterLine(w int) string {
-	left := " " + m.st.dim.Render("[↑/↓ j/k] browse  [enter] apply  [esc] back")
+	left := " " + m.st.dim.Render("[↑/↓ j/k] preview  [enter/space] apply  [esc/q] revert")
 	right := ""
 	if names := m.themeNames(); len(names) > 0 {
 		right = m.st.dim.Render(" " + names[m.themes.Index()])

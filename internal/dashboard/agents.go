@@ -85,11 +85,12 @@ func (d agentDelegate) Render(w io.Writer, lm list.Model, index int, item list.I
 }
 
 // renderRow renders the four lines of one agent row, each exactly d.width
-// cells wide. Line 1 carries the status icon + identity-colored name; line
-// 2 the cwd, status age and (for blocked agents) the pause reason; line 3
-// the tmux session:window.pane location in dim; line 4 the usage line or a
-// blank row when the connector reported no stats. The selected row gets the
-// full-line selection background.
+// cells wide. Every line shares a one-cell left margin so the list sits
+// flush left against the popup edge. Line 1 carries the status icon +
+// identity-colored name; line 2 the cwd, status age and (for blocked
+// agents) the pause reason; line 3 the tmux Session/Window/Pane location in
+// dim; line 4 the usage line or a blank row when the connector reported no
+// stats. The selected row gets the full-line selection background.
 func (d agentDelegate) renderRow(r Row, selected bool) []string {
 	st := d.st
 
@@ -102,14 +103,14 @@ func (d agentDelegate) renderRow(r Row, selected bool) []string {
 	if selected {
 		bg := st.selBgColor
 		line1 = selFit(st,
-			st.selBg.Render("      ")+
+			st.selBg.Render(" ")+
 				statusStyle(st, r.Status).Background(bg).Render(icon)+
 				identityStyle(st, r.Label).Bold(true).Background(bg).Render(disp),
 			d.width,
 		)
 	} else {
 		line1 = fit(
-			"      "+
+			" "+
 				statusStyle(st, r.Status).Render(icon)+
 				identityStyle(st, r.Label).Bold(true).Render(disp),
 			d.width,
@@ -131,13 +132,13 @@ func (d agentDelegate) renderRow(r Row, selected bool) []string {
 	}
 	var line2 string
 	if selected {
-		text := "      " + cwd + age
+		text := " " + cwd + age
 		if pause != "" {
 			text += "  " + pause
 		}
 		line2 = st.selDim.Render(fit(text, d.width))
 	} else {
-		line2 = "      " + st.dim.Render(cwd)
+		line2 = " " + st.dim.Render(cwd)
 		if age != "" {
 			line2 += st.dim.Render(age)
 		}
@@ -147,12 +148,8 @@ func (d agentDelegate) renderRow(r Row, selected bool) []string {
 		line2 = fit(line2, d.width)
 	}
 
-	// Line 3: the tmux location, dimmed — "tmux: main:0.1".
-	pane := r.Pane
-	if pane == "" || pane == "?" {
-		pane = "?"
-	}
-	line3 := "      " + st.dim.Render("tmux: "+pane)
+	// Line 3: the tmux location, dimmed — "tmux: main / shell / 0".
+	line3 := " " + st.dim.Render("tmux: "+tmuxPath(r))
 	if selected {
 		line3 = st.selDim.Render(fit(line3, d.width))
 	} else {
@@ -162,16 +159,20 @@ func (d agentDelegate) renderRow(r Row, selected bool) []string {
 	// Line 4: usage stats or a blank row (uniform item height). The bar
 	// width is derived from the row width, and the line is padded to the
 	// full width so the selection highlight and alignment stay uniform.
-	line4 := usageLine(st, d.contextWarn, r.Usage, selected, d.width)
+	// The left margin is budgeted out of the row width so the bar still
+	// fits; on the selected row the margin sits on the selection
+	// background too, keeping the highlight continuous.
+	usage := usageLine(st, d.contextWarn, r.Usage, selected, d.width-1)
+	var line4 string
 	switch {
-	case line4 == "" && selected:
-		line4 = st.selDim.Render(fit("      ", d.width))
-	case line4 == "":
-		line4 = fit("", d.width)
+	case usage == "" && selected:
+		line4 = st.selDim.Render(fit(" ", d.width))
+	case usage == "":
+		line4 = fit(" ", d.width)
 	case selected:
-		line4 = selFit(st, line4, d.width)
+		line4 = st.selBg.Render(" ") + selFit(st, usage, d.width-1)
 	default:
-		line4 = fit(line4, d.width)
+		line4 = fit(" "+usage, d.width)
 	}
 
 	return []string{line1, line2, line3, line4}
@@ -185,4 +186,32 @@ func (d agentDelegate) statusIcon(s agent.Status) string {
 		return d.spinner + " "
 	}
 	return d.icons.ForStatus(s) + " "
+}
+
+// tmuxPath renders the agent's tmux location as "Session / Window / Pane":
+// each segment prefers the human name when one is known and falls back to
+// the numeric index (session id, window index, pane index). "?" when the
+// agent has no pane; the raw target when no structured segment is known.
+func tmuxPath(r Row) string {
+	if r.Pane == "" || r.Pane == "?" {
+		return "?"
+	}
+	session := firstKnown(r.SessionName, r.SessionID)
+	window := firstKnown(r.WindowName, r.WindowIndex)
+	pane := firstKnown(r.PaneIndex)
+	if session == "" && window == "" && pane == "" {
+		return r.Pane
+	}
+	return strings.Join([]string{session, window, pane}, " / ")
+}
+
+// firstKnown returns the first non-empty value that is not the unknown
+// marker "?".
+func firstKnown(vals ...string) string {
+	for _, v := range vals {
+		if v != "" && v != "?" {
+			return v
+		}
+	}
+	return ""
 }

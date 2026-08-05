@@ -42,8 +42,9 @@ var claudeHome = func() string {
 // claudeSession is one entry of ~/.claude/sessions/<pid>.json, written by
 // Claude Code itself. Only the fields the connector needs are decoded.
 type claudeSession struct {
-	PID  int    `json:"pid"`
-	Name string `json:"name"`
+	PID       int    `json:"pid"`
+	SessionID string `json:"sessionId"`
+	Name      string `json:"name"`
 }
 
 func (Claude) Name() string { return "claude" }
@@ -62,25 +63,27 @@ func (Claude) Probe(cfg config.Config) ([]Record, error) {
 		return nil, err
 	}
 	names := claudeSessionNames()
+	live := claudeLiveSessions()
 	for i := range recs {
 		if n := names[recs[i].PID]; n != "" {
 			recs[i].Title = n
 		}
-		recs[i].Usage = claudeUsage(cfg.StateDir, recs[i].PID, recs[i].CWD)
+		recs[i].Usage = claudeUsage(cfg.StateDir, recs[i].PID, recs[i].CWD, live[recs[i].PID].SessionID)
 	}
 	return recs, nil
 }
 
-// claudeSessionNames maps live Claude PIDs to their session names by
+// claudeLiveSessions maps live Claude PIDs to their registry entries by
 // reading ~/.claude/sessions/*.json (the registry `claude agents --json`
-// is built from). A missing registry or unreadable entries yield no names.
-func claudeSessionNames() map[int]string {
+// is built from). A missing registry or unreadable entries yield an empty
+// map.
+func claudeLiveSessions() map[int]claudeSession {
 	dir := filepath.Join(claudeHome(), "sessions")
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil
 	}
-	out := make(map[int]string)
+	out := make(map[int]claudeSession)
 	for _, e := range entries {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
 			continue
@@ -94,25 +97,49 @@ func claudeSessionNames() map[int]string {
 			continue
 		}
 		var s claudeSession
-		if json.Unmarshal(b, &s) != nil || s.Name == "" {
+		if json.Unmarshal(b, &s) != nil {
 			continue
 		}
-		out[pid] = s.Name
+		out[pid] = s
 	}
 	return out
 }
 
-// claudeUsage reads the token usage for one Claude session: the newest
-// transcript under the project dir for the process's working directory,
-// summed incrementally (cheap per poll), plus the context window for the
-// model named in the transcript tail. Returns zero usage when no transcript
+// claudeSessionNames maps live Claude PIDs to their session names by
+// reading ~/.claude/sessions/*.json (the registry `claude agents --json`
+// is built from). A missing registry or unreadable entries yield no names.
+func claudeSessionNames() map[int]string {
+	live := claudeLiveSessions()
+	out := make(map[int]string, len(live))
+	for pid, s := range live {
+		if s.Name != "" {
+			out[pid] = s.Name
+		}
+	}
+	return out
+}
+
+// claudeUsage reads the token usage for one Claude session: the live
+// session's transcript under the project dir (matched by the sessionId from
+// Claude's own registry), falling back to the newest transcript when the
+// live one has not been written yet (brand-new session), summed
+// incrementally (cheap per poll), plus the context window for the model
+// named in the transcript tail. Returns zero usage when no transcript
 // exists yet (brand-new session) or nothing parses.
-func claudeUsage(stateDir string, pid int, cwd string) agent.Usage {
+func claudeUsage(stateDir string, pid int, cwd, sessionID string) agent.Usage {
 	dir := claudeProjectDir(cwd, pid)
 	if dir == "" {
 		return agent.Usage{}
 	}
-	path := newestJSONL(dir)
+	path := ""
+	if sessionID != "" {
+		if p := filepath.Join(dir, sessionID+".jsonl"); fileExists(p) {
+			path = p
+		}
+	}
+	if path == "" {
+		path = newestJSONL(dir)
+	}
 	if path == "" {
 		return agent.Usage{}
 	}
@@ -204,23 +231,41 @@ func newestJSONL(dir string) string {
 	return best
 }
 
+// claudeUsageBlock is the token usage Claude attaches to an assistant
+// message.
+type claudeUsageBlock struct {
+	InputTokens        int64 `json:"input_tokens"`
+	CacheCreationInput int64 `json:"cache_creation_input_tokens"`
+	CacheReadInput     int64 `json:"cache_read_input_tokens"`
+	OutputTokens       int64 `json:"output_tokens"`
+}
+
 // claudeParseUsage returns the tokens counted for one transcript line:
 // input + cache creation + cache read + output from the message's usage
-// block. Lines without usage (user messages, system events, partial lines)
-// yield 0.
+// block. Claude nests usage under message.usage; older transcripts carried
+// it at the top level, so both are accepted. Lines without usage (user
+// messages, system events, partial lines) yield 0.
 func claudeParseUsage(line []byte) int64 {
 	var ev struct {
-		Usage *struct {
-			InputTokens        int64 `json:"input_tokens"`
-			CacheCreationInput int64 `json:"cache_creation_input_tokens"`
-			CacheReadInput     int64 `json:"cache_read_input_tokens"`
-			OutputTokens       int64 `json:"output_tokens"`
-		} `json:"usage"`
+		Message *struct {
+			Usage *claudeUsageBlock `json:"usage"`
+		} `json:"message"`
+		Usage *claudeUsageBlock `json:"usage"`
 	}
-	if json.Unmarshal(line, &ev) != nil || ev.Usage == nil {
+	if json.Unmarshal(line, &ev) != nil {
 		return 0
 	}
-	return ev.Usage.InputTokens + ev.Usage.CacheCreationInput + ev.Usage.CacheReadInput + ev.Usage.OutputTokens
+	var u *claudeUsageBlock
+	if ev.Message != nil {
+		u = ev.Message.Usage
+	}
+	if u == nil {
+		u = ev.Usage
+	}
+	if u == nil {
+		return 0
+	}
+	return u.InputTokens + u.CacheCreationInput + u.CacheReadInput + u.OutputTokens
 }
 
 // claudeTranscriptModel returns the last model name mentioned in the

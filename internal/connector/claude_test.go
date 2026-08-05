@@ -200,7 +200,7 @@ func TestClaudeProbeWithoutRegistryKeepsRecords(t *testing.T) {
 func TestClaudeSessionNamesSkipsUnnamedAndMalformed(t *testing.T) {
 	home := stubClaudeHome(t)
 	dir := filepath.Join(home, "sessions")
-	writeFile(t, filepath.Join(dir, "1.json"), `{"pid":1,"name":"alpha"}`)
+	writeFile(t, filepath.Join(dir, "1.json"), `{"pid":1,"sessionId":"sess-1","name":"alpha"}`)
 	writeFile(t, filepath.Join(dir, "2.json"), `{"pid":2}`)                  // unnamed
 	writeFile(t, filepath.Join(dir, "3.json"), `not json`)                   // malformed
 	writeFile(t, filepath.Join(dir, "notapid.json"), `{"pid":9,"name":"x"}`) // non-numeric name
@@ -214,6 +214,9 @@ func TestClaudeSessionNamesSkipsUnnamedAndMalformed(t *testing.T) {
 	}
 	if _, ok := names[9]; ok {
 		t.Error("non-numeric filename should be skipped")
+	}
+	if id := claudeLiveSessions()[1].SessionID; id != "sess-1" {
+		t.Errorf("live session id = %q, want sess-1", id)
 	}
 }
 
@@ -235,12 +238,17 @@ func TestClaudeProbeUsageFromTranscript(t *testing.T) {
 	home := stubClaudeHome(t)
 	stubClaudeAbsCWD(t, "/home/guillaume/code/tmon")
 
+	// Claude's registry names the live session; its sessionId picks the
+	// transcript file below.
+	writeFile(t, filepath.Join(home, "sessions", "4242.json"),
+		`{"pid":4242,"sessionId":"s1","name":"tmon-0b","status":"working"}`)
+
 	dir := filepath.Join(home, "projects", "-home-guillaume-code-tmon")
-	writeFile(t, filepath.Join(dir, "a1b2c3.jsonl"),
+	writeFile(t, filepath.Join(dir, "s1.jsonl"),
 		`{"type":"mode","mode":"normal"}
-{"parentUuid":"u1","message":{"model":"claude-sonnet-5","role":"assistant"},"usage":{"input_tokens":2,"cache_creation_input_tokens":12147,"cache_read_input_tokens":28964,"output_tokens":732}}
+{"type":"assistant","message":{"model":"claude-sonnet-5","role":"assistant","usage":{"input_tokens":2,"cache_creation_input_tokens":12147,"cache_read_input_tokens":28964,"output_tokens":732}},"sessionId":"s1"}
 {"type":"user","content":"hi"}
-{"parentUuid":"u2","message":{"model":"claude-sonnet-5","role":"assistant"},"usage":{"input_tokens":3,"cache_creation_input_tokens":0,"cache_read_input_tokens":100,"output_tokens":20}}
+{"type":"assistant","message":{"model":"claude-sonnet-5","role":"assistant","usage":{"input_tokens":3,"cache_creation_input_tokens":0,"cache_read_input_tokens":100,"output_tokens":20}},"sessionId":"s1"}
 `)
 
 	recs, err := (Claude{}).Probe(cfg)
@@ -273,7 +281,7 @@ func TestClaudeProbeUsageSkipsNonUsageLines(t *testing.T) {
 	writeFile(t, filepath.Join(dir, "s1.jsonl"),
 		`{"type":"mode","mode":"normal"}
 {"type":"user","content":"hi"}
-{"message":{"model":"claude-haiku"},"usage":{"input_tokens":10,"output_tokens":5}}
+{"type":"assistant","message":{"model":"claude-haiku","role":"assistant","usage":{"input_tokens":10,"output_tokens":5}},"sessionId":"s1"}
 `)
 	recs, err := (Claude{}).Probe(cfg)
 	if err != nil {
@@ -285,6 +293,56 @@ func TestClaudeProbeUsageSkipsNonUsageLines(t *testing.T) {
 	}
 	if u.WindowTokens != 200000 {
 		t.Errorf("WindowTokens = %d, want 200000 (claude-haiku)", u.WindowTokens)
+	}
+}
+
+// TestClaudeUsagePrefersLiveSessionTranscript verifies the connector reads
+// the live session's own transcript (by registry sessionId) even when an
+// unrelated, newer transcript exists in the same project dir — otherwise a
+// stale session's tokens would be attributed to the running agent.
+func TestClaudeUsagePrefersLiveSessionTranscript(t *testing.T) {
+	cfg := claudeCfg(t)
+	writeClaudeHook(t, cfg, "s1", "working", "tool:Bash", "/home/guillaume/code/tmon")
+	stubClaudeAgents(t, map[string]int{"code/tmon": 4242})
+	home := stubClaudeHome(t)
+	stubClaudeAbsCWD(t, "/home/guillaume/code/tmon")
+
+	writeFile(t, filepath.Join(home, "sessions", "4242.json"),
+		`{"pid":4242,"sessionId":"s1","name":"live","status":"working"}`)
+	dir := filepath.Join(home, "projects", "-home-guillaume-code-tmon")
+	writeFile(t, filepath.Join(dir, "s1.jsonl"),
+		`{"type":"assistant","message":{"model":"claude-sonnet-5","role":"assistant","usage":{"input_tokens":40,"output_tokens":2}},"sessionId":"s1"}`)
+	writeFile(t, filepath.Join(dir, "znewer.jsonl"),
+		`{"type":"assistant","message":{"model":"claude-sonnet-5","role":"assistant","usage":{"input_tokens":999,"output_tokens":999}},"sessionId":"zother"}`)
+
+	recs, err := (Claude{}).Probe(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := recs[0].Usage
+	if u.TokensUsed != 42 {
+		t.Errorf("TokensUsed = %d, want 42 (live session s1, not the newer znewer)", u.TokensUsed)
+	}
+}
+
+// TestClaudeParseUsageFormats locks the two accepted transcript formats:
+// the current one (usage nested under message) and the legacy top-level
+// form, plus the no-usage and partial-line cases.
+func TestClaudeParseUsageFormats(t *testing.T) {
+	cases := []struct {
+		name string
+		line string
+		want int64
+	}{
+		{"usage nested under message", `{"type":"assistant","message":{"model":"claude-sonnet-5","role":"assistant","usage":{"input_tokens":2,"cache_creation_input_tokens":10,"cache_read_input_tokens":20,"output_tokens":3}}}`, 35},
+		{"legacy top-level usage", `{"message":{"model":"claude-sonnet-5"},"usage":{"input_tokens":5,"output_tokens":4}}`, 9},
+		{"user message has no usage", `{"type":"user","content":"hi"}`, 0},
+		{"partial line ignored", `{"type":"assistant","message":`, 0},
+	}
+	for _, c := range cases {
+		if got := claudeParseUsage([]byte(c.line)); got != c.want {
+			t.Errorf("%s: claudeParseUsage = %d, want %d", c.name, got, c.want)
+		}
 	}
 }
 
@@ -316,7 +374,7 @@ func TestClaudeUnknownModelHasTokensOnly(t *testing.T) {
 
 	dir := filepath.Join(home, "projects", "-home-guillaume-code-tmon")
 	writeFile(t, filepath.Join(dir, "s1.jsonl"),
-		`{"message":{"model":"claude-mystery-9"},"usage":{"input_tokens":7,"output_tokens":1}}
+		`{"type":"assistant","message":{"model":"claude-mystery-9","role":"assistant","usage":{"input_tokens":7,"output_tokens":1}},"sessionId":"s1"}
 `)
 	recs, err := (Claude{}).Probe(cfg)
 	if err != nil {

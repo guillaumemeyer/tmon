@@ -92,6 +92,11 @@ type Model struct {
 	themes    list.Model
 	themeOpts theme.Options
 
+	// themeCommitted is the theme in effect when the selector opened.
+	// Browsing previews other presets live; esc/q revert to this, and only
+	// enter/space persist the browsed theme.
+	themeCommitted theme.Theme
+
 	// version is the tmon release string shown bottom-left in the footer
 	// (e.g. "0.4.2"). Empty hides it (tests and direct construction).
 	version string

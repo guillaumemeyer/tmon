@@ -47,6 +47,35 @@ func TestCollectDropsStaleRecords(t *testing.T) {
 	}
 }
 
+// TestCollectKeepsStaleIdleRecord verifies a stale idle record from a live
+// process survives the freshness gate (refreshed to now) so its cumulative
+// enrichment — title and token usage — is not lost the moment an idle
+// agent stops emitting hook events.
+func TestCollectKeepsStaleIdleRecord(t *testing.T) {
+	old := procAlive
+	procAlive = func(pid int) bool { return true }
+	t.Cleanup(func() { procAlive = old })
+
+	now := time.Now()
+	conns := []Connector{fakeConn{
+		name: "claude", enabled: true,
+		recs: []Record{
+			{PID: 1, Label: "Claude", Status: agent.StatusIdle, Detail: "started", At: now.Add(-10 * time.Minute),
+				Title: "tmon-73", Usage: agent.Usage{TokensUsed: 40809, WindowTokens: 1000000}},
+		},
+	}}
+	got := collect(testConfig(), now, conns)
+	if len(got) != 1 {
+		t.Fatalf("collect = %d records, want 1 (stale idle kept)", len(got))
+	}
+	if got[0].Title != "tmon-73" || got[0].Usage.TokensUsed != 40809 {
+		t.Errorf("kept record lost enrichment: %+v", got[0])
+	}
+	if got[0].At.Before(now.Add(-time.Second)) {
+		t.Errorf("kept record should be refreshed to now, At = %v", got[0].At)
+	}
+}
+
 func TestCollectDropsDeadPIDs(t *testing.T) {
 	old := procAlive
 	procAlive = func(pid int) bool { return pid == 1 }

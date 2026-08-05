@@ -8,9 +8,11 @@ import (
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/guillaumemeyer/tmon/internal/agent"
 	"github.com/guillaumemeyer/tmon/internal/theme"
+	"github.com/muesli/termenv"
 )
 
 func TestStatusFilters(t *testing.T) {
@@ -57,25 +59,6 @@ func TestStatusFilterCombinesWithQuery(t *testing.T) {
 	m = applyMsg(t, m, key('r'))
 	if len(m.filtered) != 1 || m.rows[m.filtered[0]].Label != "Grok" {
 		t.Fatalf("filtered = %v, want Grok (working + name match)", m.filtered)
-	}
-}
-
-func TestNumberJump(t *testing.T) {
-	f := &fakeLoader{data: Data{Rows: testRows()}}
-	m := New(f.load, true)
-	m = applyMsg(t, m, initMsg{})
-
-	m = applyMsg(t, m, key('2'))
-	if m.agentList.Index() != 1 {
-		t.Fatalf("selection after 2 = %d, want 1", m.agentList.Index())
-	}
-	m = applyMsg(t, m, key('1'))
-	if m.agentList.Index() != 0 {
-		t.Fatalf("selection after 1 = %d, want 0", m.agentList.Index())
-	}
-	m = applyMsg(t, m, key('9')) // beyond the list clamps to the last
-	if m.agentList.Index() != 2 {
-		t.Fatalf("selection after 9 = %d, want 2 (clamped)", m.agentList.Index())
 	}
 }
 
@@ -174,18 +157,19 @@ func TestPreviewLayoutAlignment(t *testing.T) {
 		t.Fatalf("rows = %d, want %d", len(rows), h)
 	}
 
-	// Header + divider + body + footer: separator column only on body rows.
-	// Body starts at index 2, ends at h-2 inclusive.
-	listW, _ := m.panelWidths(w)
-	sepCol := listW // 0-based index of │
+	// Top border, header, divider, then the body; footer and bottom border
+	// below. The │ separator column lives on body rows only: body starts at
+	// index 3, ends at h-3 inclusive.
+	listW, _ := m.panelWidths(w - 2)
+	sepCol := listW + 1 // 0-based index of │, one cell in from the left border
 
-	for i := 2; i < h-1; i++ {
+	for i := 3; i < h-2; i++ {
 		line := rows[i]
 		if got := ansi.StringWidth(line); got != w {
 			t.Fatalf("body row %d width = %d, want %d:\n%q", i, got, w, line)
 		}
 		// After Strip, list + preview are single-width ASCII so rune index
-		// matches display column; the separator must sit at listW.
+		// matches display column; the separator must sit at sepCol.
 		runes := []rune(line)
 		if sepCol >= len(runes) || runes[sepCol] != '│' {
 			t.Fatalf("body row %d: expected │ at col %d, got %q\n%s", i, sepCol, line, v)
@@ -218,6 +202,154 @@ func TestPreviewPreservesColors(t *testing.T) {
 	}
 }
 
+func TestPopupPaintedWithThemeBackground(t *testing.T) {
+	// The test runner's terminal is colorless (lipgloss's Ascii profile);
+	// force truecolor so the background sequences are actually emitted.
+	orig := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	t.Cleanup(func() { lipgloss.SetColorProfile(orig) })
+
+	old := capturePane
+	capturePane = func(p string) string {
+		return "\x1b[32mgreen text\x1b[0m\n\x1b[49mstriped\x1b[0m\n\x1b[48;5;0mblackbg\x1b[0m"
+	}
+	t.Cleanup(func() { capturePane = old })
+
+	f := &fakeLoader{data: Data{Rows: testRows()}}
+	m := New(f.load, true)
+	m = applyMsg(t, m, initMsg{})
+	m.width, m.height = 100, 24
+
+	seq := backgroundSeq(m.st.bg)
+	if seq == "" {
+		t.Fatal("the default theme should define a popup background")
+	}
+
+	// Every row of the popup starts with the theme background so the panel
+	// is solid, not transparent.
+	lines := strings.Split(m.View(), "\n")
+	if len(lines) != m.height {
+		t.Fatalf("View = %d lines, want %d", len(lines), m.height)
+	}
+	for i, ln := range lines {
+		if !strings.HasPrefix(ln, seq) {
+			t.Fatalf("line %d not painted with the theme background:\n%q", i, ln)
+		}
+	}
+
+	// Embedded SGR resets (from the colored pane capture) must not punch
+	// holes in the background: every reset is followed by a re-assertion.
+	for i, ln := range lines {
+		if strings.Count(ln, sgrReset) > strings.Count(ln, seq) {
+			t.Fatalf("line %d has a reset without a background re-assertion:\n%q", i, ln)
+		}
+		// A \x1b[49m (default background) reset gets the same treatment.
+		if strings.Contains(ln, "striped") && strings.Count(ln, seq) < 2 {
+			t.Fatalf("line %d lost its background after a \\x1b[49m reset:\n%q", i, ln)
+		}
+		// An explicit background from the capture is overridden too, so the
+		// preview stays a solid theme-colored panel.
+		if strings.Contains(ln, "blackbg") && strings.Count(ln, seq) < 3 {
+			t.Fatalf("line %d kept a capture background instead of the theme's:\n%q", i, ln)
+		}
+	}
+
+	// Switching theme repaints the popup with the new background.
+	m2 := m.WithTheme(theme.Resolve(theme.Options{Name: "nord"}))
+	seq2 := backgroundSeq(m2.st.bg)
+	if seq2 == seq {
+		t.Fatal("nord background should differ from the default theme's")
+	}
+	if v2 := m2.View(); !strings.HasPrefix(v2, seq2) {
+		t.Fatal("nord popup not painted with its own background")
+	}
+}
+
+// TestReassertBackground checks that every SGR form which leaves the
+// background at the terminal default gets the theme background re-asserted
+// after it, while explicit backgrounds and unrelated codes pass through.
+func TestReassertBackground(t *testing.T) {
+	seq := "\x1b[48;5;235m"
+	cases := []struct {
+		name string
+		in   string
+		want string // "" means the input must pass through unchanged
+	}{
+		{"plain text", "hello", ""},
+		{"non-sgr csi untouched", "a\x1b[2Jb", ""},
+		{"cursor move untouched", "a\x1b[1;5Hb", ""},
+		{"bare reset", "a\x1b[mb", "a\x1b[m" + seq + "b"},
+		{"full reset", "a\x1b[0mb", "a\x1b[0m" + seq + "b"},
+		{"default bg", "a\x1b[49mb", "a\x1b[49m" + seq + "b"},
+		{"combined fg+bg reset", "a\x1b[39;49mb", "a\x1b[39;49m" + seq + "b"},
+		{"reset with fg", "a\x1b[0;31mb", "a\x1b[0;31m" + seq + "b"},
+		{"fg only keeps bg", "a\x1b[31mb", ""},
+		{"attributes keep bg", "a\x1b[1;5mb", ""},
+		{"explicit indexed bg kept", "a\x1b[48;5;0mb", ""},
+		{"explicit rgb bg kept", "a\x1b[48;2;10;20;30mb", ""},
+		{"explicit bg then fg kept", "a\x1b[48;5;0m\x1b[31mb", ""},
+		{"fg color index is not a reset", "a\x1b[38;5;49mb", ""},
+		{"explicit bg then reset", "a\x1b[48;5;0mb\x1b[0mc", "a\x1b[48;5;0mb\x1b[0m" + seq + "c"},
+		{"default after rgb bg", "a\x1b[48;2;10;20;30m\x1b[49mb", "a\x1b[48;2;10;20;30m\x1b[49m" + seq + "b"},
+		{"reset then re-set bg", "a\x1b[0m\x1b[48;5;0mb", "a\x1b[0m" + seq + "\x1b[48;5;0mb"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := reassertBackground(tc.in, seq)
+			if tc.want == "" {
+				if got != tc.in {
+					t.Fatalf("reassertBackground(%q) = %q, want %q unchanged", tc.in, got, tc.in)
+				}
+				return
+			}
+			if got != tc.want {
+				t.Fatalf("reassertBackground(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestForceBackground checks that the preview's background override makes
+// the theme background win over any background the captured content sets,
+// while leaving foreground colors and attributes alone.
+func TestForceBackground(t *testing.T) {
+	seq := "\x1b[48;5;235m"
+	cases := []struct {
+		name string
+		in   string
+		want string // "" means the input must pass through unchanged
+	}{
+		{"plain text", "hello", ""},
+		{"non-sgr csi untouched", "a\x1b[2Jb", ""},
+		{"fg only untouched", "a\x1b[31mb", ""},
+		{"attributes untouched", "a\x1b[1;5mb", ""},
+		{"fg color index is not a reset", "a\x1b[38;5;49mb", ""},
+		{"bare reset", "a\x1b[mb", "a\x1b[m" + seq + "b"},
+		{"full reset", "a\x1b[0mb", "a\x1b[0m" + seq + "b"},
+		{"default bg", "a\x1b[49mb", "a\x1b[49m" + seq + "b"},
+		{"reset with fg", "a\x1b[0;31mb", "a\x1b[0;31m" + seq + "b"},
+		{"indexed bg overridden", "a\x1b[48;5;0mb", "a\x1b[48;5;0m" + seq + "b"},
+		{"red bg overridden", "a\x1b[41mb", "a\x1b[41m" + seq + "b"},
+		{"bright bg overridden", "a\x1b[101mb", "a\x1b[101m" + seq + "b"},
+		{"rgb bg overridden", "a\x1b[48;2;10;20;30mb", "a\x1b[48;2;10;20;30m" + seq + "b"},
+		{"fg after overridden bg keeps theme", "a\x1b[48;5;0m\x1b[31mb", "a\x1b[48;5;0m" + seq + "\x1b[31mb"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := forceBackground(tc.in, seq)
+			if tc.want == "" {
+				if got != tc.in {
+					t.Fatalf("forceBackground(%q) = %q, want %q unchanged", tc.in, got, tc.in)
+				}
+				return
+			}
+			if got != tc.want {
+				t.Fatalf("forceBackground(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestPreviewIsHalfWidth(t *testing.T) {
 	old := capturePane
 	capturePane = func(p string) string { return "x" }
@@ -230,9 +362,9 @@ func TestPreviewIsHalfWidth(t *testing.T) {
 	m.width, m.height = w, 12
 
 	v := ansi.Strip(m.View())
-	body := strings.Split(v, "\n")[2]
-	listW, _ := m.panelWidths(w)
-	sepCol := listW
+	body := strings.Split(v, "\n")[3] // first body row, below border+header+divider
+	listW, _ := m.panelWidths(w - 2)
+	sepCol := listW + 1
 	runes := []rune(body)
 	if sepCol >= len(runes) || runes[sepCol] != '│' {
 		t.Fatalf("separator at col %d, want default split; line=%q", sepCol, body)
@@ -241,14 +373,14 @@ func TestPreviewIsHalfWidth(t *testing.T) {
 	// After growing the preview (left arrow), the separator moves left.
 	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyLeft})
 	v = ansi.Strip(m.View())
-	body = strings.Split(v, "\n")[2]
-	listW2, _ := m.panelWidths(w)
+	body = strings.Split(v, "\n")[3]
+	listW2, _ := m.panelWidths(w - 2)
 	if listW2 >= listW {
 		t.Fatalf("listW after left = %d, want < %d", listW2, listW)
 	}
 	runes = []rune(body)
-	if runes[listW2] != '│' {
-		t.Fatalf("separator at col %d after resize, line=%q", listW2, body)
+	if runes[listW2+1] != '│' {
+		t.Fatalf("separator at col %d after resize, line=%q", listW2+1, body)
 	}
 }
 
@@ -387,7 +519,7 @@ func TestFooterOmitsStatusCountsShowsPreviewTip(t *testing.T) {
 			t.Fatalf("footer should not show status count %q in:\n%s", bad, v)
 		}
 	}
-	for _, want := range []string{"[↑/↓ j/k] navigate", "[←/→ h/l · drag │] resize", "[C-u/C-d] scroll preview", "[1-9] jump", "[t] theme"} {
+	for _, want := range []string{"[↑/↓ j/k] navigate", "[←/→ h/l · drag │] resize", "[C-u/C-d] scroll preview", "[t] theme"} {
 		if !strings.Contains(v, want) {
 			t.Fatalf("footer missing %q in:\n%s", want, v)
 		}
@@ -406,9 +538,9 @@ func TestFooterShowsVersionBottomLeft(t *testing.T) {
 
 	v := ansi.Strip(m.View())
 	rows := strings.Split(v, "\n")
-	footer := rows[len(rows)-1]
+	footer := rows[len(rows)-2] // above the bottom border
 	// One space from the border, then the version.
-	if !strings.HasPrefix(footer, " 0.4.2") {
+	if !strings.HasPrefix(footer, "│ 0.4.2") {
 		t.Fatalf("footer should start with the version, got %q", footer)
 	}
 
@@ -417,9 +549,27 @@ func TestFooterShowsVersionBottomLeft(t *testing.T) {
 	m2 = applyMsg(t, m2, initMsg{})
 	m2.width, m2.height = 100, 24
 	v2 := ansi.Strip(m2.View())
-	footer2 := strings.Split(v2, "\n")[len(rows)-1]
+	footer2 := strings.Split(v2, "\n")[len(rows)-2]
 	if strings.Contains(footer2, "0.4.2") {
 		t.Fatalf("footer without version should not contain 0.4.2, got %q", footer2)
+	}
+}
+
+func TestFooterTipsHaveRightMargin(t *testing.T) {
+	old := capturePane
+	capturePane = func(p string) string { return "x" }
+	t.Cleanup(func() { capturePane = old })
+
+	f := &fakeLoader{data: Data{Rows: testRows()}}
+	m := New(f.load, true)
+	m = applyMsg(t, m, initMsg{})
+	m.width, m.height = 100, 24
+
+	footer := ansi.Strip(strings.Split(m.View(), "\n")[m.height-2]) // above the bottom border
+	// The tips leave exactly one blank cell before the right border.
+	content := strings.TrimSuffix(footer, "│")
+	if strings.TrimRight(content, " ")+" " != content {
+		t.Fatalf("footer should end with one space of margin before the border, got %q", footer)
 	}
 }
 
@@ -432,14 +582,14 @@ func TestIdentityColorsInListAndPreview(t *testing.T) {
 	m := New(f.load, true)
 	m = applyMsg(t, m, initMsg{}) // Grok selected first
 	m.width, m.height = 120, 24
-	listW, _ := m.panelWidths(120)
+	listW, _ := m.panelWidths(120 - 2)
 
 	raw := m.View()
 	// Selected Grok name: status icon (the working spinner frame) + identity
 	// color on selBg.
 	bg := m.st.selBgColor
 	grokLine := selFit(m.st,
-		m.st.selBg.Render("      ")+
+		m.st.selBg.Render(" ")+
 			statusStyle(m.st, agent.StatusWorking).Background(bg).Render(m.spinnerFrame()+" ")+
 			identityStyle(m.st, "Grok").Bold(true).Background(bg).Render("Popup preview scroll (Grok Build)"),
 		listW,
@@ -452,7 +602,7 @@ func TestIdentityColorsInListAndPreview(t *testing.T) {
 		t.Fatalf("preview header missing Grok identity color:\n%q", raw)
 	}
 	// Unselected Claude: status icon + brand orange on the list name.
-	claudeLine := "      " +
+	claudeLine := " " +
 		statusStyle(m.st, agent.StatusBlocked).Render("B ") +
 		identityStyle(m.st, "Claude").Bold(true).Render("Claude Code")
 	if !strings.Contains(raw, claudeLine) {
@@ -477,7 +627,7 @@ func TestSelectedAgentHighlight(t *testing.T) {
 	m = applyMsg(t, m, initMsg{}) // Grok is selected
 	m.width, m.height = 120, 24
 
-	listW, _ := m.panelWidths(120)
+	listW, _ := m.panelWidths(120 - 2)
 	raw := m.View()
 
 	// The selected name row uses status icon (the working spinner frame) +
@@ -485,7 +635,7 @@ func TestSelectedAgentHighlight(t *testing.T) {
 	// width. The old ">" marker is gone.
 	bg := m.st.selBgColor
 	nameLine := selFit(m.st,
-		m.st.selBg.Render("      ")+
+		m.st.selBg.Render(" ")+
 			statusStyle(m.st, agent.StatusWorking).Background(bg).Render(m.spinnerFrame()+" ")+
 			identityStyle(m.st, "Grok").Bold(true).Background(bg).Render("Popup preview scroll (Grok Build)"),
 		listW,
@@ -494,12 +644,12 @@ func TestSelectedAgentHighlight(t *testing.T) {
 		t.Fatalf("selected name row missing the identity+selBg highlight:\n%q", raw)
 	}
 	// The cwd row gets the dim selection background too.
-	if !strings.Contains(raw, m.st.selDim.Render(fit("      code/tmon", listW))) {
+	if !strings.Contains(raw, m.st.selDim.Render(fit(" code/tmon", listW))) {
 		t.Fatalf("selected cwd row missing the selection background:\n%q", raw)
 	}
 
 	// Unselected rows use status icon + agent identity color (bold) and no marker.
-	claudeLine := "      " +
+	claudeLine := " " +
 		statusStyle(m.st, agent.StatusBlocked).Render("B ") +
 		identityStyle(m.st, "Claude").Bold(true).Render("Claude Code")
 	if !strings.Contains(raw, claudeLine) {
@@ -526,10 +676,15 @@ func TestAgentRowsAreTwoLines(t *testing.T) {
 	v := ansi.Strip(m.View())
 	lines := strings.Split(v, "\n")
 
-	// Split each full row at the │ separator and match against the list
-	// column only — the preview header repeats the selected agent's name.
+	// Each row is │ list │ preview │: match against the list column only —
+	// the preview header repeats the selected agent's name. The top/bottom
+	// border rows have no │ and are skipped.
 	for i, ln := range lines {
-		list := strings.SplitN(ln, "│", 2)[0]
+		parts := strings.SplitN(ln, "│", 3)
+		if len(parts) < 3 {
+			continue
+		}
+		list := parts[1]
 		switch {
 		case strings.Contains(list, "Popup preview scroll (Grok Build)"):
 			// The working agent's status slot is the animated spinner frame
@@ -543,14 +698,14 @@ func TestAgentRowsAreTwoLines(t *testing.T) {
 			if strings.Contains(lines[i+1], "paused") {
 				t.Fatalf("working agent should not show pause status: %q", lines[i+1])
 			}
-		case strings.Contains(ln, "Claude Code"):
+		case strings.Contains(list, "Claude Code"):
 			if !strings.Contains(list, "B Claude Code") {
 				t.Fatalf("Claude name line = %q, want status icon before name", list)
 			}
 			if !strings.Contains(lines[i+1], "site") || !strings.Contains(lines[i+1], "paused") {
 				t.Fatalf("blocked agent cwd line = %q, want site + paused", lines[i+1])
 			}
-		case strings.Contains(ln, "Codex CLI"):
+		case strings.Contains(list, "Codex CLI"):
 			if !strings.Contains(list, "I Codex CLI") {
 				t.Fatalf("Codex name line = %q, want status icon before name", list)
 			}
@@ -564,10 +719,10 @@ func TestAgentRowsAreTwoLines(t *testing.T) {
 	// unselected rows use the same pattern, and the pause status keeps
 	// the orange "blocked" color.
 	raw := m.View()
-	listW, _ := m.panelWidths(120)
+	listW, _ := m.panelWidths(120 - 2)
 	bg := m.st.selBgColor
 	nameLine := selFit(m.st,
-		m.st.selBg.Render("      ")+
+		m.st.selBg.Render(" ")+
 			statusStyle(m.st, agent.StatusWorking).Background(bg).Render(m.spinnerFrame()+" ")+
 			identityStyle(m.st, "Grok").Bold(true).Background(bg).Render("Popup preview scroll (Grok Build)"),
 		listW,
@@ -575,7 +730,7 @@ func TestAgentRowsAreTwoLines(t *testing.T) {
 	if !strings.Contains(raw, nameLine) {
 		t.Fatal("selected agent name should be identity-colored on selBg")
 	}
-	claudeLine := "      " +
+	claudeLine := " " +
 		statusStyle(m.st, agent.StatusBlocked).Render("B ") +
 		identityStyle(m.st, "Claude").Bold(true).Render("Claude Code")
 	if !strings.Contains(raw, claudeLine) {
@@ -621,15 +776,19 @@ func TestAgentRowsThreeLinesWithUsage(t *testing.T) {
 
 	var stats string
 	for i, ln := range lines {
-		list := strings.SplitN(ln, "│", 2)[0]
+		parts := strings.SplitN(ln, "│", 3)
+		if len(parts) < 3 {
+			continue // top/bottom border
+		}
+		list := parts[1]
 		switch {
 		case strings.Contains(list, "Popup preview scroll (Grok Build)"):
 			// Every agent spans four uniform rows: name, cwd, pane, usage.
 			if !strings.Contains(lines[i+1], "code/tmon") {
 				t.Fatalf("Grok cwd line = %q, want code/tmon", lines[i+1])
 			}
-			if !strings.Contains(lines[i+2], "tmux: main:0.0") {
-				t.Fatalf("Grok pane line = %q, want tmux: main:0.0", lines[i+2])
+			if !strings.Contains(lines[i+2], "tmux: main / shell / 0") {
+				t.Fatalf("Grok pane line = %q, want tmux: main / shell / 0", lines[i+2])
 			}
 			stats = lines[i+3]
 		case strings.Contains(list, "Claude Code"):
@@ -765,7 +924,7 @@ func TestHeaderOmitsFleetCounts(t *testing.T) {
 	if !strings.Contains(raw, m.st.cyan.Bold(true).Render(" [@] tmon")) {
 		t.Fatalf("header missing the title:\n%s", raw)
 	}
-	header := strings.Split(ansi.Strip(raw), "\n")[0]
+	header := strings.Split(ansi.Strip(raw), "\n")[1] // below the top border
 	// Fleet status counts live on the status bar and per-agent rows, not
 	// the popup title bar.
 	for _, bad := range []string{"B1", "W1", "I1"} {
@@ -775,7 +934,7 @@ func TestHeaderOmitsFleetCounts(t *testing.T) {
 	}
 
 	m3 := m.WithTheme(theme.Default)
-	header3 := strings.Split(ansi.Strip(m3.View()), "\n")[0]
+	header3 := strings.Split(ansi.Strip(m3.View()), "\n")[1]
 	for _, bad := range []string{"🚨1", "⚡️1", "💤1"} {
 		if strings.Contains(header3, bad) {
 			t.Fatalf("emoji header should not show fleet count %q: %q", bad, header3)
@@ -800,7 +959,11 @@ func TestCwdLineShowsStatusAge(t *testing.T) {
 	v := ansi.Strip(m.View())
 	lines := strings.Split(v, "\n")
 	for i, ln := range lines {
-		list := strings.SplitN(ln, "│", 2)[0]
+		parts := strings.SplitN(ln, "│", 3)
+		if len(parts) < 3 {
+			continue // top/bottom border
+		}
+		list := parts[1]
 		switch {
 		case strings.Contains(list, "Claude Code"):
 			// Status icon lives on the name line; age alone on the cwd line.
