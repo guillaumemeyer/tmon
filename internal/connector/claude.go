@@ -56,7 +56,7 @@ func (Claude) Enabled(cfg config.Config) bool {
 
 // Probe returns one record per live Claude session with fresh hook state,
 // enriched with the session title from Claude's own session registry and
-// token usage summed from the session transcript.
+// the current context-window fill from the session transcript.
 func (Claude) Probe(cfg config.Config) ([]Record, error) {
 	recs, err := pairHookSessions(cfg, "claude", "Claude")
 	if err != nil {
@@ -122,10 +122,12 @@ func claudeSessionNames() map[int]string {
 // claudeUsage reads the token usage for one Claude session: the live
 // session's transcript under the project dir (matched by the sessionId from
 // Claude's own registry), falling back to the newest transcript when the
-// live one has not been written yet (brand-new session), summed
-// incrementally (cheap per poll), plus the context window for the model
-// named in the transcript tail. Returns zero usage when no transcript
-// exists yet (brand-new session) or nothing parses.
+// live one has not been written yet (brand-new session). Each assistant
+// usage block is a full context snapshot for that API call (input + cache +
+// output), not a delta — so we keep the latest block only (cheap per poll
+// via latestTokens), not a sum across turns. Also sets the context window
+// for the model named in the transcript tail. Returns zero usage when no
+// transcript exists yet (brand-new session) or nothing parses.
 func claudeUsage(stateDir string, pid int, cwd, sessionID string) agent.Usage {
 	dir := claudeProjectDir(cwd, pid)
 	if dir == "" {
@@ -143,7 +145,7 @@ func claudeUsage(stateDir string, pid int, cwd, sessionID string) agent.Usage {
 	if path == "" {
 		return agent.Usage{}
 	}
-	tokens, err := incrementalTokens(stateDir, path, claudeParseUsage)
+	tokens, err := latestTokens(stateDir, path, claudeParseUsage)
 	if err != nil || tokens <= 0 {
 		return agent.Usage{}
 	}

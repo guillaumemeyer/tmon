@@ -5,6 +5,7 @@
 package agent
 
 import (
+	"math"
 	"sort"
 	"time"
 
@@ -55,12 +56,18 @@ func (u Usage) Empty() bool {
 }
 
 // ContextPct returns the context-window usage percent (0 when the window
-// size is unknown).
+// size is unknown). Values are rounded to the nearest integer (half up),
+// matching Hermes CLI / typical status bars — truncation made sub-1%
+// sessions show as 0% while the agent itself showed 1%.
 func (u Usage) ContextPct() int {
 	if u.WindowTokens <= 0 {
 		return 0
 	}
-	return int(u.TokensUsed * 100 / u.WindowTokens)
+	pct := int(math.Round(float64(u.TokensUsed) * 100 / float64(u.WindowTokens)))
+	if pct < 0 {
+		return 0
+	}
+	return pct
 }
 
 // Options configures the tracker.

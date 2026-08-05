@@ -259,12 +259,51 @@ func TestClaudeProbeUsageFromTranscript(t *testing.T) {
 		t.Fatalf("records = %+v, want 1", recs)
 	}
 	u := recs[0].Usage
-	want := int64(2 + 12147 + 28964 + 732 + 3 + 0 + 100 + 20)
+	// Each assistant usage block is the full context size for that API
+	// call, not an incremental delta. Context-window display must take the
+	// latest block only — summing every turn inflates past 100% (often 300%+).
+	want := int64(3 + 0 + 100 + 20)
 	if u.TokensUsed != want {
-		t.Errorf("TokensUsed = %d, want %d", u.TokensUsed, want)
+		t.Errorf("TokensUsed = %d, want %d (latest usage, not sum of all turns)", u.TokensUsed, want)
 	}
 	if u.WindowTokens != 1000000 {
 		t.Errorf("WindowTokens = %d, want 1000000 (claude-sonnet-5)", u.WindowTokens)
+	}
+}
+
+// TestClaudeUsageIsLatestNotSum locks the context-window semantics: a long
+// session re-reports ~the same growing context on every turn. Summing those
+// would report multi-window totals (the >300% bug); the latest line is the
+// true fill.
+func TestClaudeUsageIsLatestNotSum(t *testing.T) {
+	cfg := claudeCfg(t)
+	writeClaudeHook(t, cfg, "s1", "working", "tool:Bash", "/home/guillaume/code/tmon")
+	stubClaudeAgents(t, map[string]int{"code/tmon": 4242})
+	home := stubClaudeHome(t)
+	stubClaudeAbsCWD(t, "/home/guillaume/code/tmon")
+
+	dir := filepath.Join(home, "projects", "-home-guillaume-code-tmon")
+	// Three turns, each re-reporting the full (growing) context.
+	writeFile(t, filepath.Join(dir, "s1.jsonl"),
+		`{"type":"assistant","message":{"model":"claude-sonnet-5","role":"assistant","usage":{"input_tokens":1,"cache_read_input_tokens":40000,"output_tokens":10}},"sessionId":"s1"}
+{"type":"assistant","message":{"model":"claude-sonnet-5","role":"assistant","usage":{"input_tokens":1,"cache_read_input_tokens":80000,"output_tokens":20}},"sessionId":"s1"}
+{"type":"assistant","message":{"model":"claude-sonnet-5","role":"assistant","usage":{"input_tokens":1,"cache_read_input_tokens":90000,"output_tokens":30}},"sessionId":"s1"}
+`)
+	recs, err := (Claude{}).Probe(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u := recs[0].Usage
+	wantLatest := int64(1 + 90000 + 30)
+	sumAll := int64(1 + 40000 + 10 + 1 + 80000 + 20 + 1 + 90000 + 30)
+	if u.TokensUsed != wantLatest {
+		t.Errorf("TokensUsed = %d, want latest %d (sum would be %d)", u.TokensUsed, wantLatest, sumAll)
+	}
+	if u.TokensUsed == sumAll {
+		t.Error("TokensUsed still sums every turn — context % would exceed 100%")
+	}
+	if u.WindowTokens != 1000000 {
+		t.Errorf("WindowTokens = %d, want 1000000", u.WindowTokens)
 	}
 }
 

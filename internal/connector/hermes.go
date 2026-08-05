@@ -311,15 +311,17 @@ func readActiveProfile(root string) string {
 // ─── sessions (state.db) ─────────────────────────────────────────────────────
 
 type hermesSession struct {
-	ID        string
-	Title     string
-	Model     string
-	CWD       string
-	Source    string
-	InTokens  int64
-	OutTokens int64
-	StartedAt float64
-	LastMsgAt int64 // unix seconds of newest message; 0 if unknown
+	ID         string
+	Title      string
+	Model      string
+	CWD        string
+	Source     string
+	InTokens   int64
+	OutTokens  int64
+	CacheRead  int64
+	APICalls   int64
+	StartedAt  float64
+	LastMsgAt  int64 // unix seconds of newest message; 0 if unknown
 }
 
 func loadHermesLocalSessions(home string) []hermesSession {
@@ -344,6 +346,8 @@ func loadHermesLocalSessions(home string) []hermesSession {
 		       COALESCE(source, ''),
 		       COALESCE(input_tokens, 0),
 		       COALESCE(output_tokens, 0),
+		       COALESCE(cache_read_tokens, 0),
+		       COALESCE(api_call_count, 0),
 		       COALESCE(started_at, 0)
 		FROM sessions
 		WHERE ended_at IS NULL
@@ -359,7 +363,7 @@ func loadHermesLocalSessions(home string) []hermesSession {
 	var out []hermesSession
 	for rows.Next() {
 		var s hermesSession
-		if err := rows.Scan(&s.ID, &s.Title, &s.Model, &s.CWD, &s.Source, &s.InTokens, &s.OutTokens, &s.StartedAt); err != nil {
+		if err := rows.Scan(&s.ID, &s.Title, &s.Model, &s.CWD, &s.Source, &s.InTokens, &s.OutTokens, &s.CacheRead, &s.APICalls, &s.StartedAt); err != nil {
 			continue
 		}
 		out = append(out, s)
@@ -424,7 +428,7 @@ func hermesSessionUsage(home string, s *hermesSession) agent.Usage {
 	if s == nil {
 		return agent.Usage{}
 	}
-	used := s.InTokens + s.OutTokens
+	used := hermesContextTokens(s)
 	if used <= 0 {
 		return agent.Usage{}
 	}
@@ -435,6 +439,31 @@ func hermesSessionUsage(home string, s *hermesSession) agent.Usage {
 		}
 	}
 	return u
+}
+
+// hermesContextTokens approximates the CLI's last_prompt_tokens (current
+// context occupancy) from state.db lifetime counters. Hermes itself refuses
+// to use session totals for the gauge; without the in-memory compressor we
+// estimate:
+//
+//   - prompt-side tokens: input + cache_read (what fills the window on a call)
+//   - when api_call_count > 1, average per call so multi-turn cache sums do
+//     not report multi-window totals (e.g. 2.7M cache reads / 1M window)
+//   - single-call sessions match the CLI closely (in+cache ≈ last prompt)
+//
+// Falls back to input+output when no prompt-side tokens are recorded.
+func hermesContextTokens(s *hermesSession) int64 {
+	if s == nil {
+		return 0
+	}
+	prompt := s.InTokens + s.CacheRead
+	if prompt > 0 {
+		if s.APICalls > 1 {
+			return prompt / s.APICalls
+		}
+		return prompt
+	}
+	return s.InTokens + s.OutTokens
 }
 
 // hermesConfigModel reads model.default from config.yaml without a full YAML

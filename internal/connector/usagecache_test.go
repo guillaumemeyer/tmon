@@ -74,6 +74,51 @@ func TestIncrementalTokens(t *testing.T) {
 	}
 }
 
+func TestLatestTokens(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "session.jsonl")
+
+	write := func(s string) {
+		f, err := os.OpenFile(src, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.WriteString(s); err != nil {
+			t.Fatal(err)
+		}
+		f.Close()
+	}
+
+	write(`{"usage":{"tokens":40000}}
+`)
+	n, err := latestTokens(dir, src, countUsage)
+	if err != nil || n != 40000 {
+		t.Fatalf("first: n=%d err=%v, want 40000", n, err)
+	}
+
+	// A later snapshot replaces the previous value; it must not add.
+	write(`{"usage":{"tokens":90000}}
+`)
+	n, err = latestTokens(dir, src, countUsage)
+	if err != nil || n != 90000 {
+		t.Fatalf("second: n=%d err=%v, want 90000 (latest, not sum)", n, err)
+	}
+
+	// Unchanged file keeps the cached latest.
+	n, err = latestTokens(dir, src, countUsage)
+	if err != nil || n != 90000 {
+		t.Fatalf("unchanged: n=%d err=%v, want 90000", n, err)
+	}
+
+	// Lines without usage do not wipe the last known value.
+	write(`{"type":"user","content":"hi"}
+`)
+	n, err = latestTokens(dir, src, countUsage)
+	if err != nil || n != 90000 {
+		t.Fatalf("after non-usage line: n=%d err=%v, want 90000", n, err)
+	}
+}
+
 func TestIncrementalTokensRotation(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "session.jsonl")

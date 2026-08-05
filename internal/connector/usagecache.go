@@ -35,14 +35,17 @@ var usageCacheMaxEntries = 64
 // Entries written by an older version are ignored and the source is
 // recounted from scratch — without this, a stale count would be served
 // forever while the transcript file stays the same size.
-const usageCacheVersion = 2
+//
+// v3: Claude context usage switched from sum-of-all-turns to latest-turn
+// (each usage block is a full context snapshot, not a delta).
+const usageCacheVersion = 3
 
 // usageEntry is one incremental-transcript cache record.
 type usageEntry struct {
 	Version int    `json:"version"` // usageCacheVersion that produced this count
 	Src     string `json:"src"`     // source file path this entry mirrors
 	Size    int64  `json:"size"`    // source size at last parse
-	Tokens  int64  `json:"tokens"`  // cumulative tokens counted so far
+	Tokens  int64  `json:"tokens"`  // cumulative sum, or latest value (see mode)
 }
 
 func usageCachePath(stateDir, src string) string {
@@ -50,18 +53,45 @@ func usageCachePath(stateDir, src string) string {
 	return filepath.Join(stateDir, "usage", hex.EncodeToString(sum[:])+".json")
 }
 
+// tokenAccumSum adds every positive parse result (session totals, e.g. Codex).
+// tokenAccumLatest keeps the most recent positive value (context snapshots,
+// e.g. Claude — each usage block re-reports the full window fill).
+const (
+	tokenAccumSum    = false
+	tokenAccumLatest = true
+)
+
 // incrementalTokens returns the cumulative token count for a growing
 // transcript file, parsing only the bytes appended since the last call.
 // parseTokens reports the tokens found in one complete line (0 for lines
 // that carry no usage). Cache misses and truncated files start from zero.
 func incrementalTokens(stateDir, src string, parseTokens func([]byte) int64) (int64, error) {
+	return scanTranscriptTokens(stateDir, src, parseTokens, tokenAccumSum)
+}
+
+// latestTokens returns the most recent non-zero token count from a growing
+// transcript, parsing only the bytes appended since the last call. Use when
+// each usage line is a full context snapshot rather than a delta (Claude).
+func latestTokens(stateDir, src string, parseTokens func([]byte) int64) (int64, error) {
+	return scanTranscriptTokens(stateDir, src, parseTokens, tokenAccumLatest)
+}
+
+// scanTranscriptTokens walks the appended portion of a transcript and either
+// sums positive parse results or keeps the latest one. Cache misses and
+// truncated files start from zero.
+func scanTranscriptTokens(stateDir, src string, parseTokens func([]byte) int64, latest bool) (int64, error) {
 	fi, err := os.Stat(src)
 	if err != nil {
 		return 0, err
 	}
 
+	// Separate cache keys so sum and latest modes never share a stale count.
+	cacheKey := src
+	if latest {
+		cacheKey = "latest:" + src
+	}
 	entry := usageEntry{Src: src}
-	if b, err := os.ReadFile(usageCachePath(stateDir, src)); err == nil {
+	if b, err := os.ReadFile(usageCachePath(stateDir, cacheKey)); err == nil {
 		_ = json.Unmarshal(b, &entry)
 	}
 	if entry.Version != usageCacheVersion {
@@ -101,13 +131,17 @@ func incrementalTokens(stateDir, src string, parseTokens func([]byte) int64) (in
 	tokens := entry.Tokens
 	for _, line := range strings.Split(string(b), "\n") {
 		if t := parseTokens([]byte(line)); t > 0 {
-			tokens += t
+			if latest {
+				tokens = t
+			} else {
+				tokens += t
+			}
 		}
 	}
 
 	entry.Size = fi.Size()
 	entry.Tokens = tokens
-	saveUsageEntry(stateDir, src, entry)
+	saveUsageEntry(stateDir, cacheKey, entry)
 	return tokens, nil
 }
 

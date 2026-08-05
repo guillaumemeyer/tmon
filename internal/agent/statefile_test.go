@@ -88,7 +88,8 @@ func TestUsageEmptyAndContextPct(t *testing.T) {
 	if u.Empty() {
 		t.Error("Usage with tokens should not be Empty")
 	}
-	if got, want := u.ContextPct(), 4; got != want {
+	// 13025/262144 ≈ 4.97% → rounds to 5 (not truncated to 4).
+	if got, want := u.ContextPct(), 5; got != want {
 		t.Errorf("ContextPct = %d, want %d", got, want)
 	}
 	if got := (Usage{TokensUsed: 100}).ContextPct(); got != 0 {
@@ -96,6 +97,13 @@ func TestUsageEmptyAndContextPct(t *testing.T) {
 	}
 	if got := (Usage{WindowTokens: 200}).ContextPct(); got != 0 {
 		t.Errorf("ContextPct with zero tokens = %d, want 0", got)
+	}
+	// Sub-1% of a large window: truncate would show 0%; round matches CLI 1%.
+	if got := (Usage{TokensUsed: 5336, WindowTokens: 1_000_000}).ContextPct(); got != 1 {
+		t.Errorf("ContextPct(5336/1M) = %d, want 1 (rounded)", got)
+	}
+	if got := (Usage{TokensUsed: 4504, WindowTokens: 1_000_000}).ContextPct(); got != 0 {
+		t.Errorf("ContextPct(4504/1M) = %d, want 0 (0.45%% rounds down)", got)
 	}
 }
 

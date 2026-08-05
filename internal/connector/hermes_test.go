@@ -98,6 +98,8 @@ func writeHermesStateDB(t *testing.T, home string, s hermesSession, lastMsgAt in
 			cwd TEXT,
 			input_tokens INTEGER DEFAULT 0,
 			output_tokens INTEGER DEFAULT 0,
+			cache_read_tokens INTEGER DEFAULT 0,
+			api_call_count INTEGER DEFAULT 0,
 			started_at REAL NOT NULL,
 			ended_at REAL,
 			archived INTEGER DEFAULT 0
@@ -115,9 +117,9 @@ func writeHermesStateDB(t *testing.T, home string, s hermesSession, lastMsgAt in
 		t.Fatal(err)
 	}
 	_, err = db.Exec(
-		`INSERT INTO sessions (id, source, title, model, cwd, input_tokens, output_tokens, started_at, ended_at, archived)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 0)`,
-		s.ID, s.Source, s.Title, s.Model, s.CWD, s.InTokens, s.OutTokens, s.StartedAt,
+		`INSERT INTO sessions (id, source, title, model, cwd, input_tokens, output_tokens, cache_read_tokens, api_call_count, started_at, ended_at, archived)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0)`,
+		s.ID, s.Source, s.Title, s.Model, s.CWD, s.InTokens, s.OutTokens, s.CacheRead, s.APICalls, s.StartedAt,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -130,6 +132,60 @@ func writeHermesStateDB(t *testing.T, home string, s hermesSession, lastMsgAt in
 		if err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestHermesContextTokens(t *testing.T) {
+	// Single-call session: in + cache_read ≈ CLI last_prompt (the 0%→1% case).
+	if got := hermesContextTokens(&hermesSession{InTokens: 4440, CacheRead: 896, OutTokens: 64, APICalls: 1}); got != 5336 {
+		t.Errorf("single call = %d, want 5336", got)
+	}
+	// Multi-call: average prompt-side tokens so cumulative cache does not
+	// report multi-window totals.
+	if got := hermesContextTokens(&hermesSession{InTokens: 22498, CacheRead: 740992, APICalls: 31}); got != (22498+740992)/31 {
+		t.Errorf("multi call avg = %d, want %d", got, (22498+740992)/31)
+	}
+	// No prompt-side data: fall back to output-only lifetime when present.
+	if got := hermesContextTokens(&hermesSession{OutTokens: 15}); got != 15 {
+		t.Errorf("fallback = %d, want 15", got)
+	}
+	if got := hermesContextTokens(nil); got != 0 {
+		t.Errorf("nil = %d, want 0", got)
+	}
+}
+
+func TestHermesProbeUsageIncludesCacheRead(t *testing.T) {
+	home := hermesFixtureHome(t)
+	// Mirror the live "Exploring the tmon codebase" row: one API call with
+	// cache so the popup can show 1% of a 1M window after rounding.
+	writeHermesStateDB(t, home, hermesSession{
+		ID: "sess1", Source: "tui", Title: "Exploring the tmon codebase",
+		Model: "deepseek-v4-flash", CWD: "/home/guillaume/code/tmon",
+		InTokens: 4440, OutTokens: 64, CacheRead: 896, APICalls: 1,
+		StartedAt: float64(time.Now().Unix()),
+	}, 0)
+	// Window lookup needs a models cache entry.
+	writeFile(t, filepath.Join(home, "models_dev_cache.json"),
+		`{"deepseek":{"models":{"deepseek-v4-flash":{"limit":{"context":1000000}}}}}`)
+	stubHermesProcs(t, []hermesProc{{
+		pid: 42, cmdline: "hermes --tui",
+		cwdFull: "/home/guillaume/code/tmon", cwd: "code/tmon",
+		envHome: home,
+	}})
+
+	recs, err := (Hermes{}).Probe(hermesTestCfg(t))
+	if err != nil || len(recs) != 1 {
+		t.Fatalf("recs=%+v err=%v", recs, err)
+	}
+	u := recs[0].Usage
+	if u.TokensUsed != 5336 {
+		t.Errorf("TokensUsed = %d, want 5336 (in+cache_read)", u.TokensUsed)
+	}
+	if u.WindowTokens != 1000000 {
+		t.Errorf("WindowTokens = %d, want 1000000", u.WindowTokens)
+	}
+	if got := u.ContextPct(); got != 1 {
+		t.Errorf("ContextPct = %d, want 1 (rounded from 0.53%%)", got)
 	}
 }
 
@@ -180,8 +236,10 @@ func TestHermesCLISessionTitleProfileModel(t *testing.T) {
 	if r.Detail != "model:deepseek-v4-flash" {
 		t.Errorf("Detail = %q", r.Detail)
 	}
-	if r.Usage.TokensUsed != 1200 {
-		t.Errorf("TokensUsed = %d, want 1200", r.Usage.TokensUsed)
+	// Context fill uses prompt-side tokens (input + cache_read), not lifetime
+	// input+output — matching Hermes CLI's last_prompt_tokens semantics.
+	if r.Usage.TokensUsed != 1000 {
+		t.Errorf("TokensUsed = %d, want 1000 (in+cache, not in+out)", r.Usage.TokensUsed)
 	}
 	if r.Status != agent.StatusIdle {
 		t.Errorf("Status = %s, want idle (no recent messages)", r.Status)
