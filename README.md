@@ -419,7 +419,6 @@ are optional — the defaults are sensible for most people.
 | `@tmon-bold-counts` | `1` | bold the per-status counts |
 | `@tmon-context-warn` | `85` | context % at which a ⚠️ warning appears (`0` disables) |
 | `@tmon-blocked-bell` | `off` | ring the bell when an agent transitions to blocked |
-| `@tmon-pane-tint` | `off` | tint agent panes by status (blocked/working glow) |
 | `@tmon-pane-border` | `on` | status-colored border strip on agent panes (blocked/working) |
 | `@tmon-pane-border-position` | `top` | where the strip sits (`top` or `bottom`) |
 | `@tmon-color-<slot>` | — | override one theme color slot |
@@ -609,26 +608,6 @@ set -g @tmon-context-warn "90"
 
 ```tmux
 set -g @tmon-blocked-bell "on"
-```
-
-### `@tmon-pane-tint`
-
-> Make blocked agents visible from across the room: when an agent's status
-> changes, its pane's content area gets a subtle glow in the theme's color —
-> a darkened blocked-color background while it waits for you, a darkened
-> working-color background while it's in flow. Idle clears the tint; when an
-> agent exits, its pane goes back to default colors. It's opt-in, subtle
-> (colors are dimmed to ~35% luminance so text stays readable), and fully
-> reversible — `tmon tint off` restores every pane, and tmon runs that
-> cleanup automatically at plugin load when the option is off.
-
-| | |
-|---|---|
-| **Default** | `off` |
-| **Options** | `on` or `off` |
-
-```tmux
-set -g @tmon-pane-tint "on"
 ```
 
 ### `@tmon-pane-border`

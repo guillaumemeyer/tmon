@@ -48,7 +48,8 @@ See [`demo.tape`](demo.tape) for the full script.
 
 If you prefer a live asciinema capture of the core loop instead of VHS:
 
-- tmux with tmon loaded and `@tmon-pane-tint on`
+- tmux with tmon loaded (pane border status on by default)
+
 - Agents that can work and block (permission / plan approval)
 - Convert with [`agg`](https://github.com/asciinema/agg)
 

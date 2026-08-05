@@ -24,7 +24,6 @@ Usage:
                            tmon hooks remove  <agent>
                            tmon hooks auto             Install for agents found on this machine
                            tmon hooks status
-  tmon tint off          Restore all panes to default colors (undoes pane tints)
   tmon border off        Clear status border strips and turn pane-border-status off
   tmon version           Print the installed version
 
@@ -55,8 +54,6 @@ Environment (set by tmon.tmux from the @tmon-* tmux options):
                               in the status bar (default 85; 0 disables)
   TMON_BLOCKED_BELL           Ring the terminal bell when an agent blocks:
                               on|off (default off)
-  TMON_PANE_TINT              Tint agent panes by status (blocked/working get a
-                              subtle darkened background glow): on|off (default off)
   TMON_PANE_BORDER            Show a status-colored border strip on agent panes
                               (blocked/working; idle clears to default): on|off
                               (default on)
@@ -82,8 +79,6 @@ func main() {
 		os.Exit(cmdTheme(os.Args[2:]))
 	case "hooks":
 		os.Exit(cmdHooks(os.Args[2:]))
-	case "tint":
-		os.Exit(cmdTint(os.Args[2:]))
 	case "border":
 		os.Exit(cmdBorder(os.Args[2:]))
 	case "version":

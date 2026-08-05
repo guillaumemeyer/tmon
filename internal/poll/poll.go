@@ -124,26 +124,16 @@ func run(cfg config.Config, prevStatus map[int]agent.Status, notify bool, record
 		notifyTransitions(prevStatus, snapshot, cfg.BlockedBell)
 	}
 
-	// Opt-in pane glow: when a pane's agent status changed, tint the pane's
-	// content area so a blocked agent is visible across the room. Only
-	// changed panes generate tmux round-trips; steady state is silent.
-	needTheme := cfg.PaneTint || cfg.PaneBorder
-	var resolved theme.Theme
-	if needTheme {
-		resolved = theme.Resolve(theme.Options{
+	// Opt-in border status strip: blocked/working panes get a colored
+	// pane-border-status line; idle and exited panes clear it so the
+	// border reverts to the default (empty) strip.
+	if cfg.PaneBorder {
+		resolved := theme.Resolve(theme.Options{
 			Name:           cfg.Theme,
 			ColorOverrides: cfg.ColorOverrides,
 			IconOverrides:  cfg.IconOverrides,
 			ASCII:          cfg.ASCII,
 		})
-	}
-	if cfg.PaneTint {
-		applyTints(resolved.Palette, sf.Agents, snapshot)
-	}
-	// Opt-in border status strip: blocked/working panes get a colored
-	// pane-border-status line; idle and exited panes clear it so the
-	// border reverts to the default (empty) strip.
-	if cfg.PaneBorder {
 		applyBorders(resolved, cfg.PaneBorderPosition, sf.Agents, snapshot)
 	}
 
@@ -238,12 +228,6 @@ var (
 	paneBlocked  = func(paneTarget string) bool {
 		return paneTarget != "?" && tmux.Available() && blocked.DetectPane(paneTarget)
 	}
-	tintPane = func(pane, style string) {
-		if pane == "" || pane == "?" || !tmux.Available() {
-			return
-		}
-		tmux.Run("select-pane", "-t", pane, "-P", style) // errors ignored: pane may have vanished
-	}
 	// Border-strip seams: per-pane user option holds a themed format fragment;
 	// #{E:@tmon_border} re-expands #[fg=…] styles in pane-border-format.
 	setPaneBorder = func(pane, value string) {
@@ -270,65 +254,9 @@ var (
 	}
 )
 
-// applyTints diffs the previous poll's agents (loaded from state.json)
-// against the fresh snapshot and recolors the panes whose status changed:
-// blocked and working panes get a darkened palette tint, idle panes are
-// cleared, and panes whose agent exited are restored to default colors.
-// Unchanged panes are skipped entirely — tinting only pays for transitions.
-// New agents are left alone when they first land in idle (their pane may
-// never have been tinted); a connector reporting working/blocked on first
-// sight still tints immediately.
-func applyTints(pal theme.Palette, prev, snap []agent.AgentState) {
-	prevByPane := make(map[string]agent.Status, len(prev))
-	for _, a := range prev {
-		if a.Pane != "" && a.Pane != "?" {
-			prevByPane[a.Pane] = a.Status
-		}
-	}
-	snapByPane := make(map[string]agent.Status, len(snap))
-	for _, a := range snap {
-		if a.Pane != "" && a.Pane != "?" {
-			snapByPane[a.Pane] = a.Status
-		}
-	}
-
-	// Agents that exited: put their panes back to normal.
-	for pane := range prevByPane {
-		if _, ok := snapByPane[pane]; !ok {
-			tintPane(pane, tintStyle(pal, agent.StatusIdle))
-		}
-	}
-
-	for pane, st := range snapByPane {
-		old, seen := prevByPane[pane]
-		if seen {
-			if old == st {
-				continue // unchanged: no tmux traffic
-			}
-		} else if st == agent.StatusIdle {
-			continue // brand-new idle pane: never tinted, leave it alone
-		}
-		tintPane(pane, tintStyle(pal, st))
-	}
-}
-
-// tintStyle is the select-pane -P style for a status: a darkened palette
-// background for blocked/working, default colors for idle/exited.
-func tintStyle(pal theme.Palette, st agent.Status) string {
-	switch st {
-	case agent.StatusBlocked:
-		return "bg=" + theme.Tint(pal.Blocked) + ",fg=default"
-	case agent.StatusWorking:
-		return "bg=" + theme.Tint(pal.Working) + ",fg=default"
-	default:
-		return "bg=default,fg=default"
-	}
-}
-
 // applyBorders syncs the pane-border status strip with the current snapshot.
-// Unlike applyTints (transition-only), every poll rewrites blocked/working
-// strips: otherwise enabling the feature mid-session leaves steady-state
-// agents with an empty border forever. Idle and exited panes clear
+// Every poll rewrites blocked/working strips so enabling the feature
+// mid-session still paints borders. Idle and exited panes clear
 // @tmon_border so the strip reverts to the default (empty) appearance.
 func applyBorders(t theme.Theme, position string, prev, snap []agent.AgentState) {
 	ensureBorderChrome(position)

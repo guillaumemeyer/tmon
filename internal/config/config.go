@@ -31,7 +31,6 @@ type Config struct {
 	IconOverrides       map[string]string // @tmon-icon-* overrides: slot → glyph
 	ContextWarn         int               // context-usage % at which the ⚠️ warning appears (0 disables)
 	BlockedBell         bool              // ring the terminal bell when an agent transitions to blocked
-	PaneTint            bool              // tint agent panes by status (blocked/working) via select-pane
 	PaneBorder          bool              // show a status-colored border strip on agent panes
 	PaneBorderPosition  string            // "top" or "bottom" for pane-border-status
 }
@@ -125,7 +124,6 @@ func FromEnv() Config {
 	c.BoldCounts = envBool("TMON_BOLD_COUNTS", c.BoldCounts)
 	c.ContextWarn = envInt("TMON_CONTEXT_WARN", c.ContextWarn)
 	c.BlockedBell = envBool("TMON_BLOCKED_BELL", c.BlockedBell)
-	c.PaneTint = envBool("TMON_PANE_TINT", c.PaneTint)
 	c.PaneBorder = envBool("TMON_PANE_BORDER", c.PaneBorder)
 	if v := os.Getenv("TMON_PANE_BORDER_POSITION"); v != "" {
 		switch strings.ToLower(v) {

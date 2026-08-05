@@ -131,11 +131,28 @@ func TestLipgloss(t *testing.T) {
 func TestDefaultMatchesClassicColors(t *testing.T) {
 	d := Default.Palette
 	want := Palette{
-		App: "cyan", Blocked: "colour208", Working: "green", Idle: "blue",
+		Background: "colour235", App: "cyan", Blocked: "colour208", Working: "green", Idle: "blue",
 		Dim: "colour240", Accent: "colour15", Warn: "yellow", SelBg: "colour236",
 	}
 	if !reflect.DeepEqual(d, want) {
 		t.Fatalf("Default palette drifted:\n got %+v\nwant %+v", d, want)
+	}
+}
+
+func TestAllPresetsDefineBackground(t *testing.T) {
+	// Every preset must paint the popup panel; and the selection highlight
+	// (selbg) must stay distinct from it so selected rows remain visible.
+	for _, name := range Names() {
+		tm := Resolve(Options{Name: name})
+		if tm.Palette.Background == "" {
+			t.Errorf("%s: missing Background slot", name)
+		}
+		if tm.Palette.SelBg == "" {
+			t.Errorf("%s: missing SelBg slot", name)
+		}
+		if tm.Palette.Background == tm.Palette.SelBg {
+			t.Errorf("%s: Background %q equals SelBg — selection would be invisible", name, tm.Palette.Background)
+		}
 	}
 }
 
@@ -158,12 +175,12 @@ func TestForStatus(t *testing.T) {
 
 func TestSwatchLines(t *testing.T) {
 	lines := SwatchLines(Default)
-	if len(lines) != 8 {
-		t.Fatalf("SwatchLines = %d rows, want 8 (one per palette slot)", len(lines))
+	if len(lines) != 9 {
+		t.Fatalf("SwatchLines = %d rows, want 9 (one per palette slot)", len(lines))
 	}
 	// One row per slot, with the raw tmux-style value and a color chip.
 	joined := strings.Join(lines, "\n")
-	for _, want := range []string{"app", "blocked", "working", "idle", "dim", "accent", "warn", "selbg", "colour208", "colour240"} {
+	for _, want := range []string{"bg", "app", "blocked", "working", "idle", "dim", "accent", "warn", "selbg", "colour208", "colour240"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("SwatchLines missing %q:\n%s", want, joined)
 		}
@@ -205,27 +222,3 @@ func TestSpinnerFrameIsBubblesLine(t *testing.T) {
 	}
 }
 
-// TestTint locks the darkening factor: each channel scales to 35%, so the
-// default palette's colours darken to readable, subtle pane backgrounds.
-func TestTint(t *testing.T) {
-	cases := map[string]string{
-		// #ff8700 (colour208) → 89,47,0
-		"#ff8700":   "#592f00",
-		"colour208": "#592f00",   // xterm cube resolves to the same orange
-		"green":     "#002c00",   // ANSI green #008000 → 0,44,0
-		"blue":      "#00002c",   // ANSI blue #000080 → 0,0,44
-		"#abc":      "#3b4147",   // 3-digit shorthand doubles each digit
-		"colour255": "#535353",   // gray ramp: 8+(255-232)*10=238 → 83,83,83
-		"brightred": "#590000",   // bright red #ff0000
-		"grey":      "#2c2c2c",   // ANSI grey #808080 → 44,44,44
-		"notacolor": "notacolor", // passthrough
-		"":          "",
-		"colour999": "colour999", // out of range → passthrough
-		"colour":    "colour",    // no index → passthrough
-	}
-	for in, want := range cases {
-		if got := Tint(in); got != want {
-			t.Errorf("Tint(%q) = %q, want %q", in, got, want)
-		}
-	}
-}

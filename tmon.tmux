@@ -32,10 +32,6 @@
 #                            dashboard's usage bar turns yellow); "0" disables
 #   @tmon-blocked-bell      "off" (default) — ring the terminal bell when an
 #                            agent transitions to blocked; "on" enables
-#   @tmon-pane-tint         "off" (default) — tint agent panes by status: a
-#                            blocked agent's pane glows with a darkened
-#                            blocked-color background, working agents get a
-#                            greenish glow, idle clears it; "on" enables
 #   @tmon-pane-border       "on" (default) — show a status-colored border
 #                            strip on agent panes (blocked/working icon+label;
 #                            idle clears to the default empty strip); "off"
@@ -85,7 +81,6 @@ ASCII_ICONS=$(get_tmux_option "@tmon-ascii-icons" "0")
 BOLD_COUNTS=$(get_tmux_option "@tmon-bold-counts" "1")
 CONTEXT_WARN=$(get_tmux_option "@tmon-context-warn" "85")
 BLOCKED_BELL=$(get_tmux_option "@tmon-blocked-bell" "off")
-PANE_TINT=$(get_tmux_option "@tmon-pane-tint" "off")
 PANE_BORDER=$(get_tmux_option "@tmon-pane-border" "on")
 PANE_BORDER_POS=$(get_tmux_option "@tmon-pane-border-position" "top")
 case "$PANE_BORDER_POS" in
@@ -118,7 +113,6 @@ tmux set-environment -g TMON_ASCII_ICONS "$ASCII_ICONS"
 tmux set-environment -g TMON_BOLD_COUNTS "$BOLD_COUNTS"
 tmux set-environment -g TMON_CONTEXT_WARN "$CONTEXT_WARN"
 tmux set-environment -g TMON_BLOCKED_BELL "$BLOCKED_BELL"
-tmux set-environment -g TMON_PANE_TINT "$PANE_TINT"
 tmux set-environment -g TMON_PANE_BORDER "$PANE_BORDER"
 tmux set-environment -g TMON_PANE_BORDER_POSITION "$PANE_BORDER_POS"
 tmux set-environment -g TMON_THEME "$THEME"
@@ -169,13 +163,6 @@ main() {
   # so reloads stay silent.
   if [ "$AUTO_HOOKS" = "on" ] && [ -x "$BINARY" ]; then
     "$BINARY" hooks auto
-  fi
-
-  # Pane tint cleanup. When the feature is off (the default), force-restore
-  # every pane so a stale tint from a previous session (or a crashed
-  # process) doesn't linger after reload.
-  if [ "$PANE_TINT" != "on" ] && [ -x "$BINARY" ]; then
-    "$BINARY" tint off
   fi
 
   # Pane border strip: enable chrome when on so the strip is ready before the
