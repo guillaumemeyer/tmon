@@ -64,8 +64,8 @@ tmon watches the whole zoo out of the box — **11 agents**:
 🤖 Grok Build · ✳️ Claude Code · 🧩 Codex CLI · 🖱️ Cursor · 🧶 Cline · 🦆 Aider · ✨ GitHub Copilot · 🐾 CodeBuddy · 🌊 Windsurf · 👟 Hermes Agent · 🦀 OpenClaw
 
 How closely tmon can track each one depends on the agent's own state
-surface. Agents that publish live state files (Grok, Hermes, Cline,
-CodeBuddy, Aider, OpenClaw) or accept lifecycle hooks (Claude Code, Codex,
+surface. Agents that publish live state files (Grok, Hermes, Codex CLI,
+Cline, CodeBuddy, Aider, OpenClaw) or accept lifecycle hooks (Claude Code,
 Cursor, Copilot, Windsurf, Hermes approvals) give tmon authoritative working
 / blocked / idle signals; everyone else falls back to the CPU/IO and
 pane-content heuristics. The matrix below shows which features each agent's
@@ -75,7 +75,7 @@ connector provides:
 |-------|-----------|--------|:---:|--------|:---:|:---:|
 | Grok Build | native (`~/.grok`) | exact | ✓ | phase · tool · permission · model | ✓ | ✓ + window % |
 | Claude Code | hooks | exact | ✓ | tool · permission | ✓ | ✓ + window % + quota |
-| Codex CLI | hooks (+ `/hooks` trust) | exact | ✓ | tool · permission | — | ✓ + quota |
+| Codex CLI | native (`~/.codex` rollouts) | exact | ✓ (hooks) | phase · tool · permission | — | ✓ + window % + quota |
 | Hermes Agent | native (`~/.hermes` + profiles) | CLI/TUI | ✓ (hooks) | model · approval | ✓ | ✓ + window % |
 | GitHub Copilot | hooks, else native fallback | exact | ✓ | tool · permission | — | — |
 | Cursor | hooks, else native fallback | exact | — | tool | — | — |
@@ -110,9 +110,11 @@ Hermes may prompt once to allowlist the shell hook.
 
 Hooks are **off by default** (`@tmon-auto-hooks off`). Install them with
 `tmon hooks auto` or `tmon hooks install <agent>` when you want authoritative
-status. Codex additionally requires the hooks to be trusted in-session via
-`/hooks`. Without hooks, the Cursor/Copilot native fallback only reports the
-agent as idle; other agents still use CPU/IO heuristics across status refreshes.
+status. Codex is read natively from its session rollouts without hooks;
+installing them (and trusting them in-session via `/hooks`) adds tool and
+permission detail on top. Without hooks, the Cursor/Copilot native fallback
+only reports the agent as idle; other agents still use CPU/IO heuristics
+across status refreshes.
 
 ## Add your agent
 
