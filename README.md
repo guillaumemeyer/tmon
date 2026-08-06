@@ -1,5 +1,7 @@
 # tmon — your AI coding agents, now with a leash
 
+![tmon-meme](./docs/tmon-meme.jpg)
+
 You've got Grok Build crunching through a refactor in one pane, Claude Code
 negotiating a design doc in another, and Hermes Agent off doing… whatever
 Hermes Agent does. Wouldn't it be nice to know who's actually working, who's
@@ -22,8 +24,7 @@ dashboard — or just **click the status bar indicator**.
 
 ## What tmon won't do
 
-- Won't feed them
-- Won't explain why Hermes Agent is in `/var/log`
+- Won't feed your agents
 - Won't pair your socks or approve `rm -rf /` for you
 - Won't start agents, stop agents, or "just send a quick prompt"
 - Won't auto-merge PRs written by three agents at once (we have *some* standards)
@@ -108,7 +109,10 @@ yet) tinted with a **per-agent identity color** (Claude orange, Codex green,
 Hermes cyan, …) so the fleet is recognizable at a glance — same color in the
 list and the preview header. Working agents animate: their status slot spins
 (a green bubbles spinner) instead of the static `⚡️`. Beneath the name, a
-dimmed **working directory** plus — when the agent is blocked — the prompt it
+dimmed **working directory** — with a git context tag when the agent works
+inside a repository (`(main)`, or `(main · #42)` when `gh` finds the open
+pull request for that branch) — plus — when the agent is blocked — the
+prompt it
 is waiting on (e.g. `[y/N]`, or `paused` when the prompt is unknown), then a
 dimmed **tmux location** (`tmux: main / shell / 1` — Session / Window / Pane,
 each segment preferring the human name and falling back to the numeric
@@ -143,9 +147,15 @@ Filter by status with `b` (blocked), `w` (working), `i` (idle); press the
 key again to clear. Hit `Enter` or **click
 an agent line** to jump to that agent's pane.
 
+Cycle the list layout with `v`: **list** (flat), **projects** (grouped by
+git repository — or working directory outside a repo — with the branch tag
+in each header, e.g. `~/code/tmon (main · #42)`), and **status** (grouped
+by blocked / working / idle). The choice is remembered.
+
 **Fuzzy search** — press `/`, then type a Telescope/fzy-style query. Matches
 are subsequences (not substrings) over the session title, agent name,
-working directory, and the full pane capture (including content not
+working directory, branch, pull-request number, and the full pane capture
+(including content not
 currently visible in the preview). Space-separated terms are ANDed. Results
 are ranked by match quality. `Esc` leaves search mode (the filter stays);
 `Esc` again closes the popup.
@@ -158,9 +168,10 @@ are ranked by match quality. `Esc` leaves search mode (the filter stays);
 | `Ctrl-u` / `Ctrl-d` | Scroll the preview up / down |
 | `b` / `w` / `i` | Filter by status: blocked / working / idle (press again to clear) |
 | `Enter` / `Space` | Jump to the selected agent's pane |
+| `v` | Cycle the list layout: list → projects (grouped by repo) → status |
 | `t` | Open the theme selector (browse with `↑`/`↓` — previews live; `Enter`/`Space` applies and persists, `Esc`/`q` reverts) |
 | Click on an agent line | Select and jump to that agent's pane |
-| `/` | Start fuzzy search (session title, name, directory, pane content) |
+| `/` | Start fuzzy search (session title, name, directory, branch, PR number, pane content) |
 | Type | Filter the list |
 | `Backspace` | Remove last character from filter |
 | `Esc` | Leave search mode; if not searching, close popup |
@@ -407,6 +418,8 @@ are optional — the defaults are sensible for most people.
 | `@tmon-context-warn` | `85` | context % at which a ⚠️ warning appears (`0` disables) |
 | `@tmon-pane-border` | `on` | status-colored border strip on agent panes (blocked/working) |
 | `@tmon-pane-border-position` | `top` | where the strip sits (`top` or `bottom`) |
+| `@tmon-hide` | — | comma-separated glob patterns of agents to hide from the status bar and dashboard (label, cwd, or session) |
+| `@tmon-pr-lookup` | `on` | resolve open GitHub PR numbers for agent branches in the dashboard via `gh` |
 | `@tmon-color-<slot>` | — | override one theme color slot |
 | `@tmon-icon-<slot>` | — | override one status glyph |
 
@@ -608,6 +621,47 @@ set -g @tmon-context-warn "90"
 ```tmux
 set -g @tmon-pane-border "on"             # default; set "off" to disable
 set -g @tmon-pane-border-position "top"   # or "bottom"
+```
+
+### `@tmon-hide`
+
+> Hide agents you do not care about from the status bar and the dashboard.
+> The agent keeps running — tmon only stops showing it. Each comma-separated
+> pattern is a glob matched against the agent label (case-insensitive), its
+> working directory, or its tmux session name. `*` matches any run of
+> characters (including `/`), `?` matches exactly one character; a pattern
+> with no wildcards matches the exact string.
+>
+> Hidden agents also get no pane-border strip, and they are dropped from
+> `tmon status --json`, so scripts and the status bar always agree with the
+> dashboard.
+
+| | |
+|---|---|
+| **Default** | empty (show everything) |
+
+```tmux
+# Hide every Aider agent (label match, case-insensitive).
+set -g @tmon-hide "aider"
+
+# Hide agents working in scratch dirs and in tool-owned tmux sessions.
+set -g @tmon-hide "*/scratch/*,tool-*"
+```
+
+### `@tmon-pr-lookup`
+
+> The dashboard resolves the open GitHub pull request number for each agent's
+> branch and shows it as `(branch · #42)` on the row and in the projects-view
+> header. Lookup uses `gh` (must be installed and authenticated), runs at
+> most once per branch per minute, and never blocks the dashboard for more
+> than three seconds. Turn it off to skip the `gh` subprocess entirely.
+
+| | |
+|---|---|
+| **Default** | `on` |
+
+```tmux
+set -g @tmon-pr-lookup "off"
 ```
 
 ---
