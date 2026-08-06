@@ -207,7 +207,7 @@ Install the tmux plugin guillaumemeyer/tmon for me.
 ```
 
 On first load, tmon downloads its binary into `<plugin>/bin/` — you'll see a
-one-line status-bar message such as `tmon: installed v0.5.0 (linux/amd64)`.
+one-line status-bar message such as `tmon: installed v0.6.0 (linux/amd64)`.
 
 ### 2. Manual install
 
@@ -248,7 +248,7 @@ run-shell ~/.tmux/plugins/tmon/tmon.tmux
 
 Reload: `tmux source-file ~/.tmux.conf`. On first load, tmon downloads its
 binary into `<plugin>/bin/` — you'll see a one-line
-`tmon: installed v0.5.0 (linux/amd64)` (or `darwin/arm64`, etc.) status-bar
+`tmon: installed v0.6.0 (linux/amd64)` (or `darwin/arm64`, etc.) status-bar
 message.
 
 ### Updating
