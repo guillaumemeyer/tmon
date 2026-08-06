@@ -74,15 +74,35 @@ type listEntry struct {
 	agent   int    // index into filtered / agentList items for agent rows
 }
 
-// agentItemHeight is the fixed height of one agent row in the list column.
+// agentItemHeight is the height of one agent row in the list column without
+// quota rows: name, project, pane, usage.
 const agentItemHeight = 4
 
-// entryHeight is the number of body lines one list entry occupies.
-func (e listEntry) height() int {
+// agentRowHeight returns the uniform height of one agent row in the list
+// column: the four base lines plus the widest quota-window list across the
+// fleet, so every block stays the same height for the flat layout. Agents
+// without quota data stay at four lines.
+func (m Model) agentRowHeight() int {
+	h := agentItemHeight
+	for _, it := range m.agentList.Items() {
+		ai, ok := it.(agentItem)
+		if !ok {
+			continue
+		}
+		if n := len(ai.row.Usage.QuotaWindows); n > h-agentItemHeight {
+			h = agentItemHeight + n
+		}
+	}
+	return h
+}
+
+// entryHeight is the number of body lines one list entry occupies. rowH is
+// the uniform agent-row height (agentItemHeight plus quota rows).
+func (e listEntry) height(rowH int) int {
 	if e.blank || e.section != "" {
 		return 1
 	}
-	return agentItemHeight
+	return rowH
 }
 
 // isAgent reports whether the entry is a selectable agent row.
@@ -237,22 +257,22 @@ func statusEntries(rows []Row, filtered []int) []listEntry {
 
 // entryStartLines returns the cumulative line offset of each entry, plus a
 // final element equal to the total content height.
-func entryStartLines(entries []listEntry) []int {
+func entryStartLines(entries []listEntry, rowH int) []int {
 	starts := make([]int, len(entries)+1)
 	for i, e := range entries {
-		starts[i+1] = starts[i] + e.height()
+		starts[i+1] = starts[i] + e.height(rowH)
 	}
 	return starts
 }
 
 // selectedEntryLine is the starting body line of the selected agent entry,
 // or 0 when nothing is selected.
-func (m Model) selectedEntryLine(entries []listEntry) int {
+func (m Model) selectedEntryLine(entries []listEntry, rowH int) int {
 	sel := m.agentList.Index()
 	if sel < 0 || len(entries) == 0 {
 		return 0
 	}
-	starts := entryStartLines(entries)
+	starts := entryStartLines(entries, rowH)
 	for i, e := range entries {
 		if e.isAgent() && e.agent == sel {
 			return starts[i]
@@ -263,9 +283,9 @@ func (m Model) selectedEntryLine(entries []listEntry) int {
 
 // clampListScroll keeps listScroll in range for the current content height
 // and viewport, and pulls the selected agent into view when needed.
-func (m *Model) clampListScroll(bodyLines int) {
+func (m *Model) clampListScroll(bodyLines, rowH int) {
 	entries := m.buildListEntries()
-	starts := entryStartLines(entries)
+	starts := entryStartLines(entries, rowH)
 	total := starts[len(starts)-1]
 	if bodyLines < 1 {
 		bodyLines = 1
@@ -276,8 +296,8 @@ func (m *Model) clampListScroll(bodyLines int) {
 	}
 	// Bring the selected agent fully into the viewport.
 	if len(m.filtered) > 0 {
-		selLine := m.selectedEntryLine(entries)
-		selEnd := selLine + agentItemHeight
+		selLine := m.selectedEntryLine(entries, rowH)
+		selEnd := selLine + rowH
 		if selLine < m.listScroll {
 			m.listScroll = selLine
 		}

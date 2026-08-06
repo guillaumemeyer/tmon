@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/guillaumemeyer/tmon/internal/agent"
 	"github.com/guillaumemeyer/tmon/internal/config"
 )
 
@@ -60,10 +61,11 @@ var claudeAccessToken = func() string {
 	return strings.TrimSpace(c.ClaudeAiOauth.AccessToken)
 }
 
-// probeClaude fetches the Claude OAuth usage endpoint and maps the session
-// (5-hour) window into the quota block. No credentials, an HTTP error, or
-// an unparseable body produce a Quota with StatusText instead of an error,
-// so the worker keeps running and the dashboard shows why.
+// probeClaude fetches the Claude OAuth usage endpoint and maps every
+// reported limit window (session, weekly all-models, weekly per-model) into
+// the quota block. No credentials, an HTTP error, or an unparseable body
+// produce a Quota with StatusText instead of an error, so the worker keeps
+// running and the dashboard shows why.
 func probeClaude(cfg config.Config) (Quota, error) {
 	q := Quota{}
 	token := claudeAccessToken()
@@ -122,40 +124,70 @@ type claudeLimit struct {
 	Kind     string  `json:"kind"`
 	Percent  float64 `json:"percent"`
 	ResetsAt string  `json:"resets_at"`
+	Scope    *struct {
+		Model *struct {
+			DisplayName string `json:"display_name"`
+		} `json:"model"`
+	} `json:"scope"`
 }
 
-// parseClaudeUsage selects the session (5-hour) window — from the limits
-// array when present, else the legacy five_hour object — and maps it to a
-// quota block. It falls back to the weekly window when no session window
-// exists (some plans only expose weekly).
+// parseClaudeUsage maps every rate-limit window in the response to a quota
+// window in a fixed display order: session, weekly all-models, then weekly
+// per-model (e.g. "Current week (Fable)"). Legacy top-level windows
+// (five_hour/seven_day) fill in for their limits[] counterparts. The first
+// window becomes the quota's primary Pct/Label/ResetAt so older consumers
+// keep a single-window view.
 func parseClaudeUsage(body []byte) (Quota, error) {
 	var resp claudeUsageResp
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return Quota{}, err
 	}
+	var windows []agent.QuotaWindow
+	add := func(pct float64, resetAt, label string) {
+		windows = append(windows, agent.QuotaWindow{
+			Pct:     int(pct + 0.5),
+			Label:   label,
+			ResetAt: normalizeResetAt(resetAt),
+		})
+	}
+	hasLimit := func(kind string) bool {
+		for _, l := range resp.Limits {
+			if l.Kind == kind {
+				return true
+			}
+		}
+		return false
+	}
 	for _, l := range resp.Limits {
 		if l.Kind == "session" {
-			return quotaFromWindow(l.Percent, l.ResetsAt, "Session (5-hour)"), nil
+			add(l.Percent, l.ResetsAt, "Current session")
 		}
 	}
-	if resp.FiveHour != nil {
-		return quotaFromWindow(resp.FiveHour.Utilization, resp.FiveHour.ResetsAt, "Session (5-hour)"), nil
+	if !hasLimit("session") && resp.FiveHour != nil {
+		add(resp.FiveHour.Utilization, resp.FiveHour.ResetsAt, "Current session")
 	}
 	for _, l := range resp.Limits {
 		if l.Kind == "weekly_all" {
-			return quotaFromWindow(l.Percent, l.ResetsAt, "Weekly (7-day)"), nil
+			add(l.Percent, l.ResetsAt, "Current week (all models)")
 		}
 	}
-	if resp.SevenDay != nil {
-		return quotaFromWindow(resp.SevenDay.Utilization, resp.SevenDay.ResetsAt, "Weekly (7-day)"), nil
+	if !hasLimit("weekly_all") && resp.SevenDay != nil {
+		add(resp.SevenDay.Utilization, resp.SevenDay.ResetsAt, "Current week (all models)")
 	}
-	return Quota{StatusText: "no rate-limit window in Claude usage response"}, nil
-}
-
-// quotaFromWindow maps one window to a quota block, rounding the percent
-// half-up (matching the dashboard's own rounding convention).
-func quotaFromWindow(pct float64, resetAt, label string) Quota {
-	return Quota{Pct: int(pct + 0.5), Label: label, ResetAt: normalizeResetAt(resetAt)}
+	for _, l := range resp.Limits {
+		if l.Kind == "weekly_scoped" && l.Scope != nil && l.Scope.Model != nil && l.Scope.Model.DisplayName != "" {
+			add(l.Percent, l.ResetsAt, "Current week ("+l.Scope.Model.DisplayName+")")
+		}
+	}
+	if len(windows) == 0 {
+		return Quota{StatusText: "no rate-limit window in Claude usage response"}, nil
+	}
+	return Quota{
+		Pct:     windows[0].Pct,
+		Label:   windows[0].Label,
+		ResetAt: windows[0].ResetAt,
+		Windows: windows,
+	}, nil
 }
 
 // normalizeResetAt parses an API reset timestamp into UTC RFC3339, keeping

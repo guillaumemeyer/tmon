@@ -326,16 +326,17 @@ func (m *Model) clickAgentAt(bodyRow int) bool {
 	if len(entries) == 0 {
 		return false
 	}
-	m.clampListScroll(listBodyH)
+	rowH := m.agentRowHeight()
+	m.clampListScroll(listBodyH, rowH)
 	// Absolute content line under the cursor.
 	absLine := m.listScroll + bodyRow
-	starts := entryStartLines(entries)
+	starts := entryStartLines(entries, rowH)
 	for i, e := range entries {
 		if !e.isAgent() {
 			continue
 		}
 		start := starts[i]
-		end := start + e.height()
+		end := start + e.height(rowH)
 		if absLine < start || absLine >= end {
 			continue
 		}

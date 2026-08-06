@@ -181,12 +181,19 @@ func attachQuota(cfg config.Config, records []connector.Record) {
 	}
 	for key, i := range newest {
 		q := quota[key]
-		// A parsed window always sets Label; failed probes leave it empty.
-		// Attach even at 0% used so the reset time stays visible.
-		if q.Label == "" {
+		// A parsed window always sets Label (or a Windows list); failed
+		// probes leave both empty. Attach even at 0% used so the reset
+		// time stays visible.
+		if q.Label == "" && len(q.Windows) == 0 {
 			continue
 		}
 		u := records[i].Usage
+		u.QuotaWindows = q.Windows
+		if len(u.QuotaWindows) == 0 && q.Label != "" {
+			// Single-window sources (codex, lazy fallback) carry the
+			// window in the top-level fields; surface it as one window.
+			u.QuotaWindows = []agent.QuotaWindow{{Pct: q.Pct, Label: q.Label, ResetAt: q.ResetAt}}
+		}
 		u.QuotaPct = q.Pct
 		if t, err := time.Parse(time.RFC3339, q.ResetAt); err == nil {
 			u.QuotaReset = t.Local().Format("15:04")

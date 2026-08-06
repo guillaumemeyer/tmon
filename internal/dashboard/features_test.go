@@ -1099,6 +1099,62 @@ func TestAgentRowsThreeLinesWithUsage(t *testing.T) {
 	}
 }
 
+func TestAgentRowsShowQuotaWindows(t *testing.T) {
+	old := capturePane
+	capturePane = func(p string) string { return "x" }
+	t.Cleanup(func() { capturePane = old })
+
+	// Claude carries three quota windows (session, weekly all-models,
+	// weekly per-model); the other agents have none, so every block grows
+	// to the same seven lines and the quota rows sit below the context line.
+	rows := testRows()
+	rows[1].Usage = agent.Usage{QuotaWindows: []agent.QuotaWindow{
+		{Pct: 0, Label: "Current session"},
+		{Pct: 5, Label: "Current week (all models)"},
+		{Pct: 2, Label: "Current week (Fable)"},
+	}}
+	f := &fakeLoader{data: Data{Rows: rows}}
+	m := New(f.load, true)
+	m = applyMsg(t, m, initMsg{})
+	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyDown}) // select Claude
+	m.width, m.height = 120, 24
+
+	v := ansi.Strip(m.View())
+	lines := strings.Split(v, "\n")
+
+	claudeLine := -1
+	for i, ln := range lines {
+		parts := strings.SplitN(ln, "│", 3)
+		if len(parts) < 3 {
+			continue // top/bottom border
+		}
+		if strings.Contains(parts[1], "B Claude Code") {
+			claudeLine = i
+			break
+		}
+	}
+	if claudeLine < 0 {
+		t.Fatal("Claude row not found in the list")
+	}
+	// Block layout: name, project, pane, context, then quota rows.
+	if !strings.Contains(lines[claudeLine+3], "context: ?") {
+		t.Errorf("context line = %q, want context: ? above the quota rows", lines[claudeLine+3])
+	}
+	usageRows := []string{lines[claudeLine+4], lines[claudeLine+5], lines[claudeLine+6]}
+	for _, want := range []string{"usage:", "Current session", "Current week (all models)", "Current week (Fable)"} {
+		found := false
+		for _, u := range usageRows {
+			if strings.Contains(u, want) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("quota rows %q missing %q", usageRows, want)
+		}
+	}
+}
+
 func TestWorkingAgentShowsSpinner(t *testing.T) {
 	old := capturePane
 	capturePane = func(p string) string { return "x" }
@@ -1150,19 +1206,61 @@ func TestUsageLineFormat(t *testing.T) {
 		want string
 	}{
 		{"empty", agent.Usage{}, "context: ?"},
+		{"quota only", agent.Usage{QuotaPct: 38, QuotaReset: "14:00"}, "context: ?"},
+		{"quota 0% used", agent.Usage{QuotaPct: 0, QuotaReset: "14:00"}, "context: ?"},
 		{"tokens only", agent.Usage{TokensUsed: 13025}, "context: 13k"},
 		{"tokens and window", agent.Usage{TokensUsed: 52367, WindowTokens: 200000}, "context: 52.4k/200k ████████░░░░░░░░░░░░░░░░░░░░░░ 26%"},
 		{"million window", agent.Usage{TokensUsed: 123456, WindowTokens: 1000000}, "context: 123k/1M ████░░░░░░░░░░░░░░░░░░░░░░░░░░ 12%"},
-		{"quota only", agent.Usage{QuotaPct: 38, QuotaReset: "14:00"}, "62% left · reset 14:00"},
-		{"quota 0% used", agent.Usage{QuotaPct: 0, QuotaReset: "14:00"}, "100% left · reset 14:00"},
-		{"all", agent.Usage{TokensUsed: 52367, WindowTokens: 200000, QuotaPct: 38, QuotaReset: "14:00"}, "context: 52.4k/200k ████████░░░░░░░░░░░░░░░░░░░░░░ 26% · 62% left · reset 14:00"},
-		{"over quota clamps", agent.Usage{QuotaPct: 120, QuotaReset: "14:00"}, "0% left · reset 14:00"},
+		{"tokens with quota", agent.Usage{TokensUsed: 52367, WindowTokens: 200000, QuotaPct: 38, QuotaReset: "14:00"}, "context: 52.4k/200k ████████░░░░░░░░░░░░░░░░░░░░░░ 26%"},
 		{"warn threshold", agent.Usage{TokensUsed: 180000, WindowTokens: 200000}, "context: 180k/200k ███████████████████████████░░░ 90%"},
 	}
 	for _, tc := range cases {
 		if got := ansi.Strip(usageLine(m.st, m.contextWarn, tc.u, false, 200)); got != tc.want {
 			t.Errorf("%s: usageLine(%+v) = %q, want %q", tc.name, tc.u, got, tc.want)
 		}
+	}
+}
+
+func TestQuotaLineFormat(t *testing.T) {
+	m := Model{st: defaultStyles, theme: theme.Default, contextWarn: defaultContextWarn}
+	// A wide row caps the bar at its 30-cell maximum; the fill is
+	// deterministic: round(width * pct / 100). The reset text is built from
+	// a fixed local instant so the date/time decision is stable, with the
+	// zone abbreviation taken from that instant.
+	sameDay := time.Date(2026, 8, 6, 19, 40, 0, 0, time.Local)
+	otherDay := time.Date(2026, 8, 9, 0, 59, 0, 0, time.Local)
+	cases := []struct {
+		name string
+		w    agent.QuotaWindow
+		want string
+	}{
+		{"session 0%", agent.QuotaWindow{Pct: 0, Label: "Current session", ResetAt: sameDay.Format(time.RFC3339)},
+			"usage: ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 0% · Current session (reset at 19:40 " + sameDay.Format("MST") + ")"},
+		{"weekly 40%", agent.QuotaWindow{Pct: 40, Label: "Current week (all models)", ResetAt: otherDay.Format(time.RFC3339)},
+			"usage: ████████████░░░░░░░░░░░░░░░░░░ 40% · Current week (all models) (reset at Aug 9, 00:59 " + otherDay.Format("MST") + ")"},
+		{"scoped no reset", agent.QuotaWindow{Pct: 38, Label: "Current week (Fable)"},
+			"usage: ███████████░░░░░░░░░░░░░░░░░░░ 38% · Current week (Fable)"},
+		{"over 100 clamps", agent.QuotaWindow{Pct: 120, Label: "Current session"},
+			"usage: ██████████████████████████████ 100% · Current session"},
+		{"negative clamps", agent.QuotaWindow{Pct: -5, Label: "Current session"},
+			"usage: ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 0% · Current session"},
+	}
+	for _, tc := range cases {
+		if got := ansi.Strip(quotaLine(m.st, m.contextWarn, tc.w, false, 200)); got != tc.want {
+			t.Errorf("%s: quotaLine(%+v) = %q, want %q", tc.name, tc.w, got, tc.want)
+		}
+	}
+}
+
+func TestFormatResetAt(t *testing.T) {
+	now := time.Date(2026, 8, 6, 12, 0, 0, 0, time.Local)
+	same := time.Date(2026, 8, 6, 19, 40, 0, 0, time.Local)
+	other := time.Date(2026, 8, 9, 0, 59, 0, 0, time.Local)
+	if got, want := formatResetAt(same, now), "19:40 "+same.Format("MST"); got != want {
+		t.Errorf("same-day reset = %q, want %q", got, want)
+	}
+	if got, want := formatResetAt(other, now), "Aug 9, 00:59 "+other.Format("MST"); got != want {
+		t.Errorf("cross-day reset = %q, want %q", got, want)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/guillaumemeyer/tmon/internal/agent"
 	"github.com/guillaumemeyer/tmon/internal/config"
 	"github.com/guillaumemeyer/tmon/internal/detect"
 	"github.com/guillaumemeyer/tmon/internal/worker"
@@ -380,5 +381,24 @@ func TestCheckQuota(t *testing.T) {
 		if !strings.Contains(c.Detail, want) {
 			t.Errorf("quota detail %q missing %q", c.Detail, want)
 		}
+	}
+
+	// A provider with several windows lists them all, one per window.
+	if err := worker.SaveUsageFile(cfg.StateDir, worker.UsageFile{
+		SchemaVersion: worker.SchemaVersion,
+		GeneratedAt:   time.Now(),
+		Quota: map[string]worker.Quota{
+			"claude": {Windows: []agent.QuotaWindow{
+				{Pct: 0, Label: "Current session"},
+				{Pct: 5, Label: "Current week (all models)"},
+				{Pct: 2, Label: "Current week (Fable)"},
+			}},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	c = checkQuota(cfg)
+	if !strings.Contains(c.Detail, "claude: 0% Current session, 5% Current week (all models), 2% Current week (Fable)") {
+		t.Errorf("quota detail %q missing the per-window list", c.Detail)
 	}
 }

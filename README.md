@@ -92,9 +92,11 @@ connectors that detect a permission wait themselves; a — falls back to the
 pane-pattern heuristic (`[y/N]`, permission prompts, …). **Detail** is what
 the dashboard shows under the agent's name, **Title** the session name
 ("Title (Agent)"), and **Tokens** the stats line (tokens + context-window %
-when known). **Quota** (the "+ quota" suffix) is the account-level rate-limit
-window — % used and next reset — probed in the background by the usage
-worker for Claude and Codex and shown in the dashboard's stats line.
+when known). **Quota** is the account-level rate-limit windows — % used,
+next reset, plan tier — probed in the background by the usage worker for
+Claude and Codex and shown in the dashboard popup as one progress-bar row
+per window below the agent's context line (`usage: ████ 38% · Current
+session (reset at 19:39 PDT)`).
 
 **Hermes** lists only live **CLI/TUI** sessions (not the messaging gateway).
 The dashboard name is `Title (Hermes - <profile>)` when a profile is known
@@ -131,14 +133,17 @@ no open dashboard. A crashed worker is detected via its heartbeat file and
 respawned by the next poll.
 
 `<state>/usage.json` is the worker's only output (schema v1): a `quota`
-block per agent with the percent used, the window label (e.g. "Session
-(5-hour)", "Weekly (7-day)"), the next reset time, the plan tier when the
-API exposes it, and a `statusText`/`authHelpText` pair explaining an absent
-window (no credentials, rate limited, …). Each status poll reads it cheaply
-and attaches the quota to the newest live record of that agent; the
-dashboard renders it in the stats line (`62% left · reset 14:00`). The
-ledger fields (`today`, `recentDays`, `modelUsage`) are reserved for the
-next phase.
+block per agent with a `windows` list — one entry per reported window
+(session, weekly all-models, weekly per-model), each with the percent used,
+a display label and the next reset time — plus the plan tier when the API
+exposes it and a `statusText`/`authHelpText` pair explaining an absent
+window (no credentials, rate limited, …). Claude's windows match its own
+/usage view: "Current session", "Current week (all models)", and per-model
+windows such as "Current week (Fable)". Each status poll reads it cheaply
+and attaches the windows to the newest live record of that agent; the
+dashboard renders one `usage: ████ 38% · Current session (reset at 19:39
+PDT)` row per window below the context line. The ledger fields (`today`,
+`recentDays`, `modelUsage`) are reserved for the next phase.
 
 The probes are read-only and never prompt: they read credentials from the
 agent's own local files (`~/.claude/.credentials.json`, the `codex` binary)
@@ -192,12 +197,12 @@ tmon status --json | jq '[.agents[] | select(.status=="blocked")] | length'
 tmon status --json | jq -r '.agents[] | select(.status=="working") | .cwd'
 
 # Account quota for an agent with a quota probe (Claude, Codex):
-tmon status --json | jq '.agents[] | select(.usage.quotaPct > 0) | {label, quotaPct, quotaReset}'
+tmon status --json | jq '.agents[] | select(.usage.quotaWindows != null) | {label, quotaWindows}'
 ```
 
-When the worker has data, the `usage` block also carries the account quota
-(`quotaPct` percent used, `quotaReset` as "14:00") for agents with a quota
-probe — Claude and Codex.
+When the worker has data, the `usage` block also carries the account quota:
+`quotaWindows` lists every reported window (percent, label, reset time);
+`quotaPct`/`quotaReset` mirror the first window for convenience.
 
 ## Requirements
 

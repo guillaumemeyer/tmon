@@ -6,8 +6,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
+	"github.com/guillaumemeyer/tmon/internal/agent"
 	"github.com/guillaumemeyer/tmon/internal/config"
 )
 
@@ -55,8 +57,15 @@ func TestProbeClaudeLegacyWindows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if q.Pct != 38 || q.Label != "Session (5-hour)" || q.ResetAt != "2026-08-06T14:00:00Z" {
+	if q.Pct != 38 || q.Label != "Current session" || q.ResetAt != "2026-08-06T14:00:00Z" {
 		t.Errorf("quota = %+v", q)
+	}
+	want := []agent.QuotaWindow{
+		{Pct: 38, Label: "Current session", ResetAt: "2026-08-06T14:00:00Z"},
+		{Pct: 12, Label: "Current week (all models)", ResetAt: "2026-08-09T00:00:00Z"},
+	}
+	if !reflect.DeepEqual(q.Windows, want) {
+		t.Errorf("windows = %+v, want %+v", q.Windows, want)
 	}
 }
 
@@ -115,6 +124,8 @@ func TestProbeClaudeHTTPError(t *testing.T) {
 }
 
 func TestParseClaudeUsageLimits(t *testing.T) {
+	// The five_hour legacy block must not double the session window when
+	// limits[] already carries it.
 	body := []byte(`{
 	  "five_hour": {"utilization": 10, "resets_at": "2026-08-06T13:00:00Z"},
 	  "limits": [
@@ -126,8 +137,15 @@ func TestParseClaudeUsageLimits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if q.Pct != 28 || q.Label != "Session (5-hour)" || q.ResetAt != "2026-08-06T14:00:00Z" {
+	if q.Pct != 28 || q.Label != "Current session" || q.ResetAt != "2026-08-06T14:00:00Z" {
 		t.Errorf("quota = %+v, want session window from limits[]", q)
+	}
+	want := []agent.QuotaWindow{
+		{Pct: 28, Label: "Current session", ResetAt: "2026-08-06T14:00:00Z"},
+		{Pct: 55, Label: "Current week (all models)", ResetAt: "2026-08-09T00:00:00Z"},
+	}
+	if !reflect.DeepEqual(q.Windows, want) {
+		t.Errorf("windows = %+v, want %+v", q.Windows, want)
 	}
 }
 
@@ -139,8 +157,53 @@ func TestParseClaudeUsageWeeklyFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if q.Pct != 55 || q.Label != "Weekly (7-day)" {
+	if q.Pct != 55 || q.Label != "Current week (all models)" {
 		t.Errorf("quota = %+v, want the weekly fallback", q)
+	}
+	if len(q.Windows) != 1 || q.Windows[0].Label != "Current week (all models)" {
+		t.Errorf("windows = %+v, want the single weekly window", q.Windows)
+	}
+}
+
+func TestParseClaudeUsageScopedWindow(t *testing.T) {
+	// A weekly_scoped limit names its model; the window keeps the API's
+	// null resets_at (Claude Code shows no reset for it either).
+	body := []byte(`{
+	  "limits": [
+	    {"kind": "session", "percent": 0, "resets_at": "2026-08-07T02:39:59Z"},
+	    {"kind": "weekly_all", "percent": 0, "resets_at": "2026-08-09T07:59:59Z"},
+	    {"kind": "weekly_scoped", "percent": 2.5, "resets_at": null, "scope": {"model": {"display_name": "Fable"}}}
+	  ]
+	}`)
+	q, err := parseClaudeUsage(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []agent.QuotaWindow{
+		{Pct: 0, Label: "Current session", ResetAt: "2026-08-07T02:39:59Z"},
+		{Pct: 0, Label: "Current week (all models)", ResetAt: "2026-08-09T07:59:59Z"},
+		{Pct: 3, Label: "Current week (Fable)", ResetAt: ""},
+	}
+	if !reflect.DeepEqual(q.Windows, want) {
+		t.Errorf("windows = %+v, want %+v", q.Windows, want)
+	}
+	if q.Pct != 0 || q.Label != "Current session" {
+		t.Errorf("primary = %+v, want the session window", q)
+	}
+}
+
+func TestParseClaudeUsageScopedWithoutName(t *testing.T) {
+	// A scoped window with no model name carries no label, so it is
+	// skipped rather than rendered as "Current week ()".
+	body := []byte(`{
+	  "limits": [{"kind": "weekly_scoped", "percent": 10, "resets_at": null, "scope": {"model": {"display_name": ""}}}]
+	}`)
+	q, err := parseClaudeUsage(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(q.Windows) != 0 || q.StatusText == "" {
+		t.Errorf("quota = %+v, want no window and a status text", q)
 	}
 }
 

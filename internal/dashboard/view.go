@@ -397,18 +397,20 @@ func (m Model) listLines(w, bodyLines int) []string {
 
 	// Keep the bubbles list sized for navigation (j/k wrap, index bounds).
 	m.agentList.SetSize(w, bodyLines)
+	rowH := m.agentRowHeight()
 	del := agentDelegate{
 		st:          m.st,
 		icons:       m.theme.Icons,
 		contextWarn: m.contextWarn,
 		width:       w,
+		quotaRows:   rowH - agentItemHeight,
 		spinner:     m.spinnerFrame(),
 	}
 	m.agentList.SetDelegate(del)
 
 	entries := m.buildListEntries()
-	m.clampListScroll(bodyLines)
-	starts := entryStartLines(entries)
+	m.clampListScroll(bodyLines, rowH)
+	starts := entryStartLines(entries, rowH)
 	total := starts[len(starts)-1]
 	// Build the full content, then slice the visible window.
 	content := make([]string, 0, total)
@@ -424,14 +426,14 @@ func (m Model) listLines(w, bodyLines int) []string {
 			continue
 		}
 		if e.agent < 0 || e.agent >= len(items) {
-			for i := 0; i < agentItemHeight; i++ {
+			for i := 0; i < rowH; i++ {
 				content = append(content, fit("", w))
 			}
 			continue
 		}
 		item, ok := items[e.agent].(agentItem)
 		if !ok {
-			for i := 0; i < agentItemHeight; i++ {
+			for i := 0; i < rowH; i++ {
 				content = append(content, fit("", w))
 			}
 			continue
@@ -699,62 +701,89 @@ const defaultContextWarn = 85
 
 // usageLine renders the per-agent stats line: context tokens used over the
 // model's context window with a progress-bar usage bar and the used
-// percentage, then the account-quota remaining percentage and next reset
-// time when known. Returns "" when no stat is available, so the agent stays
-// at four lines. When sel is true every piece carries the selection
-// background so the highlight covers the whole line. maxWidth bounds the
-// row so the bar width can be derived from the remaining space.
+// percentage. Account quota is rendered separately by quotaLine on its own
+// row below the context line. Returns "" when no token stat is available,
+// so the agent stays at four lines. When sel is true every piece carries
+// the selection background so the highlight covers the whole line. maxWidth
+// bounds the row so the bar width can be derived from the remaining space.
 func usageLine(st styles, contextWarn int, u agent.Usage, sel bool, maxWidth int) string {
 	dim, green, warn := st.dim, st.green, st.warn
 	if sel {
 		bg := st.selBgColor
 		dim, green, warn = dim.Background(bg), green.Background(bg), warn.Background(bg)
 	}
-	if u.Empty() {
+	if u.TokensUsed == 0 && u.WindowTokens == 0 {
 		return dim.Render("context: ?")
 	}
-	// The trailing quota text is rendered after the bar; its width reserves
-	// room so the bar never pushes the line past maxWidth.
-	suffix := ""
-	if u.QuotaPct > 0 || u.QuotaReset != "" {
-		left := 100 - u.QuotaPct
-		if left < 0 {
-			left = 0
-		}
-		q := strconv.Itoa(left) + "% left"
-		if u.QuotaReset != "" {
-			q += " · reset " + u.QuotaReset
-		}
-		suffix = q
-	}
-	prefix := ""
-	if u.TokensUsed > 0 || u.WindowTokens > 0 {
-		prefix = "context: " + humanTokens(u.TokensUsed)
-		if u.WindowTokens > 0 {
-			prefix += "/" + humanTokens(u.WindowTokens) + " "
-		}
+	prefix := "context: " + humanTokens(u.TokensUsed)
+	if u.WindowTokens > 0 {
+		prefix += "/" + humanTokens(u.WindowTokens) + " "
 	}
 	var b strings.Builder
-	if prefix != "" {
-		b.WriteString(dim.Render(prefix))
-		if u.WindowTokens > 0 {
-			pct := u.ContextPct()
-			sufW := 0
-			if suffix != "" {
-				sufW = ansi.StringWidth(suffix) + 3 // " · " glue
-			}
-			barW := usageBarWidth(maxWidth, ansi.StringWidth(prefix), sufW)
-			b.WriteString(usageBar(pct, barW, contextWarn, green, warn, dim, sel, st))
-			b.WriteString(dim.Render(" " + strconv.Itoa(pct) + "%"))
-		}
-	}
-	if suffix != "" {
-		if prefix != "" {
-			suffix = " · " + suffix
-		}
-		b.WriteString(dim.Render(suffix))
+	b.WriteString(dim.Render(prefix))
+	if u.WindowTokens > 0 {
+		pct := u.ContextPct()
+		barW := usageBarWidth(maxWidth, ansi.StringWidth(prefix), 0)
+		b.WriteString(usageBar(pct, barW, contextWarn, green, warn, dim, sel, st))
+		b.WriteString(dim.Render(" " + strconv.Itoa(pct) + "%"))
 	}
 	return b.String()
+}
+
+// quotaLine renders one account quota window as its own row below the
+// context line: "usage: ██████░░░░░░░░░░░░ 38% · Current session (reset at
+// 19:39 PDT)". The bar shows the used percent, the label names the window
+// (session, weekly all-models, or weekly per-model), and the reset time is
+// local with its zone abbreviation when the provider reported one. The bar
+// turns warn-colored at the same threshold as the context bar.
+func quotaLine(st styles, contextWarn int, w agent.QuotaWindow, sel bool, maxWidth int) string {
+	dim, green, warn := st.dim, st.green, st.warn
+	if sel {
+		bg := st.selBgColor
+		dim, green, warn = dim.Background(bg), green.Background(bg), warn.Background(bg)
+	}
+	pct := w.Pct
+	if pct < 0 {
+		pct = 0
+	}
+	if pct > 100 {
+		pct = 100
+	}
+	// The " NN%" text is budgeted by usageBarWidth's 4-cell allowance, so
+	// only the label and reset tail feed the width math.
+	tail := ""
+	if w.Label != "" {
+		tail += " · " + w.Label
+	}
+	if w.ResetAt != "" {
+		if t, err := time.Parse(time.RFC3339, w.ResetAt); err == nil {
+			tail += " (reset at " + formatReset(t) + ")"
+		}
+	}
+	prefix := "usage: "
+	barW := usageBarWidth(maxWidth, ansi.StringWidth(prefix), ansi.StringWidth(tail))
+	var b strings.Builder
+	b.WriteString(dim.Render(prefix))
+	b.WriteString(usageBar(pct, barW, contextWarn, green, warn, dim, sel, st))
+	b.WriteString(dim.Render(" " + strconv.Itoa(pct) + "%" + tail))
+	return b.String()
+}
+
+// formatReset renders a quota reset time in the local zone: "19:39 PDT",
+// with the date ("Aug 9, 00:59 PDT") when it is not today.
+func formatReset(t time.Time) string {
+	return formatResetAt(t, time.Now())
+}
+
+// formatResetAt is formatReset with an explicit clock so tests are
+// deterministic.
+func formatResetAt(t, now time.Time) string {
+	lt, ln := t.Local(), now.Local()
+	sameDay := lt.Year() == ln.Year() && lt.YearDay() == ln.YearDay()
+	if sameDay {
+		return lt.Format("15:04 MST")
+	}
+	return lt.Format("Jan 2, 15:04 MST")
 }
 
 // usageBarWidth picks the context-bar width for a row of maxWidth cells:

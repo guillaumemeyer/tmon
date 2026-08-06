@@ -40,19 +40,33 @@ type AgentState struct {
 
 // Usage is the per-agent token usage stats shown by the dashboard's stats
 // line. Connectors populate what their agent exposes; zero/empty fields mean
-// "unknown" and are rendered as n/a. Quota fields (QuotaPct, QuotaReset)
-// cover account/plan limits (e.g. a 5-hour window); no current agent exposes
-// those locally, so they stay empty until a source exists.
+// "unknown" and are rendered as n/a. Quota fields (QuotaPct, QuotaReset,
+// QuotaWindows) cover account/plan limits (e.g. a 5-hour window); no current
+// agent exposes those locally, so they stay empty until a source exists.
+// QuotaWindows carries one entry per quota window the provider reports
+// (session, weekly all-models, weekly per-model); QuotaPct/QuotaReset mirror
+// the first window for status --json and older consumers.
 type Usage struct {
-	TokensUsed   int64  `json:"tokensUsed,omitempty"`   // context tokens used in this conversation
-	WindowTokens int64  `json:"windowTokens,omitempty"` // context window size; 0 = unknown
-	QuotaPct     int    `json:"quotaPct,omitempty"`     // account quota used %; 0 = unknown
-	QuotaReset   string `json:"quotaReset,omitempty"`   // next quota reset, e.g. "14:00"; "" = unknown
+	TokensUsed   int64         `json:"tokensUsed,omitempty"`   // context tokens used in this conversation
+	WindowTokens int64         `json:"windowTokens,omitempty"` // context window size; 0 = unknown
+	QuotaPct     int           `json:"quotaPct,omitempty"`     // first quota window used %; 0 = unknown
+	QuotaReset   string        `json:"quotaReset,omitempty"`   // first quota window reset, e.g. "14:00"; "" = unknown
+	QuotaWindows []QuotaWindow `json:"quotaWindows,omitempty"` // one per reported quota window (session, weekly, per-model)
+}
+
+// QuotaWindow is one account quota window reported by a provider: the
+// percent of the window used, a display label naming the window (e.g.
+// "Current session", "Current week (all models)", "Current week (Fable)"),
+// and the next reset as RFC3339 when the provider reports one.
+type QuotaWindow struct {
+	Pct     int    `json:"pct"`
+	Label   string `json:"label"`
+	ResetAt string `json:"resetAt"`
 }
 
 // Empty reports whether no usage stat is known at all.
 func (u Usage) Empty() bool {
-	return u.TokensUsed == 0 && u.WindowTokens == 0 && u.QuotaPct == 0 && u.QuotaReset == ""
+	return u.TokensUsed == 0 && u.WindowTokens == 0 && u.QuotaPct == 0 && u.QuotaReset == "" && len(u.QuotaWindows) == 0
 }
 
 // ContextPct returns the context-window usage percent (0 when the window

@@ -280,11 +280,18 @@ func checkQuota(cfg config.Config) check {
 	parts := make([]string, 0, len(keys))
 	for _, k := range keys {
 		q := uf.Quota[k]
-		if q.Pct > 0 || q.Label != "" {
+		switch {
+		case len(q.Windows) > 0:
+			ws := make([]string, 0, len(q.Windows))
+			for _, w := range q.Windows {
+				ws = append(ws, fmt.Sprintf("%d%% %s", w.Pct, w.Label))
+			}
+			parts = append(parts, k+": "+strings.Join(ws, ", "))
+		case q.Pct > 0 || q.Label != "":
 			parts = append(parts, fmt.Sprintf("%s %d%% (%s)", k, q.Pct, q.Label))
-		} else if q.StatusText != "" {
+		case q.StatusText != "":
 			parts = append(parts, k+": "+q.StatusText)
-		} else {
+		default:
 			parts = append(parts, k+": n/a")
 		}
 	}

@@ -58,21 +58,22 @@ func newAgentList() list.Model {
 	return l
 }
 
-// agentDelegate renders a four-line agent row. The height is fixed because
-// bubbles lists require uniform item heights: name, cwd/age/pause, the tmux
-// pane location, and the usage line (blank when the connector reported
-// none). The delegate is a plain value — styles, icons and the current
-// spinner frame are baked in by View/WithTheme, so there are no stale
-// references between model copies.
+// agentDelegate renders an agent row. The height is uniform because bubbles
+// lists require uniform item heights: the four base lines (name, project,
+// pane, usage) plus quotaRows account-quota lines (0 when no provider
+// reports quota). The delegate is a plain value — styles, icons and the
+// current spinner frame are baked in by View/WithTheme, so there are no
+// stale references between model copies.
 type agentDelegate struct {
 	st          styles
 	icons       theme.Icons
 	contextWarn int
 	width       int
+	quotaRows   int    // uniform number of quota lines per row (0 = none)
 	spinner     string // current spinner frame; "" when unused
 }
 
-func (d agentDelegate) Height() int  { return 4 }
+func (d agentDelegate) Height() int  { return agentItemHeight + d.quotaRows }
 func (d agentDelegate) Spacing() int { return 0 }
 
 // Update is part of list.ItemDelegate; tmon items have no per-key behavior.
@@ -89,13 +90,16 @@ func (d agentDelegate) Render(w io.Writer, lm list.Model, index int, item list.I
 	_, _ = io.WriteString(w, strings.Join(d.renderRow(it.row, lm.Index() == index), "\n"))
 }
 
-// renderRow renders the four lines of one agent row, each exactly d.width
-// cells wide. Every line shares a one-cell left margin so the list sits
-// flush left against the popup edge. Line 1 carries the status icon +
+// renderRow renders the lines of one agent row, each exactly d.width cells
+// wide. Every line shares a one-cell left margin so the list sits flush
+// left against the popup edge. Line 1 carries the status icon +
 // identity-colored name; line 2 the cwd, status age and (for blocked
 // agents) the pause reason; line 3 the tmux Session/Window/Pane location in
-// dim; line 4 the usage line or a blank row when the connector reported no
-// stats. The selected row gets the full-line selection background.
+// dim; line 4 the context usage line or "context: ?" when the connector
+// reported no token stats. Following lines render one account quota window
+// each (session, weekly all-models, weekly per-model), padded to the
+// delegate's uniform quotaRows so the flat list layout stays aligned. The
+// selected row gets the full-line selection background.
 func (d agentDelegate) renderRow(r Row, selected bool) []string {
 	st := d.st
 
@@ -168,8 +172,26 @@ func (d agentDelegate) renderRow(r Row, selected bool) []string {
 	} else {
 		line4 = fit(" "+usage, d.width)
 	}
+	lines := []string{line1, line2, line3, line4}
 
-	return []string{line1, line2, line3, line4}
+	// Quota rows: one line per account quota window the provider reports,
+	// padded to the uniform row height so every block lines up.
+	wins := r.Usage.QuotaWindows
+	for i := 0; i < d.quotaRows; i++ {
+		if i < len(wins) {
+			q := quotaLine(st, d.contextWarn, wins[i], selected, d.width-1)
+			if selected {
+				lines = append(lines, st.selBg.Render(" ")+selFit(st, q, d.width-1))
+			} else {
+				lines = append(lines, fit(" "+q, d.width))
+			}
+		} else if selected {
+			lines = append(lines, st.selBg.Render(" ")+selFit(st, "", d.width-1))
+		} else {
+			lines = append(lines, fit(" ", d.width))
+		}
+	}
+	return lines
 }
 
 // projectLineText is the agent detail project field: "project: CWD" with
