@@ -2,12 +2,12 @@ package dashboard
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/guillaumemeyer/tmon/internal/agent"
@@ -703,8 +703,9 @@ const defaultContextWarn = 85
 // model's context window with a progress-bar usage bar and the used
 // percentage. Account quota is rendered separately by quotaLine on its own
 // row below the context line. Returns "" when no token stat is available,
-// so the agent stays at four lines. When sel is true every piece carries
-// the selection background so the highlight covers the whole line. maxWidth
+// so the agent stays at four lines. When sel is true the text carries the
+// selection background so the highlight covers the whole line; the bar's
+// track stays solid dim so it stays readable on the highlight. maxWidth
 // bounds the row so the bar width can be derived from the remaining space.
 func usageLine(st styles, contextWarn int, u agent.Usage, sel bool, maxWidth int) string {
 	dim, green, warn := st.dim, st.green, st.warn
@@ -724,7 +725,7 @@ func usageLine(st styles, contextWarn int, u agent.Usage, sel bool, maxWidth int
 	if u.WindowTokens > 0 {
 		pct := u.ContextPct()
 		barW := usageBarWidth(maxWidth, ansi.StringWidth(prefix), 0)
-		b.WriteString(usageBar(pct, barW, contextWarn, green, warn, dim, sel, st))
+		b.WriteString(usageBar(pct, barW, contextWarn, green, warn, dim))
 		b.WriteString(dim.Render(" " + strconv.Itoa(pct) + "%"))
 	}
 	return b.String()
@@ -764,7 +765,7 @@ func quotaLine(st styles, contextWarn int, w agent.QuotaWindow, sel bool, maxWid
 	barW := usageBarWidth(maxWidth, ansi.StringWidth(prefix), ansi.StringWidth(tail))
 	var b strings.Builder
 	b.WriteString(dim.Render(prefix))
-	b.WriteString(usageBar(pct, barW, contextWarn, green, warn, dim, sel, st))
+	b.WriteString(usageBar(pct, barW, contextWarn, green, warn, dim))
 	b.WriteString(dim.Render(" " + strconv.Itoa(pct) + "%" + tail))
 	return b.String()
 }
@@ -800,19 +801,32 @@ func usageBarWidth(maxWidth, prefixW, suffixW int) int {
 	return rem
 }
 
-// usageBar renders the context-usage bar with the bubbles progress
-// component: solid fill, dim empty cells, green below the warn threshold
-// (warn at or above it, disabled when contextWarn is 0). On a selected row
-// the bar is wrapped so the selection background spans it.
-func usageBar(pct, width, contextWarn int, green, warn, dim lipgloss.Style, sel bool, st styles) string {
-	p := progress.New(progress.WithWidth(width), progress.WithSolidFill(usageBarColor(pct, contextWarn, green, warn)))
-	p.ShowPercentage = false
-	p.EmptyColor = styleHex(dim)
-	bar := p.ViewAs(float64(pct) / 100)
-	if sel {
-		bar = st.selBg.Render(bar)
+// usageBar renders the context-usage bar: solid fill cells (█) and empty
+// track cells (░). The empty cells carry the dim color as their own
+// background as well as their foreground, so the track reads as a solid
+// dim block — distinct from the panel and the selection background — and
+// the bar stays readable on a selected row. The fill cells keep the
+// background of the passed style (the selection background on a selected
+// row) so the highlight stays continuous. The fill is green below the warn
+// threshold, warn at or above it (warn disabled when contextWarn is 0).
+func usageBar(pct, width, contextWarn int, green, warn, dim lipgloss.Style) string {
+	fill := green
+	if contextWarn > 0 && pct >= contextWarn {
+		fill = warn
 	}
-	return bar
+	fw := width
+	if pct < 100 {
+		fw = int(math.Round(float64(width) * float64(pct) / 100))
+	}
+	if fw < 0 {
+		fw = 0
+	}
+	if fw > width {
+		fw = width
+	}
+	filled := fill.Render(strings.Repeat("█", fw))
+	track := dim.Background(lipgloss.Color(styleHex(dim))).Render(strings.Repeat("░", width-fw))
+	return filled + track
 }
 
 // usageBarColor returns the fill color for a context percentage: the warn

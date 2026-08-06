@@ -152,11 +152,15 @@ func (d agentDelegate) renderRow(r Row, selected bool) []string {
 	}
 
 	// Line 3: the tmux location, dimmed — "location: main / shell / 0".
-	line3 := " " + st.dim.Render("location: "+tmuxPath(r))
+	// The selected row styles text and padding in one pass, mirroring the
+	// project line, so an inner SGR reset cannot drop the selection
+	// background from the trailing padding.
+	loc := "location: " + tmuxPath(r)
+	var line3 string
 	if selected {
-		line3 = st.selDim.Render(fit(line3, d.width))
+		line3 = st.selDim.Render(fit(" "+loc, d.width))
 	} else {
-		line3 = fit(line3, d.width)
+		line3 = fit(" "+st.dim.Render(loc), d.width)
 	}
 
 	// Line 4: usage stats (or "context: ?" when unknown). The bar width is

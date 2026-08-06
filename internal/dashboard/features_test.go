@@ -835,6 +835,12 @@ func TestSelectedAgentHighlight(t *testing.T) {
 	if !strings.Contains(raw, m.st.selDim.Render(fit(" project: code/tmon", listW))) {
 		t.Fatalf("selected project row missing the selection background:\n%q", raw)
 	}
+	// The location row gets it across the full width as well. It used to be
+	// pre-rendered with a dim style before the selection wrap, and the inner
+	// SGR reset dropped the highlight from the trailing padding.
+	if !strings.Contains(raw, m.st.selDim.Render(fit(" location: main / shell / 0", listW))) {
+		t.Fatalf("selected location row missing the selection background:\n%q", raw)
+	}
 
 	// Unselected rows use status icon + agent identity color (bold) and no marker.
 	claudeLine := " " +
@@ -1295,12 +1301,85 @@ func TestUsageBarColor(t *testing.T) {
 
 	// Fill math: 26% of a 10-cell bar fills 3 cells (rounded); over 100%
 	// clamps to a full bar.
-	if got := ansi.Strip(usageBar(26, 10, m.contextWarn, m.st.green, m.st.warn, m.st.dim, false, m.st)); got != "███░░░░░░░" {
+	if got := ansi.Strip(usageBar(26, 10, m.contextWarn, m.st.green, m.st.warn, m.st.dim)); got != "███░░░░░░░" {
 		t.Fatalf("26%% 10-cell bar = %q, want 3 filled cells", got)
 	}
-	if got := ansi.Strip(usageBar(250, 10, m.contextWarn, m.st.green, m.st.warn, m.st.dim, false, m.st)); got != "██████████" {
+	if got := ansi.Strip(usageBar(250, 10, m.contextWarn, m.st.green, m.st.warn, m.st.dim)); got != "██████████" {
 		t.Fatalf("250%% 10-cell bar = %q, want full bar", got)
 	}
+}
+
+// TestUsageBarTrackBackground pins the progress-bar track to a solid dim
+// background. The track used to render as dim glyphs on the selection
+// background, which made the bar unreadable on the selected agent row; the
+// empty cells must now carry the dim color as their own background, never
+// the selection color.
+func TestUsageBarTrackBackground(t *testing.T) {
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	t.Cleanup(func() { lipgloss.SetColorProfile(termenv.Ascii) })
+
+	m := Model{st: defaultStyles, theme: theme.Default, contextWarn: defaultContextWarn}
+	dim := styleHex(m.st.dim)
+	selBg := string(m.st.selBgColor)
+	if dim == "" || dim == selBg {
+		t.Fatalf("need distinct dim and selection colors, dim=%q selBg=%q", dim, selBg)
+	}
+
+	// Reference SGRs: how lipgloss paints a solid dim background and the
+	// selection background under the ANSI256 test profile.
+	dimSGR := sgrOf(lipgloss.NewStyle().Background(lipgloss.Color(dim)).Render("░"))
+	selSGR := sgrOf(lipgloss.NewStyle().Background(lipgloss.Color(selBg)).Render("░"))
+	if dimSGR == "" || dimSGR == selSGR {
+		t.Fatalf("need distinct painted track colors, dim=%q sel=%q", dimSGR, selSGR)
+	}
+
+	sel := styles{
+		dim:   m.st.dim.Background(m.st.selBgColor),
+		green: m.st.green.Background(m.st.selBgColor),
+		warn:  m.st.warn.Background(m.st.selBgColor),
+	}
+	for name, st := range map[string]styles{"plain": defaultStyles, "selected": sel} {
+		bar := usageBar(40, 10, m.contextWarn, st.green, st.warn, st.dim)
+		got := trackSGR(bar)
+		if got == "" {
+			t.Fatalf("%s bar = %q, want empty track cells", name, bar)
+		}
+		if !strings.Contains(got, strings.TrimPrefix(dimSGR, "\x1b[")) {
+			t.Fatalf("%s track SGR = %q, want the dim background (%q)", name, got, dimSGR)
+		}
+		if strings.Contains(got, strings.TrimPrefix(selSGR, "\x1b[")) {
+			t.Fatalf("%s track SGR = %q, must not use the selection background (%q)", name, got, selSGR)
+		}
+	}
+}
+
+// sgrOf returns the leading SGR sequence of a rendered string ("\x1b[...m"),
+// or "" when the string carries no SGR prefix.
+func sgrOf(s string) string {
+	if !strings.HasPrefix(s, "\x1b[") {
+		return ""
+	}
+	if i := strings.IndexByte(s, 'm'); i >= 0 {
+		return s[:i+1]
+	}
+	return ""
+}
+
+// trackSGR returns the SGR sequence styling the first empty (░) cell of a
+// rendered usage bar, or "" when the bar has no empty cells.
+func trackSGR(bar string) string {
+	i := strings.Index(bar, "░")
+	if i < 0 {
+		return ""
+	}
+	j := strings.LastIndex(bar[:i], "\x1b[")
+	if j < 0 {
+		return ""
+	}
+	if k := strings.IndexByte(bar[j:], 'm'); k >= 0 {
+		return bar[j : j+k+1]
+	}
+	return ""
 }
 
 func TestHeaderOmitsFleetCounts(t *testing.T) {
