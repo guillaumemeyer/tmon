@@ -28,7 +28,7 @@ dashboard — or just **click the status bar indicator**.
 - 🚀 **Teleport** — `Enter` (or a click) in the dashboard drops you straight into the agent's pane. No more `tmux list-panes` archaeology.
 - 📊 **Three dashboard views** — flat list, grouped by project, or grouped by status. Press `v` to switch; the choice sticks.
 - 🔍 **Fuzzy search** — Telescope-style matching over names, directories, branches, PR numbers, and even pane content.
-- 📈 **Context gauges** — a live progress bar shows each agent's context window filling up, with a ⚠️ before it goes supernova.
+- 📊 **Context gauges** — a live progress bar shows each agent's context window filling up, with a ⚠️ before it goes supernova.
 - ⏳ **Quota monitoring** — a background worker probes your Claude, Grok, and Codex account quota (plan tier, % used, next reset) once per 15 minutes and shows it in the dashboard's stats line. Auto-spawns from the first status poll; no setup.
 - 🎨 **Live themes** — preview Catppuccin, Nord, Dracula and friends right in the popup, apply with `Enter`.
 - 🕵️ **Hide the noise** — glob patterns drop agents you don't care about from the status bar and dashboard. The agent keeps running; you just stop seeing it.
@@ -94,9 +94,12 @@ the dashboard shows under the agent's name, **Title** the session name
 ("Title (Agent)"), and **Tokens** the stats line (tokens + context-window %
 when known). **Quota** is the account-level rate-limit windows — % used,
 next reset, plan tier — probed in the background by the usage worker for
-Claude, Grok, and Codex and shown in the dashboard popup as one progress-bar row
-per window below the agent's context line (`usage: ████ 38% · Current
-session (reset at 19:39 PDT)`).
+Claude, Grok, and Codex and shown in the dashboard popup at the top of the preview
+pane: a `📊 Usage:` header with one progress-bar row per window (`████ 38% ·
+Current session (reset at 19:39 PDT)`), a divider, then a `Context:` label
+with the context-window bar on its own line below it. All bars share a
+four-space left margin so they line up. When the agent reports no quota
+windows, the header reads `📊 Usage: ?`.
 
 **Hermes** lists only live **CLI/TUI** sessions (not the messaging gateway).
 The dashboard name is `Title (Hermes - <profile>)` when a profile is known
@@ -143,8 +146,10 @@ window (no credentials, rate limited, …). Claude's windows match its own
 windows such as "Current week (Fable)". Each status poll reads it cheaply
 and attaches the windows to every live record of that agent (quota is
 account-level, so each session of an agent shows the same windows); the
-dashboard renders one `usage: ████ 38% · Current session (reset at 19:39
-PDT)` row per window below the context line. The ledger fields (`today`,
+dashboard renders one `████ 38% · Current session (reset at 19:39
+PDT)` row per window under the `📊 Usage:` header at the top of the preview
+pane (or `📊 Usage: ?` when the agent reports no quota windows), with the
+context-window bar on its own `Context:` line below a divider. The ledger fields (`today`,
 `recentDays`, `modelUsage`) are reserved for the next phase.
 
 The probes are read-only and never prompt: they read credentials from the

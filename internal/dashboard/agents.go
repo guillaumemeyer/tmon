@@ -59,27 +59,25 @@ func newAgentList() list.Model {
 }
 
 // agentDelegate renders an agent row. The height is uniform because bubbles
-// lists require uniform item heights: the four base lines (name, project,
-// pane, usage) plus quotaRows account-quota lines (0 when no provider
-// reports quota). The delegate is a plain value — styles, icons and the
-// current spinner frame are baked in by View/WithTheme, so there are no
-// stale references between model copies.
+// lists require uniform item heights: the three lines are name, project and
+// pane. The context and account-quota usage lines moved to the preview pane,
+// so the delegate no longer renders them. The delegate is a plain value —
+// styles, icons and the current spinner frame are baked in by View/WithTheme,
+// so there are no stale references between model copies.
 type agentDelegate struct {
-	st          styles
-	icons       theme.Icons
-	contextWarn int
-	width       int
-	quotaRows   int    // uniform number of quota lines per row (0 = none)
-	spinner     string // current spinner frame; "" when unused
+	st      styles
+	icons   theme.Icons
+	width   int
+	spinner string // current spinner frame; "" when unused
 }
 
-func (d agentDelegate) Height() int  { return agentItemHeight + d.quotaRows }
+func (d agentDelegate) Height() int  { return agentItemHeight }
 func (d agentDelegate) Spacing() int { return 0 }
 
 // Update is part of list.ItemDelegate; tmon items have no per-key behavior.
 func (d agentDelegate) Update(msg tea.Msg, m *list.Model) tea.Cmd { return nil }
 
-// Render writes the four lines of one agent row to w. Like the default
+// Render writes the three lines of one agent row to w. Like the default
 // delegate, it must not end with a trailing newline: bubbles adds the
 // inter-item separator itself, so a trailing newline would double up.
 func (d agentDelegate) Render(w io.Writer, lm list.Model, index int, item list.Item) {
@@ -93,13 +91,10 @@ func (d agentDelegate) Render(w io.Writer, lm list.Model, index int, item list.I
 // renderRow renders the lines of one agent row, each exactly d.width cells
 // wide. Every line shares a one-cell left margin so the list sits flush
 // left against the popup edge. Line 1 carries the status icon +
-// identity-colored name; line 2 the cwd, status age and (for blocked
-// agents) the pause reason; line 3 the tmux Session/Window/Pane location in
-// dim; line 4 the context usage line or "context: ?" when the connector
-// reported no token stats. Following lines render one account quota window
-// each (session, weekly all-models, weekly per-model), padded to the
-// delegate's uniform quotaRows so the flat list layout stays aligned. The
-// selected row gets the full-line selection background.
+// identity-colored name; line 2 the cwd and (for blocked agents) the pause
+// reason; line 3 the tmux Session/Window/Pane location in dim. The selected
+// row gets the full-line selection background. The context and quota usage
+// lines render at the top of the preview pane, not here.
 func (d agentDelegate) renderRow(r Row, selected bool) []string {
 	st := d.st
 
@@ -163,39 +158,7 @@ func (d agentDelegate) renderRow(r Row, selected bool) []string {
 		line3 = fit(" "+st.dim.Render(loc), d.width)
 	}
 
-	// Line 4: usage stats (or "context: ?" when unknown). The bar width is
-	// derived from the row width, and the line is padded to the full width
-	// so the selection highlight and alignment stay uniform. The left
-	// margin is budgeted out of the row width so the bar still fits; on
-	// the selected row the margin sits on the selection background too,
-	// keeping the highlight continuous.
-	usage := usageLine(st, d.contextWarn, r.Usage, selected, d.width-1)
-	var line4 string
-	if selected {
-		line4 = st.selBg.Render(" ") + selFit(st, usage, d.width-1)
-	} else {
-		line4 = fit(" "+usage, d.width)
-	}
-	lines := []string{line1, line2, line3, line4}
-
-	// Quota rows: one line per account quota window the provider reports,
-	// padded to the uniform row height so every block lines up.
-	wins := r.Usage.QuotaWindows
-	for i := 0; i < d.quotaRows; i++ {
-		if i < len(wins) {
-			q := quotaLine(st, d.contextWarn, wins[i], selected, d.width-1)
-			if selected {
-				lines = append(lines, st.selBg.Render(" ")+selFit(st, q, d.width-1))
-			} else {
-				lines = append(lines, fit(" "+q, d.width))
-			}
-		} else if selected {
-			lines = append(lines, st.selBg.Render(" ")+selFit(st, "", d.width-1))
-		} else {
-			lines = append(lines, fit(" ", d.width))
-		}
-	}
-	return lines
+	return []string{line1, line2, line3}
 }
 
 // projectLineText is the agent detail project field: "project: CWD" with

@@ -66,7 +66,7 @@ func nextView(v ViewMode) ViewMode {
 }
 
 // listEntry is one unit in the agent list column: a section header (one
-// line), a blank spacer between groups (one line), or an agent row (four
+// line), a blank spacer between groups (one line), or an agent row (three
 // lines).
 type listEntry struct {
 	section string // non-empty for a section header
@@ -74,26 +74,16 @@ type listEntry struct {
 	agent   int    // index into filtered / agentList items for agent rows
 }
 
-// agentItemHeight is the height of one agent row in the list column without
-// quota rows: name, project, pane, usage.
-const agentItemHeight = 4
+// agentItemHeight is the height of one agent row in the list column:
+// name, project, pane. The usage lines live in the preview pane.
+const agentItemHeight = 3
 
 // agentRowHeight returns the uniform height of one agent row in the list
-// column: the four base lines plus the widest quota-window list across the
-// fleet, so every block stays the same height for the flat layout. Agents
-// without quota data stay at four lines.
+// column. Every row is exactly agentItemHeight lines now that the usage
+// and quota lines render in the preview pane, so the flat layout stays
+// aligned without per-agent padding.
 func (m Model) agentRowHeight() int {
-	h := agentItemHeight
-	for _, it := range m.agentList.Items() {
-		ai, ok := it.(agentItem)
-		if !ok {
-			continue
-		}
-		if n := len(ai.row.Usage.QuotaWindows); n > h-agentItemHeight {
-			h = agentItemHeight + n
-		}
-	}
-	return h
+	return agentItemHeight
 }
 
 // entryHeight is the number of body lines one list entry occupies. rowH is

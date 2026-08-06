@@ -601,12 +601,13 @@ func TestPreviewShortContentBottomAligned(t *testing.T) {
 		}
 		prevBody = append(prevBody, strings.TrimSpace(cell))
 	}
-	if len(prevBody) < 5 {
+	if len(prevBody) < 7 {
 		t.Fatalf("too few preview body rows: %v\n%s", prevBody, v)
 	}
-	// First body row is the agent header; the last two are separator + tips.
-	// The viewport sits between them and is bottom-aligned.
-	body := prevBody[1:]
+	// The first five body rows are the stats block (usage header, divider,
+	// session line, separator) plus the agent header; the last two are
+	// separator + tips. The viewport sits between them and is bottom-aligned.
+	body := prevBody[5:]
 	if len(body) < 5 {
 		t.Fatalf("viewport body too short: %v", body)
 	}
@@ -895,7 +896,13 @@ func TestGitTagRendersOnProjectLine(t *testing.T) {
 	lines := strings.Split(v, "\n")
 	found := false
 	for i, ln := range lines {
-		if !strings.Contains(ln, "Popup preview scroll (Grok Build)") {
+		parts := strings.SplitN(ln, "│", 3)
+		if len(parts) < 3 {
+			continue // top/bottom border
+		}
+		// Match the list column only: the preview header repeats the
+		// selected agent's name two rows lower.
+		if !strings.Contains(parts[1], "Popup preview scroll (Grok Build)") {
 			continue
 		}
 		if !strings.Contains(lines[i+1], "project: code/tmon") {
@@ -918,7 +925,11 @@ func TestGitTagRendersOnProjectLine(t *testing.T) {
 	m2.width, m2.height = 120, 24
 	v2Lines := strings.Split(ansi.Strip(m2.View()), "\n")
 	for i, ln := range v2Lines {
-		if !strings.Contains(ln, "Popup preview scroll (Grok Build)") {
+		parts := strings.SplitN(ln, "│", 3)
+		if len(parts) < 3 {
+			continue // top/bottom border
+		}
+		if !strings.Contains(parts[1], "Popup preview scroll (Grok Build)") {
 			continue
 		}
 		if !strings.Contains(v2Lines[i+1], "project: code/tmon") {
@@ -1054,7 +1065,7 @@ func TestFooterShowsActiveFilter(t *testing.T) {
 	}
 }
 
-func TestAgentRowsThreeLinesWithUsage(t *testing.T) {
+func TestContextLineMovesToPreview(t *testing.T) {
 	old := capturePane
 	capturePane = func(p string) string { return "x" }
 	t.Cleanup(func() { capturePane = old })
@@ -1063,15 +1074,15 @@ func TestAgentRowsThreeLinesWithUsage(t *testing.T) {
 	rows[0].Usage = agent.Usage{TokensUsed: 52367, WindowTokens: 200000} // Grok
 	f := &fakeLoader{data: Data{Rows: rows}}
 	m := New(f.load, true)
-	m = applyMsg(t, m, initMsg{})
-	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyDown}) // select Claude so Grok renders unstyled
+	m = applyMsg(t, m, initMsg{}) // Grok selected first
 	// Wide enough that status icon + session title fit in the list column.
 	m.width, m.height = 120, 24
 
 	v := ansi.Strip(m.View())
 	lines := strings.Split(v, "\n")
 
-	var stats string
+	// Every agent spans exactly three rows: name, project, pane. The
+	// context line is gone from the list column.
 	for i, ln := range lines {
 		parts := strings.SplitN(ln, "│", 3)
 		if len(parts) < 3 {
@@ -1080,39 +1091,54 @@ func TestAgentRowsThreeLinesWithUsage(t *testing.T) {
 		list := parts[1]
 		switch {
 		case strings.Contains(list, "Popup preview scroll (Grok Build)"):
-			// Every agent spans four uniform rows: name, project, pane, usage.
 			if !strings.Contains(lines[i+1], "project: code/tmon") {
 				t.Fatalf("Grok project line = %q, want project: code/tmon", lines[i+1])
 			}
 			if !strings.Contains(lines[i+2], "location: main / shell / 0") {
 				t.Fatalf("Grok pane line = %q, want location: main / shell / 0", lines[i+2])
 			}
-			stats = lines[i+3]
-		case strings.Contains(list, "Claude Code"):
-			// Unknown usage shows "context: ?" (not a filled token bar).
-			if !strings.Contains(lines[i+3], "context: ?") {
-				t.Fatalf("Claude without usage should show context: ?, got %q", lines[i+3])
-			}
-			if strings.Contains(lines[i+3], "context: 1") || strings.Contains(lines[i+3], "%") {
-				t.Fatalf("Claude has no usage but rendered token stats: %q", lines[i+3])
-			}
+		}
+		if strings.Contains(list, "context:") || strings.Contains(list, "usage:") ||
+			strings.Contains(list, "📊 Usage") || strings.Contains(list, "Context:") {
+			t.Fatalf("list column still carries a usage line: %q", ln)
 		}
 	}
-	// The list column is 59 cells here, so the progress bar takes the full
-	// 30-cell cap; 26% of 30 fills 8 cells (rounded).
-	if !strings.Contains(stats, "context: 52.4k/200k ████████░░░░░░░░░░░░░░░░░░░░░░ 26%") {
-		t.Fatalf("stats line = %q, want the 30-cell progress bar", stats)
+
+	// The usage section stays on top, marked "?" when the agent reports no
+	// quota windows, and the context bar sits on its own line under the
+	// "Context:" label. The preview panel is 59 cells here, so the
+	// progress bar takes the full 30-cell cap; 26% of 30 fills 8 cells
+	// (rounded).
+	if !strings.Contains(v, "📊 Usage: ?") {
+		t.Fatalf("preview missing the no-quota usage header:\n%s", v)
+	}
+	if !strings.Contains(v, "Context:") {
+		t.Fatalf("preview missing the Context: label:\n%s", v)
+	}
+	if !strings.Contains(v, "52.4k/200k ████████░░░░░░░░░░░░░░░░░░░░░░ 26%") {
+		t.Fatalf("preview missing the Grok context bar:\n%s", v)
+	}
+
+	// An agent without token stats still shows "Context: ?" in the
+	// preview.
+	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyDown}) // select Claude
+	v = ansi.Strip(m.View())
+	if !strings.Contains(v, "📊 Usage: ?") {
+		t.Fatalf("preview should show 📊 Usage: ? for Claude:\n%s", v)
+	}
+	if !strings.Contains(v, "Context: ?") {
+		t.Fatalf("preview should show Context: ? for Claude:\n%s", v)
 	}
 }
 
-func TestAgentRowsShowQuotaWindows(t *testing.T) {
+func TestQuotaWindowsInPreview(t *testing.T) {
 	old := capturePane
 	capturePane = func(p string) string { return "x" }
 	t.Cleanup(func() { capturePane = old })
 
 	// Claude carries three quota windows (session, weekly all-models,
-	// weekly per-model); the other agents have none, so every block grows
-	// to the same seven lines and the quota rows sit below the context line.
+	// weekly per-model); the other agents have none. The usage lines
+	// render at the top of the preview pane for the selected agent.
 	rows := testRows()
 	rows[1].Usage = agent.Usage{QuotaWindows: []agent.QuotaWindow{
 		{Pct: 0, Label: "Current session"},
@@ -1128,36 +1154,40 @@ func TestAgentRowsShowQuotaWindows(t *testing.T) {
 	v := ansi.Strip(m.View())
 	lines := strings.Split(v, "\n")
 
-	claudeLine := -1
-	for i, ln := range lines {
+	// The list column stays three lines per agent: no usage or quota rows.
+	for _, ln := range lines {
 		parts := strings.SplitN(ln, "│", 3)
 		if len(parts) < 3 {
 			continue // top/bottom border
 		}
-		if strings.Contains(parts[1], "B Claude Code") {
-			claudeLine = i
-			break
+		if strings.Contains(parts[1], "usage:") || strings.Contains(parts[1], "context:") ||
+			strings.Contains(parts[1], "📊 Usage") || strings.Contains(parts[1], "Context:") {
+			t.Fatalf("list column still carries a usage line: %q", ln)
 		}
 	}
-	if claudeLine < 0 {
-		t.Fatal("Claude row not found in the list")
-	}
-	// Block layout: name, project, pane, context, then quota rows.
-	if !strings.Contains(lines[claudeLine+3], "context: ?") {
-		t.Errorf("context line = %q, want context: ? above the quota rows", lines[claudeLine+3])
-	}
-	usageRows := []string{lines[claudeLine+4], lines[claudeLine+5], lines[claudeLine+6]}
-	for _, want := range []string{"usage:", "Current session", "Current week (all models)", "Current week (Fable)"} {
-		found := false
-		for _, u := range usageRows {
-			if strings.Contains(u, want) {
-				found = true
-				break
-			}
+
+	// The preview pane leads with the "📊 Usage:" header and one bar per
+	// quota window, above the "Context:" line.
+	for _, want := range []string{"📊 Usage", "Current session", "Current week (all models)", "Current week (Fable)", "Context:"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("preview missing %q:\n%s", want, v)
 		}
-		if !found {
-			t.Errorf("quota rows %q missing %q", usageRows, want)
+	}
+	// With quota data present the header reads "📊 Usage", not "📊 Usage: ?".
+	if strings.Contains(v, "📊 Usage: ?") {
+		t.Fatalf("preview should not show 📊 Usage: ? when quota data exists:\n%s", v)
+	}
+	usageIdx, sessIdx := -1, -1
+	for i, ln := range lines {
+		if usageIdx < 0 && strings.Contains(ln, "📊 Usage") {
+			usageIdx = i
 		}
+		if sessIdx < 0 && strings.Contains(ln, "Context:") {
+			sessIdx = i
+		}
+	}
+	if usageIdx < 0 || sessIdx < 0 || usageIdx > sessIdx {
+		t.Fatalf("usage rows should sit above the context line in the preview: usage@%d context@%d", usageIdx, sessIdx)
 	}
 }
 
@@ -1202,7 +1232,7 @@ func TestWorkingAgentShowsSpinner(t *testing.T) {
 	}
 }
 
-func TestUsageLineFormat(t *testing.T) {
+func TestSessionDetailFormat(t *testing.T) {
 	m := Model{st: defaultStyles, theme: theme.Default, contextWarn: defaultContextWarn}
 	// A wide row caps the progress bar at its 30-cell maximum, making the
 	// expected fill deterministic: round(width * pct / 100).
@@ -1211,23 +1241,23 @@ func TestUsageLineFormat(t *testing.T) {
 		u    agent.Usage
 		want string
 	}{
-		{"empty", agent.Usage{}, "context: ?"},
-		{"quota only", agent.Usage{QuotaPct: 38, QuotaReset: "14:00"}, "context: ?"},
-		{"quota 0% used", agent.Usage{QuotaPct: 0, QuotaReset: "14:00"}, "context: ?"},
-		{"tokens only", agent.Usage{TokensUsed: 13025}, "context: 13k"},
-		{"tokens and window", agent.Usage{TokensUsed: 52367, WindowTokens: 200000}, "context: 52.4k/200k ████████░░░░░░░░░░░░░░░░░░░░░░ 26%"},
-		{"million window", agent.Usage{TokensUsed: 123456, WindowTokens: 1000000}, "context: 123k/1M ████░░░░░░░░░░░░░░░░░░░░░░░░░░ 12%"},
-		{"tokens with quota", agent.Usage{TokensUsed: 52367, WindowTokens: 200000, QuotaPct: 38, QuotaReset: "14:00"}, "context: 52.4k/200k ████████░░░░░░░░░░░░░░░░░░░░░░ 26%"},
-		{"warn threshold", agent.Usage{TokensUsed: 180000, WindowTokens: 200000}, "context: 180k/200k ███████████████████████████░░░ 90%"},
+		{"empty", agent.Usage{}, "?"},
+		{"quota only", agent.Usage{QuotaPct: 38, QuotaReset: "14:00"}, "?"},
+		{"quota 0% used", agent.Usage{QuotaPct: 0, QuotaReset: "14:00"}, "?"},
+		{"tokens only", agent.Usage{TokensUsed: 13025}, "13k"},
+		{"tokens and window", agent.Usage{TokensUsed: 52367, WindowTokens: 200000}, "52.4k/200k ████████░░░░░░░░░░░░░░░░░░░░░░ 26%"},
+		{"million window", agent.Usage{TokensUsed: 123456, WindowTokens: 1000000}, "123k/1M ████░░░░░░░░░░░░░░░░░░░░░░░░░░ 12%"},
+		{"tokens with quota", agent.Usage{TokensUsed: 52367, WindowTokens: 200000, QuotaPct: 38, QuotaReset: "14:00"}, "52.4k/200k ████████░░░░░░░░░░░░░░░░░░░░░░ 26%"},
+		{"warn threshold", agent.Usage{TokensUsed: 180000, WindowTokens: 200000}, "180k/200k ███████████████████████████░░░ 90%"},
 	}
 	for _, tc := range cases {
-		if got := ansi.Strip(usageLine(m.st, m.contextWarn, tc.u, false, 200)); got != tc.want {
-			t.Errorf("%s: usageLine(%+v) = %q, want %q", tc.name, tc.u, got, tc.want)
+		if got := ansi.Strip(sessionDetail(m.st, m.contextWarn, tc.u, 200)); got != tc.want {
+			t.Errorf("%s: sessionDetail(%+v) = %q, want %q", tc.name, tc.u, got, tc.want)
 		}
 	}
 }
 
-func TestQuotaLineFormat(t *testing.T) {
+func TestQuotaDetailFormat(t *testing.T) {
 	m := Model{st: defaultStyles, theme: theme.Default, contextWarn: defaultContextWarn}
 	// A wide row caps the bar at its 30-cell maximum; the fill is
 	// deterministic: round(width * pct / 100). The reset text is built from
@@ -1241,19 +1271,19 @@ func TestQuotaLineFormat(t *testing.T) {
 		want string
 	}{
 		{"session 0%", agent.QuotaWindow{Pct: 0, Label: "Current session", ResetAt: sameDay.Format(time.RFC3339)},
-			"usage: ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 0% · Current session (reset at 19:40 " + sameDay.Format("MST") + ")"},
+			"░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 0% · Current session (reset at 19:40 " + sameDay.Format("MST") + ")"},
 		{"weekly 40%", agent.QuotaWindow{Pct: 40, Label: "Current week (all models)", ResetAt: otherDay.Format(time.RFC3339)},
-			"usage: ████████████░░░░░░░░░░░░░░░░░░ 40% · Current week (all models) (reset at Aug 9, 00:59 " + otherDay.Format("MST") + ")"},
+			"████████████░░░░░░░░░░░░░░░░░░ 40% · Current week (all models) (reset at Aug 9, 00:59 " + otherDay.Format("MST") + ")"},
 		{"scoped no reset", agent.QuotaWindow{Pct: 38, Label: "Current week (Fable)"},
-			"usage: ███████████░░░░░░░░░░░░░░░░░░░ 38% · Current week (Fable)"},
+			"███████████░░░░░░░░░░░░░░░░░░░ 38% · Current week (Fable)"},
 		{"over 100 clamps", agent.QuotaWindow{Pct: 120, Label: "Current session"},
-			"usage: ██████████████████████████████ 100% · Current session"},
+			"██████████████████████████████ 100% · Current session"},
 		{"negative clamps", agent.QuotaWindow{Pct: -5, Label: "Current session"},
-			"usage: ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 0% · Current session"},
+			"░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 0% · Current session"},
 	}
 	for _, tc := range cases {
-		if got := ansi.Strip(quotaLine(m.st, m.contextWarn, tc.w, false, 200)); got != tc.want {
-			t.Errorf("%s: quotaLine(%+v) = %q, want %q", tc.name, tc.w, got, tc.want)
+		if got := ansi.Strip(quotaDetail(m.st, m.contextWarn, tc.w, 200)); got != tc.want {
+			t.Errorf("%s: quotaDetail(%+v) = %q, want %q", tc.name, tc.w, got, tc.want)
 		}
 	}
 }
