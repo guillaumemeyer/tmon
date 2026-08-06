@@ -314,9 +314,10 @@ func TestAttachQuotaZeroUsed(t *testing.T) {
 	}
 }
 
-func TestAttachQuotaNewestRecordOnly(t *testing.T) {
+func TestAttachQuotaEveryRecord(t *testing.T) {
 	// Quota is account-level: multiple sessions of one agent share a window,
-	// so only the newest live record carries it.
+	// so every live record of the agent carries it — the dashboard shows
+	// the account usage on each row, not just the newest session.
 	stubDetect(t, nil)
 	cfg := testConfig(t)
 	if err := worker.SaveUsageFile(cfg.StateDir, worker.UsageFile{
@@ -339,11 +340,14 @@ func TestAttachQuotaNewestRecordOnly(t *testing.T) {
 	for _, a := range res.Agents {
 		byPID[a.PID] = a
 	}
-	if u := byPID[2].Usage; u == nil || u.QuotaPct != 38 {
-		t.Errorf("newest Claude usage = %+v, want quota 38%%", u)
-	}
-	if u := byPID[1].Usage; u != nil {
-		t.Errorf("older Claude usage = %+v, want nil", u)
+	for _, pid := range []int{1, 2} {
+		u := byPID[pid].Usage
+		if u == nil || u.QuotaPct != 38 {
+			t.Errorf("Claude PID %d usage = %+v, want quota 38%% on every session", pid, u)
+		}
+		if len(u.QuotaWindows) != 1 || u.QuotaWindows[0].Pct != 38 {
+			t.Errorf("Claude PID %d windows = %+v, want the synthesized single window", pid, u.QuotaWindows)
+		}
 	}
 }
 

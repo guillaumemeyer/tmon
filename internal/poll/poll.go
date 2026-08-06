@@ -56,7 +56,8 @@ func run(cfg config.Config, records []connector.Record) (Result, error) {
 	tracker.BeginPoll()
 
 	// Account quota is written by the usage worker (<state>/usage.json).
-	// Attach it to the newest live record per agent label so the status
+	// Quota is account-level, so every live record of a matching agent
+	// carries the same windows; attach it to each of them so the status
 	// bar and dashboard both show quota. With the worker disabled, the
 	// poll probes quota itself, TTL-gated — the explicit opt-out that
 	// authorizes network use in the poll.
@@ -153,12 +154,13 @@ func run(cfg config.Config, records []connector.Record) (Result, error) {
 	return res, nil
 }
 
-// attachQuota enriches the newest live record per agent label with the
-// account quota from usage.json (or, with the worker disabled, a TTL-gated
-// lazy probe). Quota is account-level: multiple sessions of one agent share
-// one window, so only the newest record carries it. The dashboard renders
-// the fields from the persisted snapshot; nothing here ever blocks on the
-// network except the explicit worker-off fallback.
+// attachQuota enriches every live record whose agent label has account
+// quota in usage.json (or, with the worker disabled, a TTL-gated lazy
+// probe). Quota is account-level: multiple sessions of one agent share one
+// window, so every session carries the same windows — the dashboard shows
+// them on each row. The dashboard renders the fields from the persisted
+// snapshot; nothing here ever blocks on the network except the explicit
+// worker-off fallback.
 func attachQuota(cfg config.Config, records []connector.Record) {
 	var quota map[string]worker.Quota
 	if worker.Disabled(cfg.StateDir, cfg) {
@@ -169,18 +171,11 @@ func attachQuota(cfg config.Config, records []connector.Record) {
 	if len(quota) == 0 {
 		return
 	}
-	newest := make(map[string]int) // label → index into records
 	for i := range records {
-		key := strings.ToLower(records[i].Label)
-		if _, ok := quota[key]; !ok {
+		q, ok := quota[strings.ToLower(records[i].Label)]
+		if !ok {
 			continue
 		}
-		if j, seen := newest[key]; !seen || records[i].At.After(records[j].At) {
-			newest[key] = i
-		}
-	}
-	for key, i := range newest {
-		q := quota[key]
 		// A parsed window always sets Label (or a Windows list); failed
 		// probes leave both empty. Attach even at 0% used so the reset
 		// time stays visible.

@@ -141,7 +141,8 @@ exposes it and a `statusText`/`authHelpText` pair explaining an absent
 window (no credentials, rate limited, …). Claude's windows match its own
 /usage view: "Current session", "Current week (all models)", and per-model
 windows such as "Current week (Fable)". Each status poll reads it cheaply
-and attaches the windows to the newest live record of that agent; the
+and attaches the windows to every live record of that agent (quota is
+account-level, so each session of an agent shows the same windows); the
 dashboard renders one `usage: ████ 38% · Current session (reset at 19:39
 PDT)` row per window below the context line. The ledger fields (`today`,
 `recentDays`, `modelUsage`) are reserved for the next phase.
