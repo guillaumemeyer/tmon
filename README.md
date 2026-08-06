@@ -96,10 +96,10 @@ when known). **Quota** is the account-level rate-limit windows — % used,
 next reset, plan tier — probed in the background by the usage worker for
 Claude, Grok, and Codex and shown in the dashboard popup at the top of the preview
 pane: a `📊 Usage:` header with one progress-bar row per window (`████ 38% ·
-Current session (reset at 19:39 PDT)`), a divider, then a `Context:` label
-with the context-window bar on its own line below it. All bars share a
-four-space left margin so they line up. When the agent reports no quota
-windows, the header reads `📊 Usage: ?`.
+Current session (reset at 19:39 PDT)`), a divider, then a `💬 Session:`
+line with the token counts and the context-window bar on its own line
+below it. All bars share a four-space left margin so they line up. When
+the agent reports no quota windows, the header reads `📊 Usage: ?`.
 
 **Hermes** lists only live **CLI/TUI** sessions (not the messaging gateway).
 The dashboard name is `Title (Hermes - <profile>)` when a profile is known
@@ -151,7 +151,8 @@ account-level, so each session of an agent shows the same windows); the
 dashboard renders one `████ 38% · Current session (reset at 19:39
 PDT)` row per window under the `📊 Usage:` header at the top of the preview
 pane (or `📊 Usage: ?` when the agent reports no quota windows), with the
-context-window bar on its own `Context:` line below a divider. The ledger fields (`today`,
+context-window bar on its own line under the `💬 Session:` token counts
+below a divider. The ledger fields (`today`,
 `recentDays`, `modelUsage`) are reserved for the next phase.
 
 The probes are read-only and never prompt: they read credentials from the

@@ -1099,35 +1099,35 @@ func TestContextLineMovesToPreview(t *testing.T) {
 			}
 		}
 		if strings.Contains(list, "context:") || strings.Contains(list, "usage:") ||
-			strings.Contains(list, "📊 Usage") || strings.Contains(list, "Context:") {
+			strings.Contains(list, "📊 Usage") || strings.Contains(list, "💬 Session") {
 			t.Fatalf("list column still carries a usage line: %q", ln)
 		}
 	}
 
 	// The usage section stays on top, marked "?" when the agent reports no
-	// quota windows, and the context bar sits on its own line under the
-	// "Context:" label. The preview panel is 59 cells here, so the
-	// progress bar takes the full 30-cell cap; 26% of 30 fills 8 cells
-	// (rounded).
+	// quota windows. The session line carries the token counts next to the
+	// "💬 Session:" label, and the context bar sits on its own line under
+	// it. The preview panel is 59 cells here, so the progress bar takes
+	// the full 30-cell cap; 26% of 30 fills 8 cells (rounded).
 	if !strings.Contains(v, "📊 Usage: ?") {
 		t.Fatalf("preview missing the no-quota usage header:\n%s", v)
 	}
-	if !strings.Contains(v, "Context:") {
-		t.Fatalf("preview missing the Context: label:\n%s", v)
+	if !strings.Contains(v, "💬 Session: 52.4k/200k") {
+		t.Fatalf("preview missing the session line with token counts:\n%s", v)
 	}
-	if !strings.Contains(v, "52.4k/200k ████████░░░░░░░░░░░░░░░░░░░░░░ 26%") {
+	if !strings.Contains(v, "████████░░░░░░░░░░░░░░░░░░░░░░ 26%") {
 		t.Fatalf("preview missing the Grok context bar:\n%s", v)
 	}
 
-	// An agent without token stats still shows "Context: ?" in the
+	// An agent without token stats still shows "💬 Session: ?" in the
 	// preview.
 	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyDown}) // select Claude
 	v = ansi.Strip(m.View())
 	if !strings.Contains(v, "📊 Usage: ?") {
 		t.Fatalf("preview should show 📊 Usage: ? for Claude:\n%s", v)
 	}
-	if !strings.Contains(v, "Context: ?") {
-		t.Fatalf("preview should show Context: ? for Claude:\n%s", v)
+	if !strings.Contains(v, "💬 Session: ?") {
+		t.Fatalf("preview should show 💬 Session: ? for Claude:\n%s", v)
 	}
 }
 
@@ -1161,14 +1161,14 @@ func TestQuotaWindowsInPreview(t *testing.T) {
 			continue // top/bottom border
 		}
 		if strings.Contains(parts[1], "usage:") || strings.Contains(parts[1], "context:") ||
-			strings.Contains(parts[1], "📊 Usage") || strings.Contains(parts[1], "Context:") {
+			strings.Contains(parts[1], "📊 Usage") || strings.Contains(parts[1], "💬 Session") {
 			t.Fatalf("list column still carries a usage line: %q", ln)
 		}
 	}
 
 	// The preview pane leads with the "📊 Usage:" header and one bar per
-	// quota window, above the "Context:" line.
-	for _, want := range []string{"📊 Usage", "Current session", "Current week (all models)", "Current week (Fable)", "Context:"} {
+	// quota window, above the "💬 Session" line.
+	for _, want := range []string{"📊 Usage", "Current session", "Current week (all models)", "Current week (Fable)", "💬 Session"} {
 		if !strings.Contains(v, want) {
 			t.Errorf("preview missing %q:\n%s", want, v)
 		}
@@ -1182,7 +1182,7 @@ func TestQuotaWindowsInPreview(t *testing.T) {
 		if usageIdx < 0 && strings.Contains(ln, "📊 Usage") {
 			usageIdx = i
 		}
-		if sessIdx < 0 && strings.Contains(ln, "Context:") {
+		if sessIdx < 0 && strings.Contains(ln, "💬 Session") {
 			sessIdx = i
 		}
 	}
@@ -1232,10 +1232,8 @@ func TestWorkingAgentShowsSpinner(t *testing.T) {
 	}
 }
 
-func TestSessionDetailFormat(t *testing.T) {
-	m := Model{st: defaultStyles, theme: theme.Default, contextWarn: defaultContextWarn}
-	// A wide row caps the progress bar at its 30-cell maximum, making the
-	// expected fill deterministic: round(width * pct / 100).
+func TestSessionPrefixFormat(t *testing.T) {
+	m := Model{st: defaultStyles, theme: theme.Default}
 	cases := []struct {
 		name string
 		u    agent.Usage
@@ -1245,14 +1243,35 @@ func TestSessionDetailFormat(t *testing.T) {
 		{"quota only", agent.Usage{QuotaPct: 38, QuotaReset: "14:00"}, "?"},
 		{"quota 0% used", agent.Usage{QuotaPct: 0, QuotaReset: "14:00"}, "?"},
 		{"tokens only", agent.Usage{TokensUsed: 13025}, "13k"},
-		{"tokens and window", agent.Usage{TokensUsed: 52367, WindowTokens: 200000}, "52.4k/200k ████████░░░░░░░░░░░░░░░░░░░░░░ 26%"},
-		{"million window", agent.Usage{TokensUsed: 123456, WindowTokens: 1000000}, "123k/1M ████░░░░░░░░░░░░░░░░░░░░░░░░░░ 12%"},
-		{"tokens with quota", agent.Usage{TokensUsed: 52367, WindowTokens: 200000, QuotaPct: 38, QuotaReset: "14:00"}, "52.4k/200k ████████░░░░░░░░░░░░░░░░░░░░░░ 26%"},
-		{"warn threshold", agent.Usage{TokensUsed: 180000, WindowTokens: 200000}, "180k/200k ███████████████████████████░░░ 90%"},
+		{"tokens and window", agent.Usage{TokensUsed: 52367, WindowTokens: 200000}, "52.4k/200k"},
+		{"million window", agent.Usage{TokensUsed: 123456, WindowTokens: 1000000}, "123k/1M"},
+		{"tokens with quota", agent.Usage{TokensUsed: 52367, WindowTokens: 200000, QuotaPct: 38, QuotaReset: "14:00"}, "52.4k/200k"},
+		{"warn threshold", agent.Usage{TokensUsed: 180000, WindowTokens: 200000}, "180k/200k"},
 	}
 	for _, tc := range cases {
-		if got := ansi.Strip(sessionDetail(m.st, m.contextWarn, tc.u, 200)); got != tc.want {
-			t.Errorf("%s: sessionDetail(%+v) = %q, want %q", tc.name, tc.u, got, tc.want)
+		if got := ansi.Strip(sessionPrefix(m.st, tc.u)); got != tc.want {
+			t.Errorf("%s: sessionPrefix(%+v) = %q, want %q", tc.name, tc.u, got, tc.want)
+		}
+	}
+}
+
+func TestSessionBarFormat(t *testing.T) {
+	m := Model{st: defaultStyles, theme: theme.Default, contextWarn: defaultContextWarn}
+	// A wide row caps the progress bar at its 30-cell maximum, making the
+	// expected fill deterministic: round(width * pct / 100).
+	cases := []struct {
+		name string
+		u    agent.Usage
+		want string
+	}{
+		{"tokens and window", agent.Usage{TokensUsed: 52367, WindowTokens: 200000}, "████████░░░░░░░░░░░░░░░░░░░░░░ 26%"},
+		{"million window", agent.Usage{TokensUsed: 123456, WindowTokens: 1000000}, "████░░░░░░░░░░░░░░░░░░░░░░░░░░ 12%"},
+		{"tokens with quota", agent.Usage{TokensUsed: 52367, WindowTokens: 200000, QuotaPct: 38, QuotaReset: "14:00"}, "████████░░░░░░░░░░░░░░░░░░░░░░ 26%"},
+		{"warn threshold", agent.Usage{TokensUsed: 180000, WindowTokens: 200000}, "███████████████████████████░░░ 90%"},
+	}
+	for _, tc := range cases {
+		if got := ansi.Strip(sessionBar(m.st, m.contextWarn, tc.u, 200)); got != tc.want {
+			t.Errorf("%s: sessionBar(%+v) = %q, want %q", tc.name, tc.u, got, tc.want)
 		}
 	}
 }

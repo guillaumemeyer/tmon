@@ -485,9 +485,9 @@ const minPreviewViewport = 2
 // previewLines renders the right-side preview panel in four sections: the
 // selected agent's stats block — a "📊 Usage:" header with one bar per
 // account quota window (or "📊 Usage: ?" when the agent reports no quota
-// windows), a divider, then the "Context:" label with the context-window
-// bar on its own line below it when one is available — a separator, then
-// the pane preview — a header line naming the selected agent, the bubbles
+// windows), a divider, then the "💬 Session:" line with the token counts
+// and the context-window bar on its own line below it when a window is
+// known — a separator, then the pane preview — a header line naming the selected agent, the bubbles
 // viewport holding the pane capture (scrollable with ctrl+u/ctrl+d and the
 // mouse wheel), a separator and a tips line at the bottom. Every line is
 // exactly w cells so it joins cleanly with the list column. The list
@@ -508,13 +508,13 @@ func (m Model) previewLines(w, n int) []string {
 
 	// Section 1: the stats block of the selected agent — the usage header
 	// and one quota bar per window (or "📊 Usage: ?" when the agent reports
-	// no quota windows), a divider, then the context section with the
-	// context-window bar on its own line when one is available. All bars
-	// share a four-space left margin so the usage and context bars line up.
-	// The block is dropped on panes too short to keep minPreviewViewport
-	// capture rows under it, so the preview stays usable when the popup is
-	// small. Headless agents have no pane to show, so the stats always
-	// render there.
+	// no quota windows), a divider, then the "💬 Session:" line with the
+	// token counts and the context-window bar on its own line when a window
+	// is known. All bars share a four-space left margin so the usage and
+	// context bars line up. The block is dropped on panes too short to keep
+	// minPreviewViewport capture rows under it, so the preview stays usable
+	// when the popup is small. Headless agents have no pane to show, so the
+	// stats always render there.
 	noPane := len(m.filtered) == 0 || m.previewPane == "" || m.previewPane == "?"
 	if r := m.selectedRow(); r != nil {
 		qn := len(r.Usage.QuotaWindows)
@@ -534,15 +534,13 @@ func (m Model) previewLines(w, n int) []string {
 				// No quota data: the usage section stays on top, marked "?".
 				out = append(out, fit(m.st.dim.Render(" 📊 Usage: ?"), w))
 			}
-			// The divider separates the usage section from the context line.
+			// The divider separates the usage section from the session line.
 			out = append(out, fit(m.st.dim.Render(strings.Repeat("─", w)), w))
+			out = append(out, fit(" "+m.st.dim.Render("💬 Session: ")+sessionPrefix(m.st, r.Usage), w))
 			if sessBar {
 				// The context bar sits on its own line, aligned with the
 				// quota bars under the four-space margin.
-				out = append(out, fit(m.st.dim.Render(" Context:"), w))
-				out = append(out, fit("    "+sessionDetail(m.st, m.contextWarn, r.Usage, w-4), w))
-			} else {
-				out = append(out, fit(" "+m.st.dim.Render("Context: ")+sessionDetail(m.st, m.contextWarn, r.Usage, w-1-ansi.StringWidth("Context: ")), w))
+				out = append(out, fit("    "+sessionBar(m.st, m.contextWarn, r.Usage, w-4), w))
 			}
 			// The separator divides the stats block from the pane preview.
 			out = append(out, fit(m.st.dim.Render(strings.Repeat("─", w)), w))
@@ -755,30 +753,32 @@ func selFit(st styles, s string, w int) string {
 // switches to the warn color when no @tmon-context-warn is configured.
 const defaultContextWarn = 85
 
-// sessionDetail renders the context-window portion of the stats block:
-// "52.4k/200k ████████░░░░░░░░░░░░░░░░░░░░░░ 26%" — tokens used over the
-// model's context window with a progress-bar usage bar and the used
-// percentage, without a "context:" prefix (the caller prefixes the
-// "💬 Session: " label). Returns a dim "?" when no token stat is
-// available. maxWidth bounds the row so the bar width can be derived from
-// the remaining space.
-func sessionDetail(st styles, contextWarn int, u agent.Usage, maxWidth int) string {
-	dim, green, warn := st.dim, st.green, st.warn
+// sessionPrefix renders the token portion of the context-window detail:
+// "52.4k/200k", "13k", or a dim "?" when no token stat is available. The
+// caller prefixes the "💬 Session: " label. When a window is known the bar
+// moves to its own line, rendered by sessionBar.
+func sessionPrefix(st styles, u agent.Usage) string {
 	if u.TokensUsed == 0 && u.WindowTokens == 0 {
-		return dim.Render("?")
+		return st.dim.Render("?")
 	}
-	prefix := humanTokens(u.TokensUsed)
+	p := humanTokens(u.TokensUsed)
 	if u.WindowTokens > 0 {
-		prefix += "/" + humanTokens(u.WindowTokens) + " "
+		p += "/" + humanTokens(u.WindowTokens)
 	}
+	return st.dim.Render(p)
+}
+
+// sessionBar renders the context-window progress bar with its used
+// percentage for the own-line form under the "💬 Session:" line:
+// "████████░░░░░░░░░░░░░░░░░░░░░░ 26%". The bar turns warn-colored at the
+// same threshold as the quota bars.
+func sessionBar(st styles, contextWarn int, u agent.Usage, maxWidth int) string {
+	dim, green, warn := st.dim, st.green, st.warn
+	pct := u.ContextPct()
+	barW := usageBarWidth(maxWidth, 0, 0)
 	var b strings.Builder
-	b.WriteString(dim.Render(prefix))
-	if u.WindowTokens > 0 {
-		pct := u.ContextPct()
-		barW := usageBarWidth(maxWidth, ansi.StringWidth(prefix), 0)
-		b.WriteString(usageBar(pct, barW, contextWarn, green, warn, dim))
-		b.WriteString(dim.Render(" " + strconv.Itoa(pct) + "%"))
-	}
+	b.WriteString(usageBar(pct, barW, contextWarn, green, warn, dim))
+	b.WriteString(dim.Render(" " + strconv.Itoa(pct) + "%"))
 	return b.String()
 }
 
