@@ -716,7 +716,7 @@ func usageLine(st styles, contextWarn int, u agent.Usage, sel bool, maxWidth int
 	// The trailing quota text is rendered after the bar; its width reserves
 	// room so the bar never pushes the line past maxWidth.
 	suffix := ""
-	if u.QuotaPct > 0 {
+	if u.QuotaPct > 0 || u.QuotaReset != "" {
 		left := 100 - u.QuotaPct
 		if left < 0 {
 			left = 0
@@ -863,7 +863,7 @@ func displayCWD(cwd string) string {
 func (m Model) footerLine(w int) string {
 	left := " " + m.st.dim.Render(m.footerSearchHint())
 	if m.filterStatus != "" {
-		left += m.st.dim.Render("  ▌ "+m.filterLabel()+" (press again to clear)")
+		left += m.st.dim.Render("  ▌ " + m.filterLabel() + " (press again to clear)")
 	}
 	// Reserve one cell for a right margin after the tips plus one so
 	// twoSided always has a pad between the segments.

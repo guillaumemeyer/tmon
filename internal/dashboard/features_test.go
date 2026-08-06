@@ -1154,6 +1154,7 @@ func TestUsageLineFormat(t *testing.T) {
 		{"tokens and window", agent.Usage{TokensUsed: 52367, WindowTokens: 200000}, "context: 52.4k/200k ████████░░░░░░░░░░░░░░░░░░░░░░ 26%"},
 		{"million window", agent.Usage{TokensUsed: 123456, WindowTokens: 1000000}, "context: 123k/1M ████░░░░░░░░░░░░░░░░░░░░░░░░░░ 12%"},
 		{"quota only", agent.Usage{QuotaPct: 38, QuotaReset: "14:00"}, "62% left · reset 14:00"},
+		{"quota 0% used", agent.Usage{QuotaPct: 0, QuotaReset: "14:00"}, "100% left · reset 14:00"},
 		{"all", agent.Usage{TokensUsed: 52367, WindowTokens: 200000, QuotaPct: 38, QuotaReset: "14:00"}, "context: 52.4k/200k ████████░░░░░░░░░░░░░░░░░░░░░░ 26% · 62% left · reset 14:00"},
 		{"over quota clamps", agent.Usage{QuotaPct: 120, QuotaReset: "14:00"}, "0% left · reset 14:00"},
 		{"warn threshold", agent.Usage{TokensUsed: 180000, WindowTokens: 200000}, "context: 180k/200k ███████████████████████████░░░ 90%"},

@@ -181,7 +181,9 @@ func attachQuota(cfg config.Config, records []connector.Record) {
 	}
 	for key, i := range newest {
 		q := quota[key]
-		if q.Pct <= 0 {
+		// A parsed window always sets Label; failed probes leave it empty.
+		// Attach even at 0% used so the reset time stays visible.
+		if q.Label == "" {
 			continue
 		}
 		u := records[i].Usage

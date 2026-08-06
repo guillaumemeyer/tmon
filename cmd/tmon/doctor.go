@@ -280,7 +280,7 @@ func checkQuota(cfg config.Config) check {
 	parts := make([]string, 0, len(keys))
 	for _, k := range keys {
 		q := uf.Quota[k]
-		if q.Pct > 0 {
+		if q.Pct > 0 || q.Label != "" {
 			parts = append(parts, fmt.Sprintf("%s %d%% (%s)", k, q.Pct, q.Label))
 		} else if q.StatusText != "" {
 			parts = append(parts, k+": "+q.StatusText)

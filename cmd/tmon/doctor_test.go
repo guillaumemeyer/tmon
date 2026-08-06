@@ -367,6 +367,7 @@ func TestCheckQuota(t *testing.T) {
 		Quota: map[string]worker.Quota{
 			"claude": {Pct: 38, Label: "Session (5-hour)"},
 			"codex":  {Pct: 0, StatusText: "no credentials"},
+			"fable":  {Pct: 0, Label: "Weekly (7-day)"},
 		},
 	}); err != nil {
 		t.Fatal(err)
@@ -375,7 +376,7 @@ func TestCheckQuota(t *testing.T) {
 	if !c.OK {
 		t.Errorf("quota check = %+v, want ok", c)
 	}
-	for _, want := range []string{"claude 38% (Session (5-hour))", "codex: no credentials"} {
+	for _, want := range []string{"claude 38% (Session (5-hour))", "codex: no credentials", "fable 0% (Weekly (7-day))"} {
 		if !strings.Contains(c.Detail, want) {
 			t.Errorf("quota detail %q missing %q", c.Detail, want)
 		}

@@ -228,6 +228,42 @@ func TestAttachQuotaFromUsageFile(t *testing.T) {
 	}
 }
 
+func TestAttachQuotaZeroUsed(t *testing.T) {
+	// A valid window at 0% used still attaches: the reset time must stay
+	// visible even though nothing has been consumed yet.
+	stubDetect(t, nil)
+	cfg := testConfig(t)
+
+	reset := time.Date(2026, 8, 6, 15, 0, 0, 0, time.Local).Format(time.RFC3339)
+	if err := worker.SaveUsageFile(cfg.StateDir, worker.UsageFile{
+		SchemaVersion: worker.SchemaVersion,
+		GeneratedAt:   time.Now(),
+		Quota: map[string]worker.Quota{
+			"claude": {Pct: 0, Label: "Session (5-hour)", ResetAt: reset},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	records := []connector.Record{{
+		PID: 42, Label: "Claude", Status: agent.StatusWorking, Detail: "tool:Bash", At: time.Now(),
+	}}
+	res, err := run(cfg, records)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Agents) != 1 {
+		t.Fatalf("agents = %+v, want 1", res.Agents)
+	}
+	u := res.Agents[0].Usage
+	if u == nil || u.QuotaPct != 0 {
+		t.Fatalf("usage = %+v, want quota 0%% attached", u)
+	}
+	if u.QuotaReset != "15:00" {
+		t.Errorf("QuotaReset = %q, want 15:00", u.QuotaReset)
+	}
+}
+
 func TestAttachQuotaNewestRecordOnly(t *testing.T) {
 	// Quota is account-level: multiple sessions of one agent share a window,
 	// so only the newest live record carries it.
