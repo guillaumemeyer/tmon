@@ -29,6 +29,7 @@ dashboard — or just **click the status bar indicator**.
 - 📊 **Three dashboard views** — flat list, grouped by project, or grouped by status. Press `v` to switch; the choice sticks.
 - 🔍 **Fuzzy search** — Telescope-style matching over names, directories, branches, PR numbers, and even pane content.
 - 📈 **Context gauges** — a live progress bar shows each agent's context window filling up, with a ⚠️ before it goes supernova.
+- ⏳ **Quota monitoring** — a background worker probes your Claude and Codex account quota (plan tier, % used, next reset) once per 15 minutes and shows it in the dashboard's stats line. Auto-spawns from the first status poll; no setup.
 - 🎨 **Live themes** — preview Catppuccin, Nord, Dracula and friends right in the popup, apply with `Enter`.
 - 🕵️ **Hide the noise** — glob patterns drop agents you don't care about from the status bar and dashboard. The agent keeps running; you just stop seeing it.
 - 🩺 **`tmon doctor`** — one command that checks everything and explains itself in plain text (or JSON, for the CI crowd).
@@ -73,8 +74,8 @@ connector provides:
 | Agent | Connector | Status | Blocked | Detail | Title | Tokens |
 |-------|-----------|--------|:---:|--------|:---:|:---:|
 | Grok Build | native (`~/.grok`) | exact | ✓ | phase · tool · permission · model | ✓ | ✓ + window % |
-| Claude Code | hooks | exact | ✓ | tool · permission | ✓ | ✓ + window % |
-| Codex CLI | hooks (+ `/hooks` trust) | exact | ✓ | tool · permission | — | ✓ |
+| Claude Code | hooks | exact | ✓ | tool · permission | ✓ | ✓ + window % + quota |
+| Codex CLI | hooks (+ `/hooks` trust) | exact | ✓ | tool · permission | — | ✓ + quota |
 | Hermes Agent | native (`~/.hermes` + profiles) | CLI/TUI | ✓ (hooks) | model · approval | ✓ | ✓ + window % |
 | GitHub Copilot | hooks, else native fallback | exact | ✓ | tool · permission | — | — |
 | Cursor | hooks, else native fallback | exact | — | tool | — | — |
@@ -91,7 +92,9 @@ connectors that detect a permission wait themselves; a — falls back to the
 pane-pattern heuristic (`[y/N]`, permission prompts, …). **Detail** is what
 the dashboard shows under the agent's name, **Title** the session name
 ("Title (Agent)"), and **Tokens** the stats line (tokens + context-window %
-when known).
+when known). **Quota** (the "+ quota" suffix) is the account-level rate-limit
+window — % used and next reset — probed in the background by the usage
+worker for Claude and Codex and shown in the dashboard's stats line.
 
 **Hermes** lists only live **CLI/TUI** sessions (not the messaging gateway).
 The dashboard name is `Title (Hermes - <profile>)` when a profile is known
@@ -114,6 +117,40 @@ fleet grows (same playbook that made TPM the default tmux plugin story).
 
 See **[CONTRIBUTING.md](CONTRIBUTING.md)** for a copy-paste template, the
 detect-signature checklist, and how to land a PR.
+
+## Quota monitoring
+
+The status poll must stay fast and never touch the network, so quota
+probing runs in a small background worker that `tmon status` auto-spawns on
+its first poll (one fork+exec, well under the poll budget; a flock keeps it
+single-instance per state dir). The worker probes the Claude OAuth usage
+endpoint and the Codex `app-server` JSON-RPC interface at most once per 15
+minutes, writes `<state>/usage.json` (quota blocks; the token ledger lands
+here in a later phase), and exits after 30 minutes with no live agents and
+no open dashboard. A crashed worker is detected via its heartbeat file and
+respawned by the next poll.
+
+`<state>/usage.json` is the worker's only output (schema v1): a `quota`
+block per agent with the percent used, the window label (e.g. "Session
+(5-hour)", "Weekly (7-day)"), the next reset time, the plan tier when the
+API exposes it, and a `statusText`/`authHelpText` pair explaining an absent
+window (no credentials, rate limited, …). Each status poll reads it cheaply
+and attaches the quota to the newest live record of that agent; the
+dashboard renders it in the stats line (`62% left · reset 14:00`). The
+ledger fields (`today`, `recentDays`, `modelUsage`) are reserved for the
+next phase.
+
+The probes are read-only and never prompt: they read credentials from the
+agent's own local files (`~/.claude/.credentials.json`, the `codex` binary)
+and store only the quota numbers — never tokens — in `usage.json`.
+
+- `tmon worker` — run the worker loop in the foreground (auto-spawn target).
+- `tmon worker stop` — stop the worker and disable auto-respawn.
+- `tmon daemon` — run the worker loop manually (headless setups, debugging).
+- `@tmon-worker off` (or `TMON_WORKER=off`) — disable the worker entirely;
+  the poll then runs the quota probes itself, TTL-gated to once per 15
+  minutes. `tmon doctor` reports worker state, usage.json validity, and the
+  last quota probe results.
 
 ## Scripting with JSON (`tmon status --json`)
 
@@ -153,7 +190,14 @@ tmon status --json | jq '[.agents[] | select(.status=="blocked")] | length'
 
 # Working directories of everything in flow:
 tmon status --json | jq -r '.agents[] | select(.status=="working") | .cwd'
+
+# Account quota for an agent with a quota probe (Claude, Codex):
+tmon status --json | jq '.agents[] | select(.usage.quotaPct > 0) | {label, quotaPct, quotaReset}'
 ```
+
+When the worker has data, the `usage` block also carries the account quota
+(`quotaPct` percent used, `quotaReset` as "14:00") for agents with a quota
+probe — Claude and Codex.
 
 ## Requirements
 
@@ -283,6 +327,7 @@ are optional — the defaults are sensible for most people.
 | `@tmon-pane-border-position` | `top` | where the strip sits (`top` or `bottom`) |
 | `@tmon-hide` | — | comma-separated glob patterns of agents to hide from the status bar and dashboard (label, cwd, or session) |
 | `@tmon-pr-lookup` | `on` | resolve open GitHub PR numbers for agent branches in the dashboard via `gh` |
+| `@tmon-worker` | `on` | auto-spawn the background usage worker (quota probes) from status polls; `off` falls back to TTL-gated lazy quota probes |
 | `@tmon-color-<slot>` | — | override one theme color slot |
 | `@tmon-icon-<slot>` | — | override one status glyph |
 
@@ -527,6 +572,25 @@ set -g @tmon-hide "*/scratch/*,tool-*"
 set -g @tmon-pr-lookup "off"
 ```
 
+### `@tmon-worker`
+
+> Auto-spawn the background usage worker from status polls. The worker
+> probes your Claude and Codex account quota (plan tier, % used, next
+> reset) at most once per 15 minutes and writes `<state>/usage.json`; it
+> sleeps between cycles, exits after 30 minutes with no live agents and no
+> open dashboard, and is respawned by the next poll if its heartbeat goes
+> stale (a crash). Set `off` to disable it entirely — the poll then runs
+> the quota probes itself, TTL-gated to once per 15 minutes.
+
+| | |
+|---|---|
+| **Default** | `on` |
+| **Options** | `on` or `off` |
+
+```tmux
+set -g @tmon-worker "off"   # disable the background worker
+```
+
 ---
 
 ## Themes
@@ -596,8 +660,9 @@ state path with `TMON_STATE_DIR` if you need a custom location.
 
 **Something's off? Run `tmon doctor` first** — it checks everything at once
 (tmux ≥ 3.2, downloader + checksum tools, binary vs. `VERSION`, writable
-state dir, running agents, connector and hook status) and prints a ✓/✗
-report with a non-zero exit code when anything fails:
+state dir, running agents, the usage worker and its heartbeat, `usage.json`
+validity, the last quota probe results, connector and hook status) and
+prints a ✓/✗ report with a non-zero exit code when anything fails:
 
 ```bash
 ~/.tmux/plugins/tmon/bin/tmon doctor        # text report
@@ -636,8 +701,11 @@ manually — it prints the failure reason.
 No. It just watches the robots that do. It's a leash, not a robot arm.
 
 **Does tmon phone home?**
-No. Everything runs locally; the only network call is the one-time binary
-download on first load.
+No. Everything runs locally. The one-time binary download on first load is
+the only network call the poll ever makes; the only other network use is the
+background usage worker reading your Claude and Codex account quota
+(read-only usage endpoints, at most once per 15 minutes, opt out with
+`@tmon-worker off`).
 
 **Why is there an emoji in my status bar?**
 Because your agents are watching too. Set `@tmon-ascii-icons "1"` if you

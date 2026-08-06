@@ -24,6 +24,10 @@ Usage:
                            tmon hooks auto             Install for agents found on this machine
                            tmon hooks status
   tmon border off        Clear status border strips and turn pane-border-status off
+  tmon worker            Run the usage worker loop (auto-spawned by status;
+                          quota probes + token ledger, writes usage.json)
+  tmon worker stop       Stop the worker and disable auto-respawn
+  tmon daemon            Run the worker loop manually (headless setups)
   tmon version           Print the installed version
 
 Environment (set by tmon.tmux from the @tmon-* tmux options):
@@ -63,6 +67,9 @@ Environment (set by tmon.tmux from the @tmon-* tmux options):
   TMON_PR_LOOKUP              Resolve open GitHub PR numbers for agent
                               branches in the dashboard via gh (default on;
                               requires gh on PATH)
+  TMON_WORKER                 Auto-spawn the usage worker from status polls
+                              (default on; "off" disables it and falls back
+                              to TTL-gated lazy quota probes in the poll)
 `
 
 func main() {
@@ -84,6 +91,10 @@ func main() {
 		os.Exit(cmdHooks(os.Args[2:]))
 	case "border":
 		os.Exit(cmdBorder(os.Args[2:]))
+	case "worker":
+		os.Exit(cmdWorker(os.Args[2:]))
+	case "daemon":
+		os.Exit(cmdDaemon(os.Args[2:]))
 	case "version":
 		fmt.Println(version)
 	case "help", "-h", "--help":

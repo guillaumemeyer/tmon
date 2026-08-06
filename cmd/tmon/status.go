@@ -10,11 +10,14 @@ import (
 	"github.com/guillaumemeyer/tmon/internal/hide"
 	"github.com/guillaumemeyer/tmon/internal/poll"
 	"github.com/guillaumemeyer/tmon/internal/statusbar"
+	"github.com/guillaumemeyer/tmon/internal/worker"
 )
 
 // cmdStatus performs one poll and prints the status-bar indicator for tmux
 // #() interpolation. It must complete quickly and must never touch the
 // network — all distribution concerns live in tmon.tmux and bootstrap.sh.
+// The only exception is the worker-off fallback: with TMON_WORKER=off the
+// poll itself runs the quota probes, TTL-gated to once per 15 minutes.
 // With --json it prints the full poll result instead (statuses plus each
 // agent's pane, cwd, detail and usage), for scripts, polybar and the like.
 func cmdStatus(args []string) int {
@@ -29,6 +32,12 @@ func cmdStatus(args []string) int {
 	}
 
 	cfg := config.FromEnv()
+
+	// Ensure the background usage worker is running (cheap: one fork+exec
+	// when the heartbeat is missing or stale; a no-op otherwise). The poll
+	// below reads the quota data it writes; the worker owns all network
+	// access, so this status command never touches the network.
+	worker.EnsureSpawned(cfg)
 
 	res, err := poll.Run(cfg)
 	if err != nil {

@@ -34,6 +34,7 @@ type Config struct {
 	PaneBorderPosition  string            // "top" or "bottom" for pane-border-status
 	HidePatterns        []string          // @tmon-hide globs; matching agents are hidden from status/dashboard
 	PRLookup            bool              // resolve GitHub PR numbers for agent branches via gh (dashboard only)
+	WorkerEnabled       bool              // auto-spawn the usage worker from status polls (default on)
 }
 
 // DefaultStateDir is the durable runtime state directory used when
@@ -86,6 +87,7 @@ func Defaults() Config {
 		PaneBorder:          true,
 		PaneBorderPosition:  "top",
 		PRLookup:            true,
+		WorkerEnabled:       true,
 	}
 }
 
@@ -178,6 +180,7 @@ func FromEnv() Config {
 	c.IconOverrides = envMap("TMON_ICON_")
 	c.HidePatterns = envList("TMON_HIDE")
 	c.PRLookup = envBool("TMON_PR_LOOKUP", c.PRLookup)
+	c.WorkerEnabled = envBool("TMON_WORKER", c.WorkerEnabled)
 	// Clamp invalid values so a bad env never produces a 0ms sleep or
 	// nonsense threshold math on the status-bar path.
 	c.clamp()

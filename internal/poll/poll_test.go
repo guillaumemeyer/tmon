@@ -10,6 +10,7 @@ import (
 	"github.com/guillaumemeyer/tmon/internal/connector"
 	"github.com/guillaumemeyer/tmon/internal/detect"
 	"github.com/guillaumemeyer/tmon/internal/theme"
+	"github.com/guillaumemeyer/tmon/internal/worker"
 )
 
 func testConfig(t *testing.T) config.Config {
@@ -187,6 +188,93 @@ func TestUsageRidesConnectorRecord(t *testing.T) {
 	for _, a := range res2.Agents {
 		if a.Usage != nil {
 			t.Errorf("PID %d: expected nil usage, got %+v", a.PID, a.Usage)
+		}
+	}
+}
+
+func TestAttachQuotaFromUsageFile(t *testing.T) {
+	stubDetect(t, nil)
+	cfg := testConfig(t)
+
+	// Simulate the worker's usage.json output. Build the reset time from a
+	// local instant so the "15:00" rendering is zone-independent.
+	reset := time.Date(2026, 8, 6, 15, 0, 0, 0, time.Local).Format(time.RFC3339)
+	if err := worker.SaveUsageFile(cfg.StateDir, worker.UsageFile{
+		SchemaVersion: worker.SchemaVersion,
+		GeneratedAt:   time.Now(),
+		Quota: map[string]worker.Quota{
+			"claude": {Pct: 38, Label: "Session (5-hour)", ResetAt: reset},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	records := []connector.Record{{
+		PID: 42, Label: "Claude", Status: agent.StatusWorking, Detail: "tool:Bash", At: time.Now(),
+	}}
+	res, err := run(cfg, records)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Agents) != 1 {
+		t.Fatalf("agents = %+v, want 1", res.Agents)
+	}
+	u := res.Agents[0].Usage
+	if u == nil || u.QuotaPct != 38 {
+		t.Fatalf("usage = %+v, want quota 38%%", u)
+	}
+	if u.QuotaReset != "15:00" {
+		t.Errorf("QuotaReset = %q, want 15:00", u.QuotaReset)
+	}
+}
+
+func TestAttachQuotaNewestRecordOnly(t *testing.T) {
+	// Quota is account-level: multiple sessions of one agent share a window,
+	// so only the newest live record carries it.
+	stubDetect(t, nil)
+	cfg := testConfig(t)
+	if err := worker.SaveUsageFile(cfg.StateDir, worker.UsageFile{
+		SchemaVersion: worker.SchemaVersion,
+		GeneratedAt:   time.Now(),
+		Quota:         map[string]worker.Quota{"claude": {Pct: 38, Label: "Session (5-hour)"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	records := []connector.Record{
+		{PID: 1, Label: "Claude", Status: agent.StatusIdle, At: time.Now().Add(-time.Minute)},
+		{PID: 2, Label: "Claude", Status: agent.StatusWorking, Detail: "tool:Bash", At: time.Now()},
+	}
+	res, err := run(cfg, records)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byPID := map[int]agent.AgentState{}
+	for _, a := range res.Agents {
+		byPID[a.PID] = a
+	}
+	if u := byPID[2].Usage; u == nil || u.QuotaPct != 38 {
+		t.Errorf("newest Claude usage = %+v, want quota 38%%", u)
+	}
+	if u := byPID[1].Usage; u != nil {
+		t.Errorf("older Claude usage = %+v, want nil", u)
+	}
+}
+
+func TestAttachQuotaSkipsWhenNoData(t *testing.T) {
+	// No usage.json yet: records pass through untouched.
+	stubDetect(t, nil)
+	cfg := testConfig(t)
+	records := []connector.Record{{
+		PID: 42, Label: "Claude", Status: agent.StatusWorking, Detail: "tool:Bash", At: time.Now(),
+	}}
+	res, err := run(cfg, records)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range res.Agents {
+		if a.Usage != nil {
+			t.Errorf("PID %d usage = %+v, want nil without quota data", a.PID, a.Usage)
 		}
 	}
 }

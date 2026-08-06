@@ -55,6 +55,10 @@
 #   @tmon-auto-hooks        "off" (default) — auto-install lifecycle hooks at
 #                            plugin load for every supported agent found on
 #                            this machine (set "on" to enable)
+#   @tmon-worker            "on" (default) — auto-spawn the background usage
+#                            worker (quota probes + token ledger) from status
+#                            polls; "off" disables it and falls back to
+#                            TTL-gated lazy quota probes inside the poll
 #
 # The binary is downloaded on first load into <plugin>/bin (scripts/bootstrap.sh,
 # pinned + checksummed to VERSION). Runtime state (state.json, theme, dashboard
@@ -163,6 +167,7 @@ if [ -s "$STATE_DIR/theme" ]; then
   [ -n "$THEME" ] || THEME="default"
 fi
 AUTO_HOOKS=$(get_tmux_option "@tmon-auto-hooks" "off")
+WORKER=$(get_tmux_option "@tmon-worker" "on")
 
 # ─── Runtime environment ──────────────────────────────────────────────────────
 
@@ -199,6 +204,7 @@ set_env_everywhere TMON_PANE_BORDER_POSITION "$PANE_BORDER_POS"
 set_env_everywhere TMON_HIDE "$HIDE_PATTERNS"
 set_env_everywhere TMON_PR_LOOKUP "$PR_LOOKUP"
 set_env_everywhere TMON_THEME "$THEME"
+set_env_everywhere TMON_WORKER "$WORKER"
 set_env_everywhere TMON_HOOK_STATE_DIR "$STATE_DIR/hooks"
 
 # Per-slot theme overrides. Set values are exported to the binary via

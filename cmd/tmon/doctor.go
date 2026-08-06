@@ -9,11 +9,13 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/guillaumemeyer/tmon/internal/config"
 	"github.com/guillaumemeyer/tmon/internal/connector"
 	"github.com/guillaumemeyer/tmon/internal/detect"
 	"github.com/guillaumemeyer/tmon/internal/tmux"
+	"github.com/guillaumemeyer/tmon/internal/worker"
 )
 
 // check is one doctor finding: a name, what was found, and whether it's ok.
@@ -85,6 +87,9 @@ func runChecks(cfg config.Config) []check {
 		checkStateDir(cfg),
 		checkAgents(),
 		checkConnectors(cfg),
+		checkWorker(cfg),
+		checkUsageFile(cfg),
+		checkQuota(cfg),
 	}
 	out = append(out, checkHooks()...)
 	return out
@@ -224,6 +229,66 @@ func checkConnectors(cfg config.Config) check {
 		return check{Name: "connectors", Detail: "none enabled (agent not installed, or no state yet)", OK: true}
 	}
 	return check{Name: "connectors", Detail: strings.Join(names, ", "), OK: true}
+}
+
+// checkWorker reports the usage worker state: running (fresh heartbeat),
+// disabled (stop marker or TMON_WORKER=off), or absent. On a fresh install
+// an absent worker is expected — the next status poll auto-starts it — so
+// the check only fails when a previously running worker has gone missing
+// (usage.json exists but the heartbeat went stale: a crash).
+func checkWorker(cfg config.Config) check {
+	if worker.Disabled(cfg.StateDir, cfg) {
+		return check{Name: "worker", Detail: "disabled (TMON_WORKER=off or stop marker)", OK: true}
+	}
+	if hb, err := worker.ReadHeartbeat(cfg.StateDir); err == nil && time.Since(hb) < worker.HeartbeatStaleAfter {
+		return check{Name: "worker", Detail: "running (heartbeat " + hb.Local().Format("15:04:05") + ")", OK: true}
+	}
+	if _, err := os.Stat(worker.UsageFilePath(cfg.StateDir)); err == nil {
+		return check{Name: "worker", Detail: "not running (heartbeat stale — crashed worker auto-restarts on the next status poll)", OK: false}
+	}
+	return check{Name: "worker", Detail: "not running yet (auto-starts on the next status poll)", OK: true}
+}
+
+// checkUsageFile reports whether usage.json exists and parses.
+func checkUsageFile(cfg config.Config) check {
+	uf, err := worker.LoadUsageFile(cfg.StateDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return check{Name: "usage.json", Detail: "not written yet (first worker cycle pending)", OK: true}
+		}
+		return check{Name: "usage.json", Detail: err.Error(), OK: false}
+	}
+	return check{
+		Name:   "usage.json",
+		Detail: fmt.Sprintf("v%d, generated %s", uf.SchemaVersion, uf.GeneratedAt.Local().Format("2006-01-02 15:04:05")),
+		OK:     true,
+	}
+}
+
+// checkQuota reports the last quota probe results. Informational: absent
+// quota is expected on machines without agent credentials.
+func checkQuota(cfg config.Config) check {
+	uf, err := worker.LoadUsageFile(cfg.StateDir)
+	if err != nil || len(uf.Quota) == 0 {
+		return check{Name: "quota", Detail: "no quota data yet (agent credentials not found?)", OK: true}
+	}
+	keys := make([]string, 0, len(uf.Quota))
+	for k := range uf.Quota {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		q := uf.Quota[k]
+		if q.Pct > 0 {
+			parts = append(parts, fmt.Sprintf("%s %d%% (%s)", k, q.Pct, q.Label))
+		} else if q.StatusText != "" {
+			parts = append(parts, k+": "+q.StatusText)
+		} else {
+			parts = append(parts, k+": n/a")
+		}
+	}
+	return check{Name: "quota", Detail: strings.Join(parts, ", "), OK: true}
 }
 
 // checkHooks reports one finding per hook-tier agent. A running agent whose

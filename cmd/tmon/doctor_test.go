@@ -4,10 +4,14 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/guillaumemeyer/tmon/internal/config"
 	"github.com/guillaumemeyer/tmon/internal/detect"
+	"github.com/guillaumemeyer/tmon/internal/worker"
 )
 
 // doctorEnv stubs every external probe the doctor touches — tmux, PATH
@@ -267,5 +271,113 @@ func TestCheckHooksFindings(t *testing.T) {
 	doctorHookStatus = func(string) (bool, bool) { return false, false }
 	if !allOK(checkHooks()) {
 		t.Error("absent agents should be informational, not failures")
+	}
+}
+
+func TestCheckWorkerStates(t *testing.T) {
+	cfg := testDoctorCfg(t)
+
+	// Fresh install: no heartbeat, no usage.json → informational OK.
+	if c := checkWorker(cfg); !c.OK {
+		t.Errorf("fresh install worker = %+v, want ok", c)
+	}
+
+	// Disabled via the stop marker → OK.
+	usageDir := filepath.Join(cfg.StateDir, "usage")
+	if err := os.MkdirAll(usageDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(worker.DisabledMarkerPath(cfg.StateDir), []byte("stopped\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if c := checkWorker(cfg); !c.OK || !strings.Contains(c.Detail, "disabled") {
+		t.Errorf("disabled worker = %+v, want ok + disabled detail", c)
+	}
+	if err := os.Remove(worker.DisabledMarkerPath(cfg.StateDir)); err != nil {
+		t.Fatal(err)
+	}
+
+	// A previously running worker crashed: usage.json exists but the
+	// heartbeat went stale → FAIL (it auto-restarts on the next poll).
+	if err := worker.SaveUsageFile(cfg.StateDir, worker.UsageFile{SchemaVersion: worker.SchemaVersion, GeneratedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	stale := time.Now().Add(-time.Hour).Unix()
+	if err := os.WriteFile(worker.HeartbeatPath(cfg.StateDir), []byte(strconv.FormatInt(stale, 10)+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if c := checkWorker(cfg); c.OK {
+		t.Errorf("stale heartbeat + usage.json = %+v, want fail (crashed worker)", c)
+	}
+
+	// A fresh heartbeat → running.
+	if err := worker.WriteHeartbeat(cfg.StateDir); err != nil {
+		t.Fatal(err)
+	}
+	if c := checkWorker(cfg); !c.OK || !strings.Contains(c.Detail, "running") {
+		t.Errorf("fresh heartbeat = %+v, want ok + running detail", c)
+	}
+}
+
+func TestCheckUsageFile(t *testing.T) {
+	cfg := testDoctorCfg(t)
+
+	// Missing file → informational OK.
+	if c := checkUsageFile(cfg); !c.OK || !strings.Contains(c.Detail, "not written") {
+		t.Errorf("missing usage.json = %+v, want ok", c)
+	}
+
+	// A valid v1 file → OK with the version in the detail.
+	if err := worker.SaveUsageFile(cfg.StateDir, worker.UsageFile{SchemaVersion: worker.SchemaVersion, GeneratedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if c := checkUsageFile(cfg); !c.OK || !strings.Contains(c.Detail, "v1") {
+		t.Errorf("valid usage.json = %+v, want ok + v1 detail", c)
+	}
+
+	// A corrupt file → FAIL.
+	if err := os.WriteFile(worker.UsageFilePath(cfg.StateDir), []byte("{nope"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if c := checkUsageFile(cfg); c.OK {
+		t.Errorf("corrupt usage.json = %+v, want fail", c)
+	}
+
+	// A wrong schema version → FAIL.
+	if err := os.WriteFile(worker.UsageFilePath(cfg.StateDir), []byte(`{"schemaVersion":99}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if c := checkUsageFile(cfg); c.OK {
+		t.Errorf("wrong schema version = %+v, want fail", c)
+	}
+}
+
+func TestCheckQuota(t *testing.T) {
+	cfg := testDoctorCfg(t)
+
+	// No quota data yet → informational OK.
+	if c := checkQuota(cfg); !c.OK {
+		t.Errorf("empty quota = %+v, want ok", c)
+	}
+
+	// A populated quota block → OK with a per-key summary.
+	if err := worker.SaveUsageFile(cfg.StateDir, worker.UsageFile{
+		SchemaVersion: worker.SchemaVersion,
+		GeneratedAt:   time.Now(),
+		Quota: map[string]worker.Quota{
+			"claude": {Pct: 38, Label: "Session (5-hour)"},
+			"codex":  {Pct: 0, StatusText: "no credentials"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	c := checkQuota(cfg)
+	if !c.OK {
+		t.Errorf("quota check = %+v, want ok", c)
+	}
+	for _, want := range []string{"claude 38% (Session (5-hour))", "codex: no credentials"} {
+		if !strings.Contains(c.Detail, want) {
+			t.Errorf("quota detail %q missing %q", c.Detail, want)
+		}
 	}
 }
