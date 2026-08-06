@@ -13,3 +13,7 @@ coverage.out
 # Generated demo media (record locally with docs/demo/demo.sh)
 docs/demo/demo.gif
 docs/demo/demo.mp4
+
+# macOS metadata (Finder junk)
+.DS_Store
+._*
