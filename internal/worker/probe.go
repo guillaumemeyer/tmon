@@ -28,6 +28,7 @@ type Probe struct {
 // fake probes into the loop.
 var probes = []Probe{
 	{Key: "claude", Label: "Claude", Run: probeClaude},
+	{Key: "grok", Label: "Grok", Run: probeGrok},
 	{Key: "codex", Label: "Codex", Run: probeCodex},
 }
 

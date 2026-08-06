@@ -29,7 +29,7 @@ dashboard — or just **click the status bar indicator**.
 - 📊 **Three dashboard views** — flat list, grouped by project, or grouped by status. Press `v` to switch; the choice sticks.
 - 🔍 **Fuzzy search** — Telescope-style matching over names, directories, branches, PR numbers, and even pane content.
 - 📈 **Context gauges** — a live progress bar shows each agent's context window filling up, with a ⚠️ before it goes supernova.
-- ⏳ **Quota monitoring** — a background worker probes your Claude and Codex account quota (plan tier, % used, next reset) once per 15 minutes and shows it in the dashboard's stats line. Auto-spawns from the first status poll; no setup.
+- ⏳ **Quota monitoring** — a background worker probes your Claude, Grok, and Codex account quota (plan tier, % used, next reset) once per 15 minutes and shows it in the dashboard's stats line. Auto-spawns from the first status poll; no setup.
 - 🎨 **Live themes** — preview Catppuccin, Nord, Dracula and friends right in the popup, apply with `Enter`.
 - 🕵️ **Hide the noise** — glob patterns drop agents you don't care about from the status bar and dashboard. The agent keeps running; you just stop seeing it.
 - 🩺 **`tmon doctor`** — one command that checks everything and explains itself in plain text (or JSON, for the CI crowd).
@@ -94,7 +94,7 @@ the dashboard shows under the agent's name, **Title** the session name
 ("Title (Agent)"), and **Tokens** the stats line (tokens + context-window %
 when known). **Quota** is the account-level rate-limit windows — % used,
 next reset, plan tier — probed in the background by the usage worker for
-Claude and Codex and shown in the dashboard popup as one progress-bar row
+Claude, Grok, and Codex and shown in the dashboard popup as one progress-bar row
 per window below the agent's context line (`usage: ████ 38% · Current
 session (reset at 19:39 PDT)`).
 
@@ -126,7 +126,8 @@ The status poll must stay fast and never touch the network, so quota
 probing runs in a small background worker that `tmon status` auto-spawns on
 its first poll (one fork+exec, well under the poll budget; a flock keeps it
 single-instance per state dir). The worker probes the Claude OAuth usage
-endpoint and the Codex `app-server` JSON-RPC interface at most once per 15
+endpoint, the Grok Build billing endpoint, and the Codex `app-server`
+JSON-RPC interface at most once per 15
 minutes, writes `<state>/usage.json` (quota blocks; the token ledger lands
 here in a later phase), and exits after 30 minutes with no live agents and
 no open dashboard. A crashed worker is detected via its heartbeat file and
@@ -146,7 +147,8 @@ PDT)` row per window below the context line. The ledger fields (`today`,
 `recentDays`, `modelUsage`) are reserved for the next phase.
 
 The probes are read-only and never prompt: they read credentials from the
-agent's own local files (`~/.claude/.credentials.json`, the `codex` binary)
+agent's own local files (`~/.claude/.credentials.json`, `~/.grok/auth.json`,
+the `codex` binary)
 and store only the quota numbers — never tokens — in `usage.json`.
 
 - `tmon worker` — run the worker loop in the foreground (auto-spawn target).
@@ -196,7 +198,7 @@ tmon status --json | jq '[.agents[] | select(.status=="blocked")] | length'
 # Working directories of everything in flow:
 tmon status --json | jq -r '.agents[] | select(.status=="working") | .cwd'
 
-# Account quota for an agent with a quota probe (Claude, Codex):
+# Account quota for an agent with a quota probe (Claude, Grok, Codex):
 tmon status --json | jq '.agents[] | select(.usage.quotaWindows != null) | {label, quotaWindows}'
 ```
 
@@ -580,7 +582,7 @@ set -g @tmon-pr-lookup "off"
 ### `@tmon-worker`
 
 > Auto-spawn the background usage worker from status polls. The worker
-> probes your Claude and Codex account quota (plan tier, % used, next
+> probes your Claude, Grok, and Codex account quota (plan tier, % used, next
 > reset) at most once per 15 minutes and writes `<state>/usage.json`; it
 > sleeps between cycles, exits after 30 minutes with no live agents and no
 > open dashboard, and is respawned by the next poll if its heartbeat goes
@@ -708,7 +710,7 @@ No. It just watches the robots that do. It's a leash, not a robot arm.
 **Does tmon phone home?**
 No. Everything runs locally. The one-time binary download on first load is
 the only network call the poll ever makes; the only other network use is the
-background usage worker reading your Claude and Codex account quota
+background usage worker reading your Claude, Grok, and Codex account quota
 (read-only usage endpoints, at most once per 15 minutes, opt out with
 `@tmon-worker off`).
 
