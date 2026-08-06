@@ -112,10 +112,9 @@ func TestFilterFuzzyNameAndCWD(t *testing.T) {
 		wantN   int      // if > 0, only check count + membership via wantAny
 	}{
 		{query: "grok", want: []string{"Grok"}},   // full name "Grok Build"
-		{query: "gb", want: []string{"Grok"}},     // fuzzy subsequence of "Grok Build"
 		{query: "blog", want: []string{"Codex"}},  // CWD is searched
 		{query: "site", want: []string{"Claude"}}, // CWD
-		{query: "popup", want: []string{"Grok"}}, // session title is searched
+		{query: "popup", want: []string{"Grok"}},  // session title is searched
 		{query: "shell", wantAny: []string{"Grok", "Claude"}, wantN: 2}, // tmux window name
 		{query: "main", wantAny: []string{"Grok", "Claude"}, wantN: 2},  // tmux session name
 		{query: "side", want: []string{"Codex"}},                        // tmux session name
@@ -124,6 +123,8 @@ func TestFilterFuzzyNameAndCWD(t *testing.T) {
 		{query: "code", wantAny: []string{"Grok", "Claude", "Codex"}, wantN: 3},
 		// Multi-word AND: cwd + agent name across fields.
 		{query: "blog codex", want: []string{"Codex"}},
+		// Substring only: fuzzy "gb" must not match "Grok Build" or "blog".
+		{query: "gb"},
 	}
 	for _, c := range cases {
 		m = applyMsg(t, m, key('/')) // filtering happens in search mode
@@ -163,7 +164,7 @@ func TestFilterFuzzyNameAndCWD(t *testing.T) {
 	}
 }
 
-func TestFilterFuzzyPreviewContent(t *testing.T) {
+func TestFilterPreviewContentSubstring(t *testing.T) {
 	old := capturePane
 	capturePane = func(p string) string {
 		switch p {
@@ -183,7 +184,7 @@ func TestFilterFuzzyPreviewContent(t *testing.T) {
 	m := New(f.load, true)
 	m = applyMsg(t, m, initMsg{})
 
-	// Fuzzy match against content that is not the selected agent's preview.
+	// Substring match against content that is not the selected agent's preview.
 	m = applyMsg(t, m, key('/'))
 	for _, r := range "middleware" {
 		m = applyMsg(t, m, key(r))
@@ -192,15 +193,25 @@ func TestFilterFuzzyPreviewContent(t *testing.T) {
 		t.Fatalf("preview search: filtered = %v, want only Codex", labelsOf(m))
 	}
 
-	// Subsequence across preview text.
+	// Contiguous substring of "approval", not a fuzzy subsequence.
 	for range "middleware" {
 		m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyBackspace})
 	}
-	for _, r := range "aprvl" { // approval
+	for _, r := range "approval" {
 		m = applyMsg(t, m, key(r))
 	}
 	if len(m.filtered) != 1 || m.rows[m.filtered[0]].Label != "Claude" {
-		t.Fatalf("fuzzy preview search: filtered = %v, want only Claude", labelsOf(m))
+		t.Fatalf("preview search: filtered = %v, want only Claude", labelsOf(m))
+	}
+	// Loose fuzzy subsequence must not match.
+	for range "approval" {
+		m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyBackspace})
+	}
+	for _, r := range "aprvl" {
+		m = applyMsg(t, m, key(r))
+	}
+	if len(m.filtered) != 0 {
+		t.Fatalf("fuzzy subsequence should not match, got %v", labelsOf(m))
 	}
 }
 
@@ -223,8 +234,8 @@ func TestSearchModeKeys(t *testing.T) {
 		t.Fatal("expected search mode after /")
 	}
 
-	// Printable runes append to the query and re-filter. "co" is a fuzzy
-	// hit on Claude/Codex names and Grok's "code/tmon" cwd.
+	// Printable runes append to the query and re-filter. "co" is a
+	// substring of Claude/Codex names and Grok's "code/tmon" cwd.
 	m = applyMsg(t, m, key('c'))
 	m = applyMsg(t, m, key('o'))
 	if m.query != "co" {

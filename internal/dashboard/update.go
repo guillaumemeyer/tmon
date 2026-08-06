@@ -1,7 +1,6 @@
 package dashboard
 
 import (
-	"sort"
 	"strings"
 	"time"
 
@@ -478,45 +477,25 @@ func (m Model) focusSelected() (Model, tea.Cmd) {
 	return m, m.focusCmd(*r)
 }
 
-// rebuildFilter re-applies the query with Telescope/fzy-style fuzzy matching
-// over agent name, session title, tmux path, project (path + git), and full
-// pane capture. Each whitespace-separated word is AND'd across those
-// fields (a term may hit a different field than the others). With a
-// non-empty query, matches are ranked by score (best first). Then rebuilds
-// the grouped display items. The previously selected agent is kept when it
-// still matches; filtering does not jump the selection to the first hit.
+// rebuildFilter re-applies the query over agent name, session title, tmux
+// path, project (path + git), and full pane capture. Each whitespace-
+// separated word is AND'd: every term must appear as a case-insensitive
+// substring of at least one field. Matching agents keep list order
+// (session/window/pane), not score rank. The previously selected agent is
+// kept when it still matches.
 func (m *Model) rebuildFilter() {
 	// Capture selection from the list items before filtered order changes.
-	// Reading selectedRow() after reassignment would point at the agent now
-	// sitting at the old index (often the top score), not the prior choice.
 	selPID := m.selectedAgentPID()
 
-	type scored struct {
-		idx   int
-		score int
-	}
-	var matches []scored
+	m.filtered = m.filtered[:0]
 	for i, r := range m.rows {
 		if m.filterStatus != "" && r.Status != m.filterStatus {
 			continue
 		}
-		if m.query == "" {
-			matches = append(matches, scored{idx: i, score: 0})
+		if m.query != "" && !m.agentMatchesQuery(r) {
 			continue
 		}
-		if s := m.agentSearchScore(r); s >= 0 {
-			matches = append(matches, scored{idx: i, score: s})
-		}
-	}
-	if m.query != "" {
-		// Stable rank: higher score first; ties keep original row order.
-		sort.SliceStable(matches, func(i, j int) bool {
-			return matches[i].score > matches[j].score
-		})
-	}
-	m.filtered = m.filtered[:0]
-	for _, s := range matches {
-		m.filtered = append(m.filtered, s.idx)
+		m.filtered = append(m.filtered, i)
 	}
 	m.rebuildItems(selPID)
 }
@@ -536,40 +515,37 @@ func (m Model) selectedAgentPID() int {
 	return ai.row.PID
 }
 
-// agentSearchScore scores query against one agent. Every whitespace-
-// separated term must match (AND) at least one searchable field:
-// agent name, session title, tmux path (session/window names and path),
-// project (cwd + git branch/PR), and pane capture. A term is scored only
-// within a single field so fuzzy matches cannot span field boundaries.
-// Returns -1 when any term fails.
-func (m *Model) agentSearchScore(r Row) int {
+// agentMatchesQuery reports whether every whitespace-separated term in the
+// current query appears as a case-insensitive substring of at least one
+// searchable field. Substring matching (not fuzzy subsequence) keeps full
+// pane captures from matching almost every short query.
+func (m *Model) agentMatchesQuery(r Row) bool {
 	terms := strings.Fields(m.query)
 	if len(terms) == 0 {
-		return 0
+		return true
 	}
 	fields := m.agentSearchFields(r)
-	total := 0
+	// Lower-case fields once for all terms.
+	lowers := make([]string, len(fields))
+	for i, f := range fields {
+		if f != "" {
+			lowers[i] = strings.ToLower(f)
+		}
+	}
 	for _, term := range terms {
-		best := -1
+		t := strings.ToLower(term)
 		matched := false
-		for _, f := range fields {
-			if f == "" || !fuzzyMatch(term, f) {
-				continue
-			}
-			matched = true
-			if s := fuzzyScore(term, f); s > best {
-				best = s
+		for _, f := range lowers {
+			if f != "" && strings.Contains(f, t) {
+				matched = true
+				break
 			}
 		}
 		if !matched {
-			return -1
+			return false
 		}
-		if best < 0 {
-			best = 0
-		}
-		total += best
 	}
-	return total
+	return true
 }
 
 // agentSearchFields are the discrete fields search matches against. Each
