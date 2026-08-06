@@ -125,6 +125,20 @@ func (Hermes) Probe(cfg config.Config) ([]Record, error) {
 			}
 		}
 
+		// A live CLI/TUI with no session row yet (Hermes persists rows only
+		// on the first prompt, so a freshly opened TUI has none) still owns
+		// a real context window. Report the empty bar at 0% — instead of
+		// "context: ?" — so the row carries context usage from the first
+		// poll. Once the first prompt lands, the row appears and the real
+		// counters take over.
+		if rec.Usage.Empty() {
+			if m := strings.TrimPrefix(rec.Detail, "model:"); m != rec.Detail {
+				if w := hermesModelWindow(r.home.path, m); w > 0 {
+					rec.Usage = agent.Usage{WindowTokens: w}
+				}
+			}
+		}
+
 		if ap := matchHermesApproval(approvals, r.home.path, sess); ap != nil {
 			rec.Status = agent.StatusBlocked
 			detail := "approval"

@@ -437,6 +437,39 @@ func TestHermesStaleSessionCWDMismatchNoTitle(t *testing.T) {
 	}
 }
 
+// A freshly opened TUI has no state.db session row yet — Hermes persists the
+// row lazily on the first prompt (see _ensure_session_db_row). The connector
+// must still report the configured model's context window at 0% used so the
+// popup shows the usage bar instead of "context: ?".
+func TestHermesFreshTUIReportsEmptyUsageBar(t *testing.T) {
+	home := hermesFixtureHome(t)
+	// A distinct model so the package-level window cache stays isolated.
+	writeFile(t, filepath.Join(home, "config.yaml"), "model:\n  default: fresh-model\n")
+	writeFile(t, filepath.Join(home, "models_dev_cache.json"),
+		`{"p": {"id": "p", "models": {"fresh-model": {"id": "fresh-model", "limit": {"context": 500000}}}}}`)
+	// No state.db: the fresh TUI has no session row to pair with.
+	stubHermesProcs(t, []hermesProc{{
+		pid: 42, cmdline: "hermes --tui",
+		cwdFull: "/home/u/code/tmon", cwd: "code/tmon",
+		envHome: home,
+	}})
+
+	recs, err := (Hermes{}).Probe(hermesTestCfg(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("records = %+v, want 1", recs)
+	}
+	r := recs[0]
+	if r.Usage.TokensUsed != 0 || r.Usage.WindowTokens != 500000 {
+		t.Errorf("Usage = %+v, want 0/500000 (empty bar on the model's window)", r.Usage)
+	}
+	if r.Detail != "model:fresh-model" {
+		t.Errorf("Detail = %q, want config model fallback", r.Detail)
+	}
+}
+
 func TestPairHermesSessionByCWD(t *testing.T) {
 	sessions := []hermesSession{
 		{ID: "a", Title: "Wrong", CWD: "/home/u"},
