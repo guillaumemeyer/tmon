@@ -22,6 +22,21 @@ dashboard — or just **click the status bar indicator**.
 
 ---
 
+## Features
+
+- 🐾 **The whole fleet on one leash** — finds every AI coding agent in your tmux panes and tells you who's working, who's blocked on you, and who's napping.
+- 🚨 **Blocked? You'll know.** — a red 🚨 means an agent is waiting on *you*; no more silent standoffs with Claude.
+- 🚀 **Teleport** — `Enter` (or a click) in the dashboard drops you straight into the agent's pane. No more `tmux list-panes` archaeology.
+- 📊 **Three dashboard views** — flat list, grouped by project, or grouped by status. Press `v` to switch; the choice sticks.
+- 🔍 **Fuzzy search** — Telescope-style matching over names, directories, branches, PR numbers, and even pane content.
+- 📈 **Context gauges** — a live progress bar shows each agent's context window filling up, with a ⚠️ before it goes supernova.
+- 🎨 **Live themes** — preview Catppuccin, Nord, Dracula and friends right in the popup, apply with `Enter`.
+- 🕵️ **Hide the noise** — glob patterns drop agents you don't care about from the status bar and dashboard. The agent keeps running; you just stop seeing it.
+- 🩺 **`tmon doctor`** — one command that checks everything and explains itself in plain text (or JSON, for the CI crowd).
+- 🤖 **11 agents and counting** — Grok Build, Claude Code, Codex CLI, Cursor, Cline, Aider, Copilot, CodeBuddy, Windsurf, Hermes Agent, OpenClaw.
+
+---
+
 ## What tmon won't do
 
 - Won't feed your agents
@@ -79,8 +94,9 @@ app B  |  I
 
 ### Dashboard (`prefix a a`)
 
-An 80%×80% popup that lists every running agent — one flat row per agent —
-with a live pane preview on the right. The tmux popup opens borderless; the
+An 80%×80% popup that lists every running agent — in one of three layouts:
+flat, grouped by project, or grouped by status — with a live pane preview
+on the right. The tmux popup opens borderless; the
 dashboard draws its own **rounded border inside the popup, in the theme's
 accent color**, and paints its background from the theme's `bg` slot, so it
 reads as a solid themed panel:
@@ -144,13 +160,49 @@ today:
 | Others | no stats line — no local usage source |
 
 Filter by status with `b` (blocked), `w` (working), `i` (idle); press the
-key again to clear. Hit `Enter` or **click
-an agent line** to jump to that agent's pane.
+key again to clear. Hit `Enter` or **click an agent line** to **teleport**
+straight into that agent's pane.
 
-Cycle the list layout with `v`: **list** (flat), **projects** (grouped by
-git repository — or working directory outside a repo — with the branch tag
-in each header, e.g. `~/code/tmon (main · #42)`), and **status** (grouped
-by blocked / working / idle). The choice is remembered.
+### The three views
+
+Press `v` to cycle the list layout; the choice is remembered between
+sessions. All three views respect the status filter and the fuzzy search.
+
+**List** — the flat classic, one row per agent:
+
+```
+🚨 Grok Build     ~/code/tmon (main · #42)   tmux: main / shell / 0
+🚨 Claude Code    ~/site (main)              tmux: main / shell / 1
+💤 Codex CLI      ~/blog                     tmux: side / code / 0
+```
+
+**Projects** — grouped by git repository (or the working directory when the
+agent is outside a repo). Headers sort alphabetically and carry the branch
+tag — `~/code/tmon (main · #42)` when `gh` finds the open pull request for
+that branch:
+
+```
+~/code/tmon (main · #42)
+  🚨 Grok Build     ~/code/tmon    tmux: main / shell / 0
+
+~/site (main)
+  🚨 Claude Code    ~/site         tmux: main / shell / 1
+```
+
+**Status** — grouped by blocked / working / idle, so the queue of agents
+waiting on you is always one screen away. Empty groups are hidden:
+
+```
+blocked
+  🚨 Grok Build     ~/code/tmon    tmux: main / shell / 0
+  🚨 Claude Code    ~/site         tmux: main / shell / 1
+
+working
+  | Codex CLI       ~/blog         tmux: side / code / 0
+
+idle
+  💤 Windsurf       ~/design       tmux: side / design / 2
+```
 
 **Fuzzy search** — press `/`, then type a Telescope/fzy-style query. Matches
 are subsequences (not substrings) over the session title, agent name,
@@ -167,10 +219,10 @@ are ranked by match quality. `Esc` leaves search mode (the filter stays);
 | Drag `│` separator | Resize the preview pane (persisted) |
 | `Ctrl-u` / `Ctrl-d` | Scroll the preview up / down |
 | `b` / `w` / `i` | Filter by status: blocked / working / idle (press again to clear) |
-| `Enter` / `Space` | Jump to the selected agent's pane |
+| `Enter` / `Space` | Teleport to the selected agent's pane |
 | `v` | Cycle the list layout: list → projects (grouped by repo) → status |
 | `t` | Open the theme selector (browse with `↑`/`↓` — previews live; `Enter`/`Space` applies and persists, `Esc`/`q` reverts) |
-| Click on an agent line | Select and jump to that agent's pane |
+| Click on an agent line | Select and teleport to that agent's pane |
 | `/` | Start fuzzy search (session title, name, directory, branch, PR number, pane content) |
 | Type | Filter the list |
 | `Backspace` | Remove last character from filter |
