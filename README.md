@@ -1,4 +1,4 @@
-# tmon, zero-config agents fleet manager for tmux
+# 📡 tmon, zero-config agents fleet manager for tmux
 
 ![tmon-meme](./docs/tmon-meme.jpg)
 
