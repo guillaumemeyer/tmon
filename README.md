@@ -20,11 +20,8 @@ dashboard — or just **click the status bar indicator**.
 ![tmux](https://img.shields.io/badge/tmux-%E2%89%A5%203.2-1B93DB?style=flat-square)
 ![agents](https://img.shields.io/badge/supports-11%20agents-4FC08D?style=flat-square)
 
----
-
 ## Features
 
-- 🐾 **The whole fleet on one leash** — finds every AI coding agent in your tmux panes and tells you who's working, who's blocked on you, and who's napping.
 - 🚦 **Status bar** — the whole zoo on one compact, color-coded line: 🤖 your fleet, 🚨 blocked (*"waiting for you — it has opinions"*), ⚡ working (*"in flow, do not disturb"*), 💤 idle (*"napping between thoughts"*). Click it to open the dashboard.
 - 🖼️ **Pane highlighting** — agent panes wear a status-colored border strip (🚨 blocked, ⚡ working), so the needy ones stand out without reading a single line of output.
 - 🚨 **Blocked? You'll know.** — a red 🚨 means an agent is waiting on *you*; no more silent standoffs with Claude.
@@ -50,8 +47,6 @@ you're inside it. Safe to re-run.
 
 See "Alternative installation modes" if necessary.
 
----
-
 ## What tmon won't do
 
 - Won't feed your agents
@@ -60,8 +55,6 @@ See "Alternative installation modes" if necessary.
 - Won't auto-merge PRs written by three agents at once (we have *some* standards)
 
 tmon is a fleet manager, not a petting zoo.
-
----
 
 ## Supported agents
 
@@ -162,8 +155,6 @@ tmon status --json | jq '[.agents[] | select(.status=="blocked")] | length'
 tmon status --json | jq -r '.agents[] | select(.status=="working") | .cwd'
 ```
 
----
-
 ## Requirements
 
 - **Linux or macOS** (amd64 or arm64)
@@ -182,8 +173,6 @@ Use **WSL2** with tmux and install tmon
 `~/.tmux/plugins/tmon` — avoid `/mnt/c/...` when you can). Bootstrap fetches
 the Linux binary; agents must also run as Linux processes in WSL for
 detection to see them.
-
----
 
 ## Alternative installation modes
 
@@ -271,8 +260,6 @@ cannot run (e.g. the plugin is not a git clone), fall back to
 `prefix U`, then `tmux source-file ~/.tmux.conf`.
 
 Manual installs: `git pull origin main` (the same hook applies).
-
----
 
 ## Configuration
 
@@ -584,8 +571,6 @@ set -g @tmon-icon-idle "😴"
 set -g @tmon-icon-app "@"    # ASCII-only crowd
 ```
 
----
-
 ## State location
 
 Runtime state (`state.json`, theme choice, dashboard prefs, hook session
@@ -600,16 +585,12 @@ $XDG_STATE_HOME/tmon/          # when XDG_STATE_HOME is set
 The plugin binary stays in the plugin tree (`<plugin>/bin`). Override the
 state path with `TMON_STATE_DIR` if you need a custom location.
 
----
-
 ## Keybindings
 
 | Binding | Action |
 |---------|--------|
 | `prefix a a` | Open the agent navigation popup |
 | Click status bar indicator | Open the agent navigation popup |
-
----
 
 ## Troubleshooting
 
@@ -649,8 +630,6 @@ rm "${XDG_STATE_HOME:-$HOME/.local/state}/tmon/state.json"
 connectivity, then from the plugin directory run `scripts/bootstrap.sh`
 manually — it prints the failure reason.
 
----
-
 ## FAQ
 
 **Will tmon write my code for me?**
@@ -679,8 +658,6 @@ Eleven agents and counting — see [Supported agents](#supported-agents).
 **Can I use it without tmux?**
 No — but `tmon status --json` feeds any status bar that can run a command.
 
----
-
 ## Testimonials
 
 > "I didn't know my agents were blocked until tmon told me. My agents still don't know."
@@ -703,8 +680,6 @@ No — but `tmon status --json` feeds any status bar that can run a command.
 
 *Testimonials may be fictional. Agents cannot sue.*
 
----
-
 ## Libraries
 
 tmon is built on a short stack of excellent Go libraries:
@@ -713,8 +688,6 @@ tmon is built on a short stack of excellent Go libraries:
 - [Lip Gloss](https://github.com/charmbracelet/lipgloss) — styles and layout
 - [charmbracelet/x/ansi](https://github.com/charmbracelet/x/ansi) — ANSI width and truncation
 - [golang.org/x/sys](https://github.com/golang/sys) — process / OS bits
-
----
 
 ## License
 
