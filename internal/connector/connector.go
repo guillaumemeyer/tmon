@@ -97,12 +97,26 @@ func collect(cfg config.Config, now time.Time, conns []Connector) []Record {
 				if r.Status != agent.StatusIdle {
 					continue
 				}
-				r.At = now
 			}
 			cur, seen := byPID[r.PID]
-			if !seen || r.At.After(cur.At) {
+			// Newest observation wins; on an exact tie prefer the record
+			// carrying more dashboard signal (usage, title, detail). The
+			// staleness refresh below happens after the dedup so two stale
+			// idle records of one PID are ordered by their real signal time
+			// and not by iteration order (refreshing first would set both
+			// to "now" and leave the tie to luck).
+			if !seen || r.At.After(cur.At) || (r.At.Equal(cur.At) && informative(r, cur)) {
 				byPID[r.PID] = r
 			}
+		}
+	}
+
+	// Refresh surviving stale idle records so their enrichment keeps riding
+	// along and a later poll does not re-drop them as stale.
+	for pid, r := range byPID {
+		if now.Sub(r.At) > cfg.ConnectorFreshness {
+			r.At = now
+			byPID[pid] = r
 		}
 	}
 
@@ -112,6 +126,19 @@ func collect(cfg config.Config, now time.Time, conns []Connector) []Record {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].PID < out[j].PID })
 	return out
+}
+
+// informative reports whether record a carries more dashboard enrichment
+// than b: token usage first, then a session title, then any detail. It is
+// the tie-break when two records of one PID carry identical signal times.
+func informative(a, b Record) bool {
+	if !a.Usage.Empty() && b.Usage.Empty() {
+		return true
+	}
+	if a.Title != "" && b.Title == "" {
+		return true
+	}
+	return a.Detail != "" && b.Detail == ""
 }
 
 // selectConnectors returns the connectors to probe for this poll: those

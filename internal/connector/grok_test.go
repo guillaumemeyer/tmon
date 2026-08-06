@@ -259,6 +259,63 @@ func TestGrokStalePhaseDroppedByCollect(t *testing.T) {
 	}
 }
 
+// TestGrokCompletedTurnKeptAsIdleWithUsage is the regression for idle grok
+// sessions losing their context usage: grok ends a turn with turn_ended
+// while the last phase_changed is still a streaming phase. The record must
+// read as idle (so the freshness gate keeps it, refreshed) and keep the
+// signals.json enrichment — model + context usage — on the dashboard.
+func TestGrokCompletedTurnKeptAsIdleWithUsage(t *testing.T) {
+	stale := time.Now().Add(-2 * time.Minute).UTC().Format(time.RFC3339Nano)
+	root := t.TempDir()
+	home := filepath.Join(root, ".grok")
+	writeFile(t, filepath.Join(home, "active_sessions.json"),
+		fmt.Sprintf(`[{"session_id":%q,"pid":4242,"cwd":%q,"opened_at":"2026-08-02T09:00:00Z"}]`, grokSessionID, grokCWD))
+	dir := filepath.Join(home, "sessions", url.PathEscape(grokCWD), grokSessionID)
+	writeFile(t, filepath.Join(dir, "events.jsonl"),
+		`{"ts":"`+stale+`","type":"phase_changed","phase":"streaming_text"}`+"\n"+
+			`{"ts":"`+stale+`","type":"turn_ended","outcome":"completed"}`+"\n")
+	writeFile(t, filepath.Join(dir, "signals.json"),
+		`{"primaryModelId":"grok-4.5","contextWindowUsage":10,"contextTokensUsed":54446,"contextWindowTokens":500000}`)
+	old := grokHome
+	grokHome = func() string { return home }
+	t.Cleanup(func() { grokHome = old })
+	stubGrokLive(t)
+
+	got := Collect(config.Defaults(), time.Now())
+	if len(got) != 1 {
+		t.Fatalf("collect = %+v, want 1 (completed turn kept as idle)", got)
+	}
+	r := got[0]
+	if r.Status != agent.StatusIdle {
+		t.Errorf("status = %q, want idle after turn_ended", r.Status)
+	}
+	if !strings.Contains(r.Detail, "turn-complete") {
+		t.Errorf("Detail = %q, want turn-complete", r.Detail)
+	}
+	if !strings.Contains(r.Detail, "model:grok-4.5") || !strings.Contains(r.Detail, "ctx:10%") {
+		t.Errorf("Detail = %q, want model + ctx enrichment", r.Detail)
+	}
+	if u := r.Usage; u.TokensUsed != 54446 || u.WindowTokens != 500000 {
+		t.Errorf("Usage = %+v, want tokens 54446 window 500000", u)
+	}
+	if r.At.Before(time.Now().Add(-time.Second)) {
+		t.Errorf("At = %v, want refreshed to now (stale idle kept)", r.At)
+	}
+}
+
+// TestGrokMidTurnStaleStillDropped guards the other side of the gate: a
+// session that stalled mid-turn (streaming phase, no turn_ended) must still
+// decay to the heuristic path — it is not provably finished.
+func TestGrokMidTurnStaleStillDropped(t *testing.T) {
+	stale := time.Now().Add(-2 * time.Minute).UTC().Format(time.RFC3339Nano)
+	grokFixture(t, `{"ts":"`+stale+`","type":"phase_changed","phase":"streaming_text"}`+"\n", "2026-08-02T09:00:00Z")
+	stubGrokLive(t)
+	got := Collect(config.Defaults(), time.Now())
+	if len(got) != 0 {
+		t.Fatalf("collect = %+v, want none (stalled mid-turn dropped)", got)
+	}
+}
+
 func TestGrokEnabledGatesOnStatePath(t *testing.T) {
 	root := t.TempDir()
 	home := filepath.Join(root, ".grok")

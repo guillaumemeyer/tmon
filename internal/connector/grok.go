@@ -128,7 +128,7 @@ func sessionDir(home, cwd, sessionID string) string {
 // and detail from the last phase_changed event, plus the running tool or
 // pending permission.
 func enrichGrok(rec *Record, dir string) {
-	var lastPhase, lastTool, lastPermission, lastCompletion grokEvent
+	var lastPhase, lastTool, lastPermission, lastCompletion, lastTurnEnd grokEvent
 	for _, l := range tailEvents(filepath.Join(dir, "events.jsonl")) {
 		var e grokEvent
 		if err := json.Unmarshal([]byte(l), &e); err != nil {
@@ -143,6 +143,8 @@ func enrichGrok(rec *Record, dir string) {
 			lastPermission = e
 		case "tool_completed":
 			lastCompletion = e
+		case "turn_ended":
+			lastTurnEnd = e
 		}
 	}
 
@@ -164,6 +166,20 @@ func enrichGrok(rec *Record, dir string) {
 		if rec.Status == agent.StatusBlocked && lastPermission.ToolName != "" {
 			rec.Detail = "permission:" + lastPermission.ToolName
 		}
+	}
+
+	// A completed turn leaves the session waiting for the next prompt —
+	// idle, not still streaming. Grok writes no explicit idle phase: the
+	// last phase_changed before turn_ended is a streaming/working phase, so
+	// without this the record would read as active and the freshness gate
+	// would drop it as stale, taking the signals.json enrichment (model +
+	// context usage) with it.
+	if turnEndedAtOrAfter(lastTurnEnd, lastPhase) {
+		if ts, err := time.Parse(time.RFC3339Nano, lastTurnEnd.TS); err == nil {
+			rec.At = ts
+		}
+		rec.Status = agent.StatusIdle
+		rec.Detail = "turn-complete"
 	}
 
 	// Enrichment from signals.json: model + context usage.
@@ -200,6 +216,24 @@ func mapGrokPhase(phase string) (agent.Status, string) {
 	default:
 		return agent.StatusIdle, "phase:" + phase
 	}
+}
+
+// turnEndedAtOrAfter reports whether a turn_ended event occurred at or
+// after the last phase_changed — i.e. the conversation finished its turn
+// and is waiting for the next prompt. Timestamps are RFC3339Nano; the
+// parsed comparison handles any fractional-digit mismatch, with a lexical
+// fallback when either event does not parse. An absent turn_ended (turnEnd
+// empty) always reports false.
+func turnEndedAtOrAfter(turnEnd, phase grokEvent) bool {
+	if phase.TS == "" {
+		return turnEnd.TS != ""
+	}
+	at, errA := time.Parse(time.RFC3339Nano, turnEnd.TS)
+	bt, errB := time.Parse(time.RFC3339Nano, phase.TS)
+	if errA != nil || errB != nil {
+		return turnEnd.TS >= phase.TS
+	}
+	return !at.Before(bt)
 }
 
 // grokSignals is the subset of ~/.grok/sessions/.../signals.json the
