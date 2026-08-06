@@ -1,4 +1,4 @@
-# tmon - Zero-config agents fleet manager for tmux
+# tmon, zero-config agents fleet manager for tmux
 
 ![tmon-meme](./docs/tmon-meme.jpg)
 
@@ -25,6 +25,8 @@ dashboard — or just **click the status bar indicator**.
 ## Features
 
 - 🐾 **The whole fleet on one leash** — finds every AI coding agent in your tmux panes and tells you who's working, who's blocked on you, and who's napping.
+- 🚦 **Status bar** — the whole zoo on one compact, color-coded line: 🤖 your fleet, 🚨 blocked (*"waiting for you — it has opinions"*), ⚡ working (*"in flow, do not disturb"*), 💤 idle (*"napping between thoughts"*). Click it to open the dashboard.
+- 🖼️ **Pane highlighting** — agent panes wear a status-colored border strip (🚨 blocked, ⚡ working), so the needy ones stand out without reading a single line of output.
 - 🚨 **Blocked? You'll know.** — a red 🚨 means an agent is waiting on *you*; no more silent standoffs with Claude.
 - 🚀 **Teleport** — `Enter` (or a click) in the dashboard drops you straight into the agent's pane. No more `tmux list-panes` archaeology.
 - 📊 **Three dashboard views** — flat list, grouped by project, or grouped by status. Press `v` to switch; the choice sticks.
@@ -34,6 +36,19 @@ dashboard — or just **click the status bar indicator**.
 - 🕵️ **Hide the noise** — glob patterns drop agents you don't care about from the status bar and dashboard. The agent keeps running; you just stop seeing it.
 - 🩺 **`tmon doctor`** — one command that checks everything and explains itself in plain text (or JSON, for the CI crowd).
 - 🤖 **11 agents and counting** — Grok Build, Claude Code, Codex CLI, Cursor, Cline, Aider, Copilot, CodeBuddy, Windsurf, Hermes Agent, OpenClaw.
+
+
+## Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/guillaumemeyer/tmon/main/install.sh | sh
+```
+
+Detects whether TPM manages your tmux config or not, clones the plugin
+(updating an existing checkout), wires `~/.tmux.conf`, and reloads tmux if
+you're inside it. Safe to re-run.
+
+See "Alternative installation modes" if necessary.
 
 ---
 
@@ -48,188 +63,7 @@ tmon is a fleet manager, not a petting zoo.
 
 ---
 
-## The Zoo
-
-Every agent in your fleet has a personality, and tmon tells you which one is
-currently on stage:
-
-| Status | Icon | What it means | Personality |
-|--------|------|---------------|-------------|
-| **blocked** | 🚨 | Waiting for a user action: a permission prompt, a plan approval, a y/n question. Overrides everything — a waiting agent is waiting even if it's burning CPU. | *"Waiting for you. It has opinions."* |
-| **working** | `\|/-\` | Actively thinking, writing, or running tools — the glyph is an animated spinner. | *"In flow. Do not disturb (unless it's been 40 minutes)."* |
-| **idle** | 💤 | Session alive, but not thinking and not waiting on you. | *"Napping between thoughts. Wakes at the first hint of an API call."* |
-
----
-
-## What you'll see
-
-### Status bar
-
-```
-🤖-🚨2-|3-💤1
-↑  ↑   ↑   ↑
-icon blocked working idle
-```
-
-- **🤖 cyan** — your personal fleet of AI agents
-- **🚨 orange** — agent is blocked, waiting for you
-- **`|` green** — agent is working; the spinner animates, advancing a frame on each status refresh
-- **💤 blue** — agent is idle
-- **🤖** alone — no agents detected (peace and quiet)
-
-Each status segment (icon + count) only appears when at least one agent is
-in that state, so the indicator stays compact. Set `@tmon-ascii-icons "1"`
-to swap the emoji for plain ASCII — same colors, same visibility rules
-(working agents keep the spinner either way):
-
-```
-[@]-B2-|3-I1
-↑   ↑  ↑  ↑
-app B  |  I
-   blocked working idle
-```
-
-> **Note:** A brand-new agent shows as **💤 idle** until its first activity
-> sample.
-
-### Dashboard (`prefix a a`)
-
-An 80%×80% popup that lists every running agent — in one of three layouts:
-flat, grouped by project, or grouped by status — with a live pane preview
-on the right. The tmux popup opens borderless; the
-dashboard draws its own **rounded border inside the popup, in the theme's
-accent color**, and paints its background from the theme's `bg` slot, so it
-reads as a solid themed panel:
-
-```
-╭───────────────────────────────────────┬──────────────────────╮
-│  🤖 tmon           [/] search [esc/q] quit │  Popup preview scro… │
-│ ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━│──────────────────────│
-│ / Popup preview scroll (Grok Build)    │  Popup preview scro… │
-│  ~/code/tmon  now                     │  $ tmon dashboard    │
-│  tmux: main / shell / 0               │  … pane content …    │
-│  ctx 52.4k/200k ████████░░… 26%       │                      │
-│ 🚨 Claude Code                         │                      │
-│  ~/site  paused                       │                      │
-│  tmux: main / shell / 1               │                      │
-│ 💤 Codex CLI                           │                      │
-│  ~/blog                               │                      │
-│  tmux: side / code / 0                │                      │
-│  v0.5.0     [↑/↓ j/k] navigate  …     │                      │
-╰───────────────────────────────────────┴──────────────────────╯
-```
-
-Each agent takes four uniform lines: a bold **session title and agent name**
-(`Title (Name)`, or just the name when the session has not earned a title
-yet) tinted with a **per-agent identity color** (Claude orange, Codex green,
-Hermes cyan, …) so the fleet is recognizable at a glance — same color in the
-list and the preview header. Working agents animate: their status slot spins
-(a green bubbles spinner) instead of the static `⚡️`. Beneath the name, a
-dimmed **working directory** — with a git context tag when the agent works
-inside a repository (`(main)`, or `(main · #42)` when `gh` finds the open
-pull request for that branch) — plus — when the agent is blocked — the
-prompt it
-is waiting on (e.g. `[y/N]`, or `paused` when the prompt is unknown), then a
-dimmed **tmux location** (`tmux: main / shell / 1` — Session / Window / Pane,
-each segment preferring the human name and falling back to the numeric
-index). When the
-connector can read token usage, a fourth **stats line** appears with a
-progress-bar context gauge:
-
-```
- / Popup preview scroll (Grok Build)
-  ~/code/tmon
-  tmux: main / shell / 0
-  ctx 52.4k/200k ████████░░░░░░░░░░░░░░░░░░░░░░ 26%
-```
-
-The stats line shows the **context window** — tokens used over the model's
-window size with a live progress bar and the used percentage (`ctx 13k/200k
-████░░… 5%`; the bar and `%` are shown only when the window size is known) —
-and, when a connector reports it, the **account quota** as remaining
-percentage plus next reset time (`62% left · reset 14:00`). Both are blank
-when unknown, and the agent then stays at three lines. What gets populated
-today:
-
-| Agent | Stats line |
-|-------|------------|
-| Grok Build | tokens + window % (from `signals.json`) |
-| Claude Code | tokens + window % when the model's window is known (from the transcript) |
-| Codex CLI | tokens (from the session history) |
-| Hermes Agent | tokens + window % (from CLI/TUI `state.db` session) |
-| Others | no stats line — no local usage source |
-
-Filter by status with `b` (blocked), `w` (working), `i` (idle); press the
-key again to clear. Hit `Enter` or **click an agent line** to **teleport**
-straight into that agent's pane.
-
-### The three views
-
-Press `v` to cycle the list layout; the choice is remembered between
-sessions. All three views respect the status filter and the fuzzy search.
-
-**List** — the flat classic, one row per agent:
-
-```
-🚨 Grok Build     ~/code/tmon (main · #42)   tmux: main / shell / 0
-🚨 Claude Code    ~/site (main)              tmux: main / shell / 1
-💤 Codex CLI      ~/blog                     tmux: side / code / 0
-```
-
-**Projects** — grouped by git repository (or the working directory when the
-agent is outside a repo). Headers sort alphabetically and carry the branch
-tag — `~/code/tmon (main · #42)` when `gh` finds the open pull request for
-that branch:
-
-```
-~/code/tmon (main · #42)
-  🚨 Grok Build     ~/code/tmon    tmux: main / shell / 0
-
-~/site (main)
-  🚨 Claude Code    ~/site         tmux: main / shell / 1
-```
-
-**Status** — grouped by blocked / working / idle, so the queue of agents
-waiting on you is always one screen away. Empty groups are hidden:
-
-```
-blocked
-  🚨 Grok Build     ~/code/tmon    tmux: main / shell / 0
-  🚨 Claude Code    ~/site         tmux: main / shell / 1
-
-working
-  | Codex CLI       ~/blog         tmux: side / code / 0
-
-idle
-  💤 Windsurf       ~/design       tmux: side / design / 2
-```
-
-**Fuzzy search** — press `/`, then type a Telescope/fzy-style query. Matches
-are subsequences (not substrings) over the session title, agent name,
-working directory, branch, pull-request number, and the full pane capture
-(including content not
-currently visible in the preview). Space-separated terms are ANDed. Results
-are ranked by match quality. `Esc` leaves search mode (the filter stays);
-`Esc` again closes the popup.
-
-| Key / Mouse | Action |
-|-----|--------|
-| `↑` `↓` / `j` `k` | Navigate the list |
-| `←` / `→` / `h` / `l` | Grow / shrink the preview pane (persisted) |
-| Drag `│` separator | Resize the preview pane (persisted) |
-| `Ctrl-u` / `Ctrl-d` | Scroll the preview up / down |
-| `b` / `w` / `i` | Filter by status: blocked / working / idle (press again to clear) |
-| `Enter` / `Space` | Teleport to the selected agent's pane |
-| `v` | Cycle the list layout: list → projects (grouped by repo) → status |
-| `t` | Open the theme selector (browse with `↑`/`↓` — previews live; `Enter`/`Space` applies and persists, `Esc`/`q` reverts) |
-| Click on an agent line | Select and teleport to that agent's pane |
-| `/` | Start fuzzy search (session title, name, directory, branch, PR number, pane content) |
-| Type | Filter the list |
-| `Backspace` | Remove last character from filter |
-| `Esc` | Leave search mode; if not searching, close popup |
-| `q` / `Ctrl-c` | Close popup |
-
-### Supported agents
+## Supported agents
 
 tmon watches the whole zoo out of the box — **11 agents**:
 
@@ -279,7 +113,7 @@ status. Codex additionally requires the hooks to be trusted in-session via
 `/hooks`. Without hooks, the Cursor/Copilot native fallback only reports the
 agent as idle; other agents still use CPU/IO heuristics across status refreshes.
 
-### Add your agent
+## Add your agent
 
 Missing your favorite agent? The connector interface is about **15 lines** —
 `Name()`, `Enabled()`, `Probe()` — and community connectors are how the
@@ -288,7 +122,7 @@ fleet grows (same playbook that made TPM the default tmux plugin story).
 See **[CONTRIBUTING.md](CONTRIBUTING.md)** for a copy-paste template, the
 detect-signature checklist, and how to land a PR.
 
-### Scripting with JSON (`tmon status --json`)
+## Scripting with JSON (`tmon status --json`)
 
 For status bars that aren't tmux (polybar, i3blocks, a shell prompt),
 `tmon status --json` prints the full poll result: every agent with its
@@ -351,17 +185,7 @@ detection to see them.
 
 ---
 
-## Installation
-
-### One-liner (recommended)
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/guillaumemeyer/tmon/main/install.sh | sh
-```
-
-Detects whether TPM manages your tmux config or not, clones the plugin
-(updating an existing checkout), wires `~/.tmux.conf`, and reloads tmux if
-you're inside it. Safe to re-run.
+## Alternative installation modes
 
 ### 1. Agent install
 
