@@ -1,4 +1,4 @@
-# tmon — your AI coding agents, now with a leash
+# tmon - Zero-config agents fleet manager for tmux
 
 ![tmon-meme](./docs/tmon-meme.jpg)
 

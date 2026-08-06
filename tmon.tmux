@@ -43,6 +43,15 @@
 #   @tmon-icon-<slot>       override one status glyph; slot is one of
 #                            app|blocked|idle|warn (working agents use the
 #                            animated spinner instead of an icon)
+#   @tmon-hide              comma-separated glob patterns of agents to hide
+#                            from the status bar and dashboard; each pattern
+#                            matches the agent label (case-insensitive), the
+#                            working directory, or the tmux session name;
+#                            "*" matches any run of characters, "?" one
+#                            character (default empty = show everything)
+#   @tmon-pr-lookup         "on" (default) — resolve open GitHub PR numbers
+#                            for agent branches in the dashboard via `gh`
+#                            (cached; requires gh on PATH); "off" disables
 #   @tmon-auto-hooks        "off" (default) — auto-install lifecycle hooks at
 #                            plugin load for every supported agent found on
 #                            this machine (set "on" to enable)
@@ -138,6 +147,8 @@ BOLD_COUNTS=$(get_tmux_option "@tmon-bold-counts" "1")
 CONTEXT_WARN=$(get_tmux_option "@tmon-context-warn" "85")
 PANE_BORDER=$(get_tmux_option "@tmon-pane-border" "on")
 PANE_BORDER_POS=$(get_tmux_option "@tmon-pane-border-position" "top")
+HIDE_PATTERNS=$(get_tmux_option "@tmon-hide" "")
+PR_LOOKUP=$(get_tmux_option "@tmon-pr-lookup" "on")
 case "$PANE_BORDER_POS" in
   top|bottom) ;;
   *) PANE_BORDER_POS="top" ;;
@@ -185,6 +196,8 @@ set_env_everywhere TMON_BOLD_COUNTS "$BOLD_COUNTS"
 set_env_everywhere TMON_CONTEXT_WARN "$CONTEXT_WARN"
 set_env_everywhere TMON_PANE_BORDER "$PANE_BORDER"
 set_env_everywhere TMON_PANE_BORDER_POSITION "$PANE_BORDER_POS"
+set_env_everywhere TMON_HIDE "$HIDE_PATTERNS"
+set_env_everywhere TMON_PR_LOOKUP "$PR_LOOKUP"
 set_env_everywhere TMON_THEME "$THEME"
 set_env_everywhere TMON_HOOK_STATE_DIR "$STATE_DIR/hooks"
 

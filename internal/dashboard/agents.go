@@ -24,7 +24,12 @@ type agentItem struct {
 func (i agentItem) FilterValue() string {
 	r := i.row
 	name := agentDisplayName(r)
-	return strings.Join([]string{r.Title, name, r.Profile, r.CWD, displayCWD(r.CWD), i.capture}, "\n")
+	return strings.Join([]string{
+		name, r.Profile, r.Label, r.Title,
+		r.SessionName, r.WindowName, tmuxPath(r),
+		r.CWD, displayCWD(r.CWD), r.Branch, r.PR,
+		i.capture,
+	}, "\n")
 }
 
 // newAgentList builds the bubbles list used for the agent pane. tmon owns
@@ -117,12 +122,9 @@ func (d agentDelegate) renderRow(r Row, selected bool) []string {
 		)
 	}
 
-	// Line 2: cwd, status age, and the blocked pause reason (orange).
-	cwd := displayCWD(r.CWD)
-	age := ""
-	if a := ageString(r.LastTs); a != "" {
-		age = "  " + a
-	}
+	// Line 2: "project: CWD" plus the git context tag, then the blocked
+	// pause reason (orange). No status-age suffix.
+	proj := projectLineText(r)
 	pause := ""
 	if r.Status == agent.StatusBlocked {
 		pause = r.BlockedReason
@@ -132,50 +134,67 @@ func (d agentDelegate) renderRow(r Row, selected bool) []string {
 	}
 	var line2 string
 	if selected {
-		text := " " + cwd + age
+		text := " " + proj
 		if pause != "" {
 			text += "  " + pause
 		}
 		line2 = st.selDim.Render(fit(text, d.width))
 	} else {
-		line2 = " " + st.dim.Render(cwd)
-		if age != "" {
-			line2 += st.dim.Render(age)
-		}
+		line2 = " " + st.dim.Render(proj)
 		if pause != "" {
 			line2 += st.orange.Render("  " + pause)
 		}
 		line2 = fit(line2, d.width)
 	}
 
-	// Line 3: the tmux location, dimmed — "tmux: main / shell / 0".
-	line3 := " " + st.dim.Render("tmux: "+tmuxPath(r))
+	// Line 3: the tmux location, dimmed — "location: main / shell / 0".
+	line3 := " " + st.dim.Render("location: "+tmuxPath(r))
 	if selected {
 		line3 = st.selDim.Render(fit(line3, d.width))
 	} else {
 		line3 = fit(line3, d.width)
 	}
 
-	// Line 4: usage stats or a blank row (uniform item height). The bar
-	// width is derived from the row width, and the line is padded to the
-	// full width so the selection highlight and alignment stay uniform.
-	// The left margin is budgeted out of the row width so the bar still
-	// fits; on the selected row the margin sits on the selection
-	// background too, keeping the highlight continuous.
+	// Line 4: usage stats (or "context: ?" when unknown). The bar width is
+	// derived from the row width, and the line is padded to the full width
+	// so the selection highlight and alignment stay uniform. The left
+	// margin is budgeted out of the row width so the bar still fits; on
+	// the selected row the margin sits on the selection background too,
+	// keeping the highlight continuous.
 	usage := usageLine(st, d.contextWarn, r.Usage, selected, d.width-1)
 	var line4 string
-	switch {
-	case usage == "" && selected:
-		line4 = st.selDim.Render(fit(" ", d.width))
-	case usage == "":
-		line4 = fit(" ", d.width)
-	case selected:
+	if selected {
 		line4 = st.selBg.Render(" ") + selFit(st, usage, d.width-1)
-	default:
+	} else {
 		line4 = fit(" "+usage, d.width)
 	}
 
 	return []string{line1, line2, line3, line4}
+}
+
+// projectLineText is the agent detail project field: "project: CWD" with
+// the git context tag when known (e.g. "project: ~/code/tmon (main · #42)").
+// Unknown cwd becomes "?".
+func projectLineText(r Row) string {
+	cwd := displayCWD(r.CWD)
+	if cwd == "" {
+		cwd = "?"
+	}
+	return "project: " + cwd + gitTagString(r)
+}
+
+// gitTagString renders the git context tag for an agent row: "(main)" when
+// only the branch is known, "(main · #42)" when the open PR number is known.
+// Empty when the agent is not in a repository, so rows without git context
+// render the project path alone.
+func gitTagString(r Row) string {
+	if r.Branch == "" {
+		return ""
+	}
+	if r.PR != "" {
+		return " (" + r.Branch + " · #" + r.PR + ")"
+	}
+	return " (" + r.Branch + ")"
 }
 
 // statusIcon returns the glyph for the agent's status: the working icon is

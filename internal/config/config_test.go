@@ -335,6 +335,54 @@ func TestThemeOverrides(t *testing.T) {
 	}
 }
 
+func TestHidePatternsDefault(t *testing.T) {
+	t.Setenv("TMON_HIDE", "")
+	c := FromEnv()
+	if len(c.HidePatterns) != 0 {
+		t.Fatalf("HidePatterns = %v, want empty by default", c.HidePatterns)
+	}
+}
+
+func TestHidePatternsFromEnv(t *testing.T) {
+	t.Setenv("TMON_HIDE", "aider, */scratch/* ,tool-*")
+	c := FromEnv()
+	want := []string{"aider", "*/scratch/*", "tool-*"}
+	if len(c.HidePatterns) != len(want) {
+		t.Fatalf("HidePatterns = %v, want %v", c.HidePatterns, want)
+	}
+	for i, w := range want {
+		if c.HidePatterns[i] != w {
+			t.Errorf("HidePatterns[%d] = %q, want %q", i, c.HidePatterns[i], w)
+		}
+	}
+}
+
+func TestHidePatternsDropsEmptyEntries(t *testing.T) {
+	t.Setenv("TMON_HIDE", "aider,,  ,claude")
+	c := FromEnv()
+	if len(c.HidePatterns) != 2 || c.HidePatterns[0] != "aider" || c.HidePatterns[1] != "claude" {
+		t.Fatalf("HidePatterns = %v, want [aider claude]", c.HidePatterns)
+	}
+}
+
+func TestPRLookupDefaultOn(t *testing.T) {
+	t.Setenv("TMON_PR_LOOKUP", "")
+	if c := FromEnv(); !c.PRLookup {
+		t.Fatal("PRLookup = false, want true (default)")
+	}
+}
+
+func TestPRLookupOverride(t *testing.T) {
+	t.Setenv("TMON_PR_LOOKUP", "off")
+	if c := FromEnv(); c.PRLookup {
+		t.Fatal("PRLookup = true with off, want false")
+	}
+	t.Setenv("TMON_PR_LOOKUP", "1")
+	if c := FromEnv(); !c.PRLookup {
+		t.Fatal("PRLookup = false with 1, want true")
+	}
+}
+
 func TestThemeFileWinsOverEnv(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("TMON_STATE_DIR", dir)

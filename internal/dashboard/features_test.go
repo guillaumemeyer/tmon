@@ -400,8 +400,8 @@ func TestPreviewPinsToBottom(t *testing.T) {
 	f := &fakeLoader{data: Data{Rows: testRows()}}
 	m := New(f.load, true)
 	m = applyMsg(t, m, initMsg{})
-	// bodyLines = h-3; preview content rows = bodyLines-1. Keep it small.
-	m.width, m.height = 80, 10
+	// Tall enough for header + a few content rows + preview bottom chrome.
+	m.width, m.height = 80, 16
 
 	v := ansi.Strip(m.View())
 	if strings.Contains(v, "LINE-01") {
@@ -604,19 +604,25 @@ func TestPreviewShortContentBottomAligned(t *testing.T) {
 	if len(prevBody) < 5 {
 		t.Fatalf("too few preview body rows: %v\n%s", prevBody, v)
 	}
-	// First body row is the agent header; the rest is the viewport.
+	// First body row is the agent header; the last two are separator + tips.
+	// The viewport sits between them and is bottom-aligned.
 	body := prevBody[1:]
-	if len(body) < 3 {
+	if len(body) < 5 {
 		t.Fatalf("viewport body too short: %v", body)
 	}
-	got := body[len(body)-3:]
+	// Drop the preview chrome (separator + tips).
+	content := body[:len(body)-2]
+	if len(content) < 3 {
+		t.Fatalf("content area too short: %v", content)
+	}
+	got := content[len(content)-3:]
 	want := []string{"only", "three", "lines"}
 	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("bottom of preview = %v, want %v\nfull body: %v\n%s", got, want, body, v)
+		t.Fatalf("bottom of preview content = %v, want %v\nfull body: %v\n%s", got, want, body, v)
 	}
-	for _, row := range body[:len(body)-3] {
+	for _, row := range content[:len(content)-3] {
 		if row != "" {
-			t.Fatalf("non-blank row above short content %q in %v", row, body)
+			t.Fatalf("non-blank row above short content %q in %v", row, content)
 		}
 	}
 }
@@ -636,8 +642,9 @@ func TestPreviewHeightMismatchStillPins(t *testing.T) {
 	f := &fakeLoader{data: Data{Rows: testRows()}}
 	m := New(f.load, true)
 	m = applyMsg(t, m, initMsg{})
-	// Height 10 → body preview rows well under the default viewport height 20.
-	m.width, m.height = 80, 10
+	// Short popup, but tall enough for content + preview chrome; still well
+	// under the default viewport height of 20.
+	m.width, m.height = 80, 16
 
 	v := ansi.Strip(m.View())
 	if !strings.Contains(v, "LINE-50") {
@@ -656,7 +663,8 @@ func TestFooterOmitsStatusCountsShowsPreviewTip(t *testing.T) {
 	f := &fakeLoader{data: Data{Rows: testRows()}}
 	m := New(f.load, true)
 	m = applyMsg(t, m, initMsg{})
-	m.width, m.height = 100, 24
+	// Wide enough that footer and preview tips fit.
+	m.width, m.height = 140, 24
 
 	v := ansi.Strip(m.View())
 	// Status counts are no longer in the footer.
@@ -665,47 +673,73 @@ func TestFooterOmitsStatusCountsShowsPreviewTip(t *testing.T) {
 			t.Fatalf("footer should not show status count %q in:\n%s", bad, v)
 		}
 	}
-	for _, want := range []string{"[↑/↓ j/k] navigate", "[←/→ h/l · drag │] resize", "[C-u/C-d] scroll preview"} {
+	for _, want := range []string{"[t] theme", "[v] view (List)", "[↑/↓ j/k] navigate"} {
 		if !strings.Contains(v, want) {
 			t.Fatalf("footer missing %q in:\n%s", want, v)
 		}
 	}
-	// The theme hint lives in the header, not the footer.
-	if !strings.Contains(v, "[t] theme") {
-		t.Fatalf("header missing theme hint in:\n%s", v)
+	// Scroll / resize tips sit at the bottom of the preview pane, not the footer.
+	for _, want := range []string{"[C-u/C-d] scroll preview", "[←/→ h/l · drag │] resize preview"} {
+		if !strings.Contains(v, want) {
+			t.Fatalf("preview pane missing %q in:\n%s", want, v)
+		}
+	}
+	// Footer line must not carry the preview tips.
+	footer := strings.Split(v, "\n")[m.height-2]
+	for _, bad := range []string{"scroll preview", "resize preview"} {
+		if strings.Contains(footer, bad) {
+			t.Fatalf("footer should not contain %q, got %q", bad, footer)
+		}
+	}
+	// Theme hint is in the footer (left of view), not the header.
+	if !strings.Contains(footer, "[t] theme") {
+		t.Fatalf("footer missing theme hint, got %q", footer)
+	}
+	if idxTheme, idxView := strings.Index(footer, "[t] theme"), strings.Index(footer, "[v] view"); idxTheme < 0 || idxView < 0 || idxTheme > idxView {
+		t.Fatalf("theme hint should sit left of view hint, got %q", footer)
 	}
 	rawLines := strings.Split(v, "\n")
-	if !strings.Contains(rawLines[1], "[t] theme") {
-		t.Fatalf("theme hint should be on the top header row, got: %q", rawLines[1])
+	if strings.Contains(rawLines[1], "[t] theme") {
+		t.Fatalf("theme hint should not be on the top header row, got: %q", rawLines[1])
 	}
 }
 
-func TestFooterShowsVersionBottomLeft(t *testing.T) {
+func TestHeaderShowsVersionNextToLogo(t *testing.T) {
 	old := capturePane
 	capturePane = func(p string) string { return "x" }
 	t.Cleanup(func() { capturePane = old })
 
 	f := &fakeLoader{data: Data{Rows: testRows()}}
-	m := New(f.load, true).WithVersion("0.4.2")
+	m := New(f.load, true).WithVersion("v0.4.2")
 	m = applyMsg(t, m, initMsg{})
 	m.width, m.height = 100, 24
 
 	v := ansi.Strip(m.View())
 	rows := strings.Split(v, "\n")
-	footer := rows[len(rows)-2] // above the bottom border
-	// One space from the border, then the version.
-	if !strings.HasPrefix(footer, "│ 0.4.2") {
-		t.Fatalf("footer should start with the version, got %q", footer)
+	// Header row 2 is below the top border and the first logo line.
+	if len(rows) < 3 {
+		t.Fatalf("view too short: %d lines", len(rows))
+	}
+	logoLine2 := rows[2] // border, logo[0], logo[1]
+	// One space margin between the wordmark and the version.
+	want := asciiLogo[1] + " v0.4.2"
+	if !strings.Contains(logoLine2, want) {
+		t.Fatalf("second logo line should contain %q, got %q", want, logoLine2)
+	}
+	// Version is not in the footer.
+	footer := rows[len(rows)-2]
+	if strings.Contains(footer, "v0.4.2") {
+		t.Fatalf("footer should not contain the version, got %q", footer)
 	}
 
-	// Without a version, the footer does not start with a bare " v…".
+	// Without a version, the logo line has no version suffix.
 	m2 := New(f.load, true)
 	m2 = applyMsg(t, m2, initMsg{})
 	m2.width, m2.height = 100, 24
 	v2 := ansi.Strip(m2.View())
-	footer2 := strings.Split(v2, "\n")[len(rows)-2]
-	if strings.Contains(footer2, "0.4.2") {
-		t.Fatalf("footer without version should not contain 0.4.2, got %q", footer2)
+	logo2 := strings.Split(v2, "\n")[2]
+	if strings.Contains(logo2, "v0.4.2") {
+		t.Fatalf("logo line without version should not contain v0.4.2, got %q", logo2)
 	}
 }
 
@@ -797,9 +831,9 @@ func TestSelectedAgentHighlight(t *testing.T) {
 	if !strings.Contains(raw, nameLine) {
 		t.Fatalf("selected name row missing the identity+selBg highlight:\n%q", raw)
 	}
-	// The cwd row gets the dim selection background too.
-	if !strings.Contains(raw, m.st.selDim.Render(fit(" code/tmon", listW))) {
-		t.Fatalf("selected cwd row missing the selection background:\n%q", raw)
+	// The project row gets the dim selection background too.
+	if !strings.Contains(raw, m.st.selDim.Render(fit(" project: code/tmon", listW))) {
+		t.Fatalf("selected project row missing the selection background:\n%q", raw)
 	}
 
 	// Unselected rows use status icon + agent identity color (bold) and no marker.
@@ -813,6 +847,109 @@ func TestSelectedAgentHighlight(t *testing.T) {
 		if strings.Contains(ln, "Claude Code") && strings.Contains(ln, ">") {
 			t.Fatalf("unselected row still has a marker: %q", ln)
 		}
+	}
+}
+
+func TestGitTagString(t *testing.T) {
+	cases := []struct {
+		name string
+		r    Row
+		want string
+	}{
+		{"no git", Row{}, ""},
+		{"branch only", Row{Branch: "main"}, " (main)"},
+		{"branch and pr", Row{Branch: "main", PR: "42"}, " (main · #42)"},
+		{"pr without branch", Row{PR: "42"}, ""},
+		{"slash branch", Row{Branch: "feat/x"}, " (feat/x)"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := gitTagString(c.r); got != c.want {
+				t.Errorf("gitTagString(%+v) = %q, want %q", c.r, got, c.want)
+			}
+		})
+	}
+}
+
+func TestGitTagRendersOnProjectLine(t *testing.T) {
+	old := capturePane
+	capturePane = func(p string) string { return "x" }
+	t.Cleanup(func() { capturePane = old })
+
+	rows := testRows()
+	rows[0].GitRoot = "/home/u/code/tmon"
+	rows[0].Branch = "main"
+	rows[0].PR = "42"
+	f := &fakeLoader{data: Data{Rows: rows}}
+	m := New(f.load, true)
+	m = applyMsg(t, m, initMsg{})
+	m.width, m.height = 120, 24
+
+	v := ansi.Strip(m.View())
+	lines := strings.Split(v, "\n")
+	found := false
+	for i, ln := range lines {
+		if !strings.Contains(ln, "Popup preview scroll (Grok Build)") {
+			continue
+		}
+		if !strings.Contains(lines[i+1], "project: code/tmon") {
+			t.Fatalf("Grok project line = %q, want project: code/tmon", lines[i+1])
+		}
+		if !strings.Contains(lines[i+1], "(main · #42)") {
+			t.Fatalf("Grok project line = %q, want git tag (main · #42)", lines[i+1])
+		}
+		found = true
+	}
+	if !found {
+		t.Fatal("Grok row not rendered")
+	}
+
+	// An agent outside a repository renders project: cwd with no git tag.
+	rows2 := testRows() // no git fields
+	f2 := &fakeLoader{data: Data{Rows: rows2}}
+	m2 := New(f2.load, true)
+	m2 = applyMsg(t, m2, initMsg{})
+	m2.width, m2.height = 120, 24
+	v2Lines := strings.Split(ansi.Strip(m2.View()), "\n")
+	for i, ln := range v2Lines {
+		if !strings.Contains(ln, "Popup preview scroll (Grok Build)") {
+			continue
+		}
+		if !strings.Contains(v2Lines[i+1], "project: code/tmon") {
+			t.Fatalf("no-git project line = %q, want project: code/tmon", v2Lines[i+1])
+		}
+		if strings.Contains(v2Lines[i+1], "(main") {
+			t.Fatalf("no-git project line = %q, want no git tag", v2Lines[i+1])
+		}
+	}
+}
+
+func TestSearchMatchesBranchAndPR(t *testing.T) {
+	rows := testRows()
+	rows[0].Branch = "feat/login"
+	rows[0].PR = "42"
+	rows[1].Branch = "main"
+	f := &fakeLoader{data: Data{Rows: rows}}
+	m := New(f.load, true)
+	m = applyMsg(t, m, initMsg{})
+
+	// "login" hits the branch field.
+	m = applyMsg(t, m, key('/'))
+	for _, r := range []rune{'l', 'o', 'g', 'i', 'n'} {
+		m = applyMsg(t, m, key(r))
+	}
+	if len(m.filtered) != 1 || m.rows[m.filtered[0]].Label != "Grok" {
+		t.Fatalf("branch search: filtered = %v, want only Grok", labelsOf(m))
+	}
+
+	// Reset and search the PR number.
+	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	m = applyMsg(t, m, key('/'))
+	for _, r := range []rune{'4', '2'} {
+		m = applyMsg(t, m, key(r))
+	}
+	if len(m.filtered) != 1 || m.rows[m.filtered[0]].Label != "Grok" {
+		t.Fatalf("PR search: filtered = %v, want only Grok", labelsOf(m))
 	}
 }
 
@@ -846,8 +983,8 @@ func TestAgentRowsAreTwoLines(t *testing.T) {
 			if !strings.Contains(list, ansi.Strip(m.spinnerFrame())+" Popup preview scroll") {
 				t.Fatalf("Grok name line = %q, want spinner frame before name", list)
 			}
-			if !strings.Contains(lines[i+1], "code/tmon") {
-				t.Fatalf("Grok cwd line = %q, want code/tmon", lines[i+1])
+			if !strings.Contains(lines[i+1], "project: code/tmon") {
+				t.Fatalf("Grok project line = %q, want project: code/tmon", lines[i+1])
 			}
 			if strings.Contains(lines[i+1], "paused") {
 				t.Fatalf("working agent should not show pause status: %q", lines[i+1])
@@ -856,15 +993,15 @@ func TestAgentRowsAreTwoLines(t *testing.T) {
 			if !strings.Contains(list, "B Claude Code") {
 				t.Fatalf("Claude name line = %q, want status icon before name", list)
 			}
-			if !strings.Contains(lines[i+1], "site") || !strings.Contains(lines[i+1], "paused") {
-				t.Fatalf("blocked agent cwd line = %q, want site + paused", lines[i+1])
+			if !strings.Contains(lines[i+1], "project: site") || !strings.Contains(lines[i+1], "paused") {
+				t.Fatalf("blocked agent project line = %q, want project: site + paused", lines[i+1])
 			}
 		case strings.Contains(list, "Codex CLI"):
 			if !strings.Contains(list, "I Codex CLI") {
 				t.Fatalf("Codex name line = %q, want status icon before name", list)
 			}
-			if !strings.Contains(lines[i+1], "blog") || strings.Contains(lines[i+1], "paused") {
-				t.Fatalf("idle agent cwd line = %q, want blog only", lines[i+1])
+			if !strings.Contains(lines[i+1], "project: blog") || strings.Contains(lines[i+1], "paused") {
+				t.Fatalf("idle agent project line = %q, want project: blog only", lines[i+1])
 			}
 		}
 	}
@@ -937,24 +1074,27 @@ func TestAgentRowsThreeLinesWithUsage(t *testing.T) {
 		list := parts[1]
 		switch {
 		case strings.Contains(list, "Popup preview scroll (Grok Build)"):
-			// Every agent spans four uniform rows: name, cwd, pane, usage.
-			if !strings.Contains(lines[i+1], "code/tmon") {
-				t.Fatalf("Grok cwd line = %q, want code/tmon", lines[i+1])
+			// Every agent spans four uniform rows: name, project, pane, usage.
+			if !strings.Contains(lines[i+1], "project: code/tmon") {
+				t.Fatalf("Grok project line = %q, want project: code/tmon", lines[i+1])
 			}
-			if !strings.Contains(lines[i+2], "tmux: main / shell / 0") {
-				t.Fatalf("Grok pane line = %q, want tmux: main / shell / 0", lines[i+2])
+			if !strings.Contains(lines[i+2], "location: main / shell / 0") {
+				t.Fatalf("Grok pane line = %q, want location: main / shell / 0", lines[i+2])
 			}
 			stats = lines[i+3]
 		case strings.Contains(list, "Claude Code"):
-			// The agent without usage keeps a blank fourth row.
-			if strings.Contains(lines[i+3], "ctx ") {
-				t.Fatalf("Claude has no usage but rendered a stats line: %q", lines[i+3])
+			// Unknown usage shows "context: ?" (not a filled token bar).
+			if !strings.Contains(lines[i+3], "context: ?") {
+				t.Fatalf("Claude without usage should show context: ?, got %q", lines[i+3])
+			}
+			if strings.Contains(lines[i+3], "context: 1") || strings.Contains(lines[i+3], "%") {
+				t.Fatalf("Claude has no usage but rendered token stats: %q", lines[i+3])
 			}
 		}
 	}
 	// The list column is 59 cells here, so the progress bar takes the full
 	// 30-cell cap; 26% of 30 fills 8 cells (rounded).
-	if !strings.Contains(stats, "ctx 52.4k/200k ████████░░░░░░░░░░░░░░░░░░░░░░ 26%") {
+	if !strings.Contains(stats, "context: 52.4k/200k ████████░░░░░░░░░░░░░░░░░░░░░░ 26%") {
 		t.Fatalf("stats line = %q, want the 30-cell progress bar", stats)
 	}
 }
@@ -1009,14 +1149,14 @@ func TestUsageLineFormat(t *testing.T) {
 		u    agent.Usage
 		want string
 	}{
-		{"empty", agent.Usage{}, ""},
-		{"tokens only", agent.Usage{TokensUsed: 13025}, "ctx 13k"},
-		{"tokens and window", agent.Usage{TokensUsed: 52367, WindowTokens: 200000}, "ctx 52.4k/200k ████████░░░░░░░░░░░░░░░░░░░░░░ 26%"},
-		{"million window", agent.Usage{TokensUsed: 123456, WindowTokens: 1000000}, "ctx 123k/1M ████░░░░░░░░░░░░░░░░░░░░░░░░░░ 12%"},
+		{"empty", agent.Usage{}, "context: ?"},
+		{"tokens only", agent.Usage{TokensUsed: 13025}, "context: 13k"},
+		{"tokens and window", agent.Usage{TokensUsed: 52367, WindowTokens: 200000}, "context: 52.4k/200k ████████░░░░░░░░░░░░░░░░░░░░░░ 26%"},
+		{"million window", agent.Usage{TokensUsed: 123456, WindowTokens: 1000000}, "context: 123k/1M ████░░░░░░░░░░░░░░░░░░░░░░░░░░ 12%"},
 		{"quota only", agent.Usage{QuotaPct: 38, QuotaReset: "14:00"}, "62% left · reset 14:00"},
-		{"all", agent.Usage{TokensUsed: 52367, WindowTokens: 200000, QuotaPct: 38, QuotaReset: "14:00"}, "ctx 52.4k/200k ████████░░░░░░░░░░░░░░░░░░░░░░ 26% · 62% left · reset 14:00"},
+		{"all", agent.Usage{TokensUsed: 52367, WindowTokens: 200000, QuotaPct: 38, QuotaReset: "14:00"}, "context: 52.4k/200k ████████░░░░░░░░░░░░░░░░░░░░░░ 26% · 62% left · reset 14:00"},
 		{"over quota clamps", agent.Usage{QuotaPct: 120, QuotaReset: "14:00"}, "0% left · reset 14:00"},
-		{"warn threshold", agent.Usage{TokensUsed: 180000, WindowTokens: 200000}, "ctx 180k/200k ███████████████████████████░░░ 90%"},
+		{"warn threshold", agent.Usage{TokensUsed: 180000, WindowTokens: 200000}, "context: 180k/200k ███████████████████████████░░░ 90%"},
 	}
 	for _, tc := range cases {
 		if got := ansi.Strip(usageLine(m.st, m.contextWarn, tc.u, false, 200)); got != tc.want {
@@ -1104,7 +1244,7 @@ func TestHeaderOmitsFleetCounts(t *testing.T) {
 	}
 }
 
-func TestCwdLineShowsStatusAge(t *testing.T) {
+func TestProjectLineHasNoStatusAge(t *testing.T) {
 	old := capturePane
 	capturePane = func(p string) string { return "x" }
 	t.Cleanup(func() { capturePane = old })
@@ -1128,25 +1268,24 @@ func TestCwdLineShowsStatusAge(t *testing.T) {
 		list := parts[1]
 		switch {
 		case strings.Contains(list, "Claude Code"):
-			// Status icon lives on the name line; age alone on the cwd line.
 			if !strings.Contains(list, "🚨 Claude Code") {
 				t.Fatalf("blocked name line = %q, want 🚨 before name", list)
 			}
-			if !strings.Contains(lines[i+1], "now") {
-				t.Fatalf("blocked cwd line = %q, want age now", lines[i+1])
+			if !strings.Contains(lines[i+1], "project: site") {
+				t.Fatalf("blocked project line = %q, want project: site", lines[i+1])
 			}
-			if strings.Contains(lines[i+1], "🚨") {
-				t.Fatalf("blocked cwd line should not repeat status icon: %q", lines[i+1])
+			if strings.Contains(lines[i+1], "now") || strings.Contains(lines[i+1], "1m") {
+				t.Fatalf("project line should not show status age: %q", lines[i+1])
 			}
 		case strings.Contains(list, "Codex CLI"):
 			if !strings.Contains(list, "💤 Codex CLI") {
 				t.Fatalf("idle name line = %q, want 💤 before name", list)
 			}
-			if !strings.Contains(lines[i+1], "1m") {
-				t.Fatalf("idle cwd line = %q, want age 1m", lines[i+1])
+			if !strings.Contains(lines[i+1], "project: blog") {
+				t.Fatalf("idle project line = %q, want project: blog", lines[i+1])
 			}
-			if strings.Contains(lines[i+1], "💤") {
-				t.Fatalf("idle cwd line should not repeat status icon: %q", lines[i+1])
+			if strings.Contains(lines[i+1], "now") || strings.Contains(lines[i+1], "1m") {
+				t.Fatalf("project line should not show status age: %q", lines[i+1])
 			}
 		}
 	}

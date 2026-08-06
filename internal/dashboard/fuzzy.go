@@ -107,7 +107,9 @@ func fuzzyScore(query, text string) int {
 }
 
 // fuzzyScoreTerms scores a multi-term query against text. Every term must
-// match; the total is the sum of per-term scores. Returns -1 if any term fails.
+// match; the total is the sum of per-term scores. Returns -1 if any term
+// fails. Matched terms with a negative gap-penalized score still count
+// (floored at 0 for ranking) so long haystacks do not reject real hits.
 func fuzzyScoreTerms(query, text string) int {
 	terms := strings.Fields(query)
 	if len(terms) == 0 {
@@ -115,9 +117,12 @@ func fuzzyScoreTerms(query, text string) int {
 	}
 	total := 0
 	for _, term := range terms {
+		if !fuzzyMatch(term, text) {
+			return -1
+		}
 		s := fuzzyScore(term, text)
 		if s < 0 {
-			return -1
+			s = 0
 		}
 		total += s
 	}

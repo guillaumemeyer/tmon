@@ -304,7 +304,7 @@ func TestApplyBordersSyncsAllActive(t *testing.T) {
 		{PID: 1, Label: "Grok", Pane: "s:1.1", Status: agent.StatusWorking},
 		{PID: 2, Label: "Claude", Pane: "s:1.2", Status: agent.StatusBlocked},
 	}
-	applyBorders(theme.Default, "top", prev, snap)
+	applyBorders(theme.Default, "top", nil, prev, snap)
 	want := map[string]bool{
 		"s:1.1|" + borderLine(theme.Default, agent.StatusWorking): true,
 		"s:1.2|" + borderLine(theme.Default, agent.StatusBlocked): true,
@@ -329,7 +329,7 @@ func TestApplyBordersWorking(t *testing.T) {
 	r := borderCalls(t)
 	prev := []agent.AgentState{{PID: 1, Label: "Grok", Pane: "s:1.1", Status: agent.StatusIdle}}
 	snap := []agent.AgentState{{PID: 1, Label: "Grok", Pane: "s:1.1", Status: agent.StatusWorking}}
-	applyBorders(theme.Default, "bottom", prev, snap)
+	applyBorders(theme.Default, "bottom", nil, prev, snap)
 	want := []string{"s:1.1|" + borderLine(theme.Default, agent.StatusWorking)}
 	if !reflect.DeepEqual(r.sets, want) {
 		t.Fatalf("sets = %v, want %v", r.sets, want)
@@ -344,7 +344,7 @@ func TestApplyBordersIdleClears(t *testing.T) {
 	r := borderCalls(t)
 	prev := []agent.AgentState{{PID: 1, Label: "Grok", Pane: "s:1.1", Status: agent.StatusBlocked}}
 	snap := []agent.AgentState{{PID: 1, Label: "Grok", Pane: "s:1.1", Status: agent.StatusIdle}}
-	applyBorders(theme.Default, "top", prev, snap)
+	applyBorders(theme.Default, "top", nil, prev, snap)
 	if len(r.sets) != 0 {
 		t.Fatalf("sets on idle = %v, want none", r.sets)
 	}
@@ -356,7 +356,7 @@ func TestApplyBordersIdleClears(t *testing.T) {
 func TestApplyBordersExitClears(t *testing.T) {
 	r := borderCalls(t)
 	prev := []agent.AgentState{{PID: 1, Label: "Grok", Pane: "s:1.1", Status: agent.StatusWorking}}
-	applyBorders(theme.Default, "top", prev, nil)
+	applyBorders(theme.Default, "top", nil, prev, nil)
 	if !reflect.DeepEqual(r.clears, []string{"s:1.1"}) {
 		t.Fatalf("clears = %v, want [s:1.1]", r.clears)
 	}
@@ -364,7 +364,7 @@ func TestApplyBordersExitClears(t *testing.T) {
 
 func TestApplyBordersNewAgent(t *testing.T) {
 	r := borderCalls(t)
-	applyBorders(theme.Default, "top", nil, []agent.AgentState{
+	applyBorders(theme.Default, "top", nil, nil, []agent.AgentState{
 		{PID: 9, Label: "Codex", Pane: "s:2.1", Status: agent.StatusIdle},
 	})
 	if len(r.sets) != 0 {
@@ -375,7 +375,7 @@ func TestApplyBordersNewAgent(t *testing.T) {
 	}
 
 	r = borderCalls(t)
-	applyBorders(theme.Default, "top", nil, []agent.AgentState{
+	applyBorders(theme.Default, "top", nil, nil, []agent.AgentState{
 		{PID: 9, Label: "Codex", Pane: "s:2.1", Status: agent.StatusBlocked},
 	})
 	want := []string{"s:2.1|" + borderLine(theme.Default, agent.StatusBlocked)}
@@ -394,9 +394,45 @@ func TestApplyBordersSkipsUnmapped(t *testing.T) {
 		{PID: 1, Label: "Grok", Pane: "?", Status: agent.StatusBlocked},
 		{PID: 2, Label: "Claude", Pane: "", Status: agent.StatusIdle},
 	}
-	applyBorders(theme.Default, "top", prev, snap)
+	applyBorders(theme.Default, "top", nil, prev, snap)
 	if len(r.sets) != 0 || len(r.clears) != 0 {
 		t.Fatalf("unmapped: sets=%v clears=%v, want none", r.sets, r.clears)
+	}
+}
+
+func TestApplyBordersHidesByLabel(t *testing.T) {
+	// A hidden agent gets no strip even when blocked.
+	r := borderCalls(t)
+	prev := []agent.AgentState{}
+	snap := []agent.AgentState{
+		{PID: 1, Label: "Aider", Pane: "s:1.1", Status: agent.StatusBlocked},
+		{PID: 2, Label: "Claude", Pane: "s:1.2", Status: agent.StatusBlocked},
+	}
+	applyBorders(theme.Default, "top", []string{"aider"}, prev, snap)
+	if len(r.sets) != 1 {
+		t.Fatalf("sets = %v, want only the visible agent", r.sets)
+	}
+	want := "s:1.2|" + borderLine(theme.Default, agent.StatusBlocked)
+	if r.sets[0] != want {
+		t.Fatalf("sets[0] = %q, want %q", r.sets[0], want)
+	}
+}
+
+func TestApplyBordersHidesBySession(t *testing.T) {
+	r := borderCalls(t)
+	prev := []agent.AgentState{
+		{PID: 3, Label: "Codex", Pane: "tool-x:0.0", Status: agent.StatusWorking},
+	}
+	snap := []agent.AgentState{
+		{PID: 3, Label: "Codex", Pane: "tool-x:0.0", Status: agent.StatusWorking},
+	}
+	// The agent is now hidden by session; its leftover strip must clear.
+	applyBorders(theme.Default, "top", []string{"tool-*"}, prev, snap)
+	if len(r.sets) != 0 {
+		t.Fatalf("sets = %v, want none for a hidden pane", r.sets)
+	}
+	if !reflect.DeepEqual(r.clears, []string{"tool-x:0.0"}) {
+		t.Fatalf("clears = %v, want the leftover strip cleared", r.clears)
 	}
 }
 

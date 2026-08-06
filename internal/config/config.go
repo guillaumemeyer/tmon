@@ -29,9 +29,11 @@ type Config struct {
 	Theme               string            // theme preset name (default, catppuccin, nord, …)
 	ColorOverrides      map[string]string // @tmon-color-* overrides: slot → color string
 	IconOverrides       map[string]string // @tmon-icon-* overrides: slot → glyph
-	ContextWarn        int               // context-usage % at which the ⚠️ warning appears (0 disables)
-	PaneBorder         bool              // show a status-colored border strip on agent panes
-	PaneBorderPosition string            // "top" or "bottom" for pane-border-status
+	ContextWarn         int               // context-usage % at which the ⚠️ warning appears (0 disables)
+	PaneBorder          bool              // show a status-colored border strip on agent panes
+	PaneBorderPosition  string            // "top" or "bottom" for pane-border-status
+	HidePatterns        []string          // @tmon-hide globs; matching agents are hidden from status/dashboard
+	PRLookup            bool              // resolve GitHub PR numbers for agent branches via gh (dashboard only)
 }
 
 // DefaultStateDir is the durable runtime state directory used when
@@ -80,9 +82,10 @@ func Defaults() Config {
 		HookStateDir:        filepath.Join(stateDir, "hooks"),
 		BoldCounts:          true,
 		Theme:               "default",
-		ContextWarn:        85,
-		PaneBorder:         true,
-		PaneBorderPosition: "top",
+		ContextWarn:         85,
+		PaneBorder:          true,
+		PaneBorderPosition:  "top",
+		PRLookup:            true,
 	}
 }
 
@@ -173,6 +176,8 @@ func FromEnv() Config {
 	}
 	c.ColorOverrides = envMap("TMON_COLOR_")
 	c.IconOverrides = envMap("TMON_ICON_")
+	c.HidePatterns = envList("TMON_HIDE")
+	c.PRLookup = envBool("TMON_PR_LOOKUP", c.PRLookup)
 	// Clamp invalid values so a bad env never produces a 0ms sleep or
 	// nonsense threshold math on the status-bar path.
 	c.clamp()
@@ -219,6 +224,24 @@ func envMap(prefix string) map[string]string {
 			out = make(map[string]string)
 		}
 		out[strings.ToLower(strings.TrimPrefix(k, prefix))] = v
+	}
+	return out
+}
+
+// envList splits a comma-separated environment variable into a trimmed list,
+// dropping empty entries. A nil slice is returned when the variable is unset
+// or empty, so callers can iterate it directly.
+func envList(name string) []string {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
 	}
 	return out
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/guillaumemeyer/tmon/internal/config"
 	"github.com/guillaumemeyer/tmon/internal/connector"
 	"github.com/guillaumemeyer/tmon/internal/detect"
+	"github.com/guillaumemeyer/tmon/internal/hide"
 	"github.com/guillaumemeyer/tmon/internal/pane"
 	"github.com/guillaumemeyer/tmon/internal/proc"
 	"github.com/guillaumemeyer/tmon/internal/theme"
@@ -131,7 +132,7 @@ func run(cfg config.Config, records []connector.Record) (Result, error) {
 			IconOverrides:  cfg.IconOverrides,
 			ASCII:          cfg.ASCII,
 		})
-		applyBorders(resolved, cfg.PaneBorderPosition, sf.Agents, snapshot)
+		applyBorders(resolved, cfg.PaneBorderPosition, cfg.HidePatterns, sf.Agents, snapshot)
 	}
 
 	res := Result{Statuses: statuses, Agents: snapshot}
@@ -194,7 +195,10 @@ var (
 // Every poll rewrites blocked/working strips so enabling the feature
 // mid-session still paints borders. Idle and exited panes clear
 // @tmon_border so the strip reverts to the default (empty) appearance.
-func applyBorders(t theme.Theme, position string, prev, snap []agent.AgentState) {
+// Agents matching the hide patterns get no strip; a strip left over from a
+// previously visible agent is cleared (prev is intentionally unfiltered so
+// the clear pass can reach it).
+func applyBorders(t theme.Theme, position string, hidePatterns []string, prev, snap []agent.AgentState) {
 	ensureBorderChrome(position)
 
 	prevByPane := make(map[string]agent.Status, len(prev))
@@ -205,9 +209,13 @@ func applyBorders(t theme.Theme, position string, prev, snap []agent.AgentState)
 	}
 	snapByPane := make(map[string]agent.Status, len(snap))
 	for _, a := range snap {
-		if a.Pane != "" && a.Pane != "?" {
-			snapByPane[a.Pane] = a.Status
+		if a.Pane == "" || a.Pane == "?" {
+			continue
 		}
+		if hide.ShouldHide(hidePatterns, a.Label, a.CWD, hide.SessionFromPane(a.Pane)) {
+			continue
+		}
+		snapByPane[a.Pane] = a.Status
 	}
 
 	for pane := range prevByPane {

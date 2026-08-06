@@ -37,6 +37,9 @@ type Row struct {
 	WindowIndex   string
 	WindowName    string
 	PaneIndex     string
+	GitRoot       string      // repository root (dir holding .git); "" if not a repo
+	Branch        string      // current branch or short SHA; "" if not a repo
+	PR            string      // open GitHub PR number for the branch; "" if unknown
 	Usage         agent.Usage // token usage stats; zero = unknown (no stats line)
 }
 
@@ -71,9 +74,15 @@ type Model struct {
 	// Empty disables load/save (tests and ad-hoc construction).
 	settingsPath string
 
+	// viewMode is the agent list layout (list / projects / status). Persisted
+	// with the other UI prefs. listScroll is the first visible content line
+	// of the list column (custom scroll so section headers can be 1 line).
+	viewMode   ViewMode
+	listScroll int
+
 	query       string
 	searching   bool
-	searchInput textinput.Model // live query editor, shown above the list while searching
+	searchInput textinput.Model // live query editor at the bottom of the list while searching
 
 	// theme carries the resolved palette and icons (preset + overrides);
 	// st are the lipgloss styles built from it. Both are set by New and
@@ -100,8 +109,9 @@ type Model struct {
 	// enter/space persist the browsed theme.
 	themeCommitted theme.Theme
 
-	// version is the tmon release string shown bottom-left in the footer
-	// (e.g. "0.4.2"). Empty hides it (tests and direct construction).
+	// version is the tmon release string shown next to the ascii logo on
+	// the second header line (e.g. "0.4.2"). Empty hides it (tests and
+	// direct construction).
 	version string
 
 	width, height int
@@ -134,9 +144,9 @@ func New(loader Loader, ascii bool) Model {
 	return m
 }
 
-// newSearchInput builds the query editor shown above the agent list while
-// searching. Styles are refreshed per render from the current theme (see
-// View), matching the pattern used for the agent list delegate.
+// newSearchInput builds the query editor shown at the bottom of the agent
+// list while searching. Styles are refreshed per render from the current
+// theme (see View), matching the pattern used for the agent list delegate.
 func newSearchInput() textinput.Model {
 	ti := textinput.New()
 	ti.Prompt = "/ "
@@ -194,14 +204,14 @@ func (m Model) WithContextWarn(n int) Model {
 }
 
 // WithSettingsPath sets the JSON file used to persist UI preferences
-// (preview width) and loads any existing values.
+// (preview width, list view) and loads any existing values.
 func (m Model) WithSettingsPath(path string) Model {
 	m.settingsPath = path
 	m.loadSettings()
 	return m
 }
 
-// WithVersion sets the version string shown bottom-left in the footer.
+// WithVersion sets the version string shown next to the ascii logo.
 func (m Model) WithVersion(v string) Model {
 	m.version = v
 	return m

@@ -97,11 +97,13 @@ func (m *Model) refreshPaneCache() {
 	}
 }
 
-// handleKey dispatches a key press in the current mode. Search mode consumes
-// printable keys, Backspace and Esc; theme mode routes to the theme
-// selector; navigation mode handles movement, focus, filter entry and
-// quitting. tmon-owned keys are intercepted here; everything else
-// (j/k/up/down/g/G/…) is forwarded to the bubbles list.
+// handleKey dispatches a key press in the current mode. Search mode
+// consumes printable keys and Backspace for the query, Esc to leave
+// search, up/down to move the agent selection, and Enter to focus the
+// selected pane. Theme mode routes to the theme selector; navigation mode
+// handles movement, focus, filter entry and quitting. tmon-owned keys are
+// intercepted here; everything else (j/k/up/down/g/G/…) is forwarded to
+// the bubbles list.
 func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	if m.searching {
 		switch msg.String() {
@@ -114,6 +116,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 			return m, nil
 		case "ctrl+c":
 			return m, tea.Quit
+		case "up", "down":
+			// Arrow keys move the list; they do not leave the query editor.
+			var cmd tea.Cmd
+			m.agentList, cmd = m.agentList.Update(msg)
+			m.refreshPreview(false)
+			return m, cmd
+		case "enter":
+			return m.focusSelected()
 		}
 		prev := m.searchInput.Value()
 		var cmd tea.Cmd
@@ -121,6 +131,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		if v := m.searchInput.Value(); v != prev {
 			m.query = v
 			m.rebuildFilter()
+			// Keep the preview on the preserved selection (not the first hit).
+			m.refreshPreview(false)
 		}
 		return m, cmd
 	}
@@ -162,6 +174,14 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		m.previewFollowBottom = m.preview.AtBottom()
 	case "enter", " ":
 		return m.focusSelected()
+	case "v":
+		m.viewMode = nextView(m.viewMode)
+		m.listScroll = 0
+		// Re-filter so list order is session/window/pane again, then
+		// rebuildItems reorders for projects/status. Keeps the selection
+		// by PID across the layout change.
+		m.rebuildFilter()
+		m.saveSettings()
 	case "b", "w", "i":
 		m.toggleStatusFilter(statusKey(msg.String()))
 	default:
@@ -270,8 +290,8 @@ func (m Model) handleMouse(msg tea.MouseMsg) (Model, tea.Cmd) {
 				return m, nil
 			}
 		}
-		// The wordmark rows, divider, and (while searching) the query input
-		// row are chrome; body rows start right after.
+		// The wordmark rows and divider are chrome; body rows start right after.
+		// While searching, the last body row of the list is the query input.
 		topChrome := m.mainTopChrome()
 		bodyRow := msg.Y - topChrome
 		if bodyRow < 0 || bodyRow >= bodyLinesFor(m.height-2, topChrome) {
@@ -286,30 +306,50 @@ func (m Model) handleMouse(msg tea.MouseMsg) (Model, tea.Cmd) {
 }
 
 // clickAgentAt maps a body row to the agent rendered there and selects it.
-// Rows are uniform (agentDelegate.Height() lines each); clicks past the
-// last visible item are ignored. Reports whether an agent was hit.
+// Section headers, the search input row, and partial rows are ignored.
+// Reports whether an agent was hit.
 func (m *Model) clickAgentAt(bodyRow int) bool {
-	const itemH = 4 // agentDelegate.Height()
-	idxInView := bodyRow / itemH
-	visible := m.agentList.VisibleItems()
-	if idxInView < 0 || idxInView >= len(visible) {
+	if bodyRow < 0 {
 		return false
 	}
-	// Only count fully rendered rows: a partially clipped item cannot be
-	// the click target.
-	if (idxInView+1)*itemH > bodyLinesFor(m.height-2, m.mainTopChrome()) {
-		return false
-	}
-	hit, ok := visible[idxInView].(agentItem)
-	if !ok {
-		return false
-	}
-	for i, item := range m.agentList.Items() {
-		if ai, ok := item.(agentItem); ok && ai.row.PID == hit.row.PID {
-			m.agentList.Select(i)
-			m.refreshPreview(false)
-			return true
+	bodyH := bodyLinesFor(m.height-2, m.mainTopChrome())
+	listBodyH := bodyH
+	if m.searching {
+		listBodyH = bodyH - 1
+		if listBodyH < 1 {
+			listBodyH = 1
 		}
+		if bodyRow >= listBodyH {
+			return false // search input row
+		}
+	}
+	entries := m.buildListEntries()
+	if len(entries) == 0 {
+		return false
+	}
+	m.clampListScroll(listBodyH)
+	// Absolute content line under the cursor.
+	absLine := m.listScroll + bodyRow
+	starts := entryStartLines(entries)
+	for i, e := range entries {
+		if !e.isAgent() {
+			continue
+		}
+		start := starts[i]
+		end := start + e.height()
+		if absLine < start || absLine >= end {
+			continue
+		}
+		// Only fully visible agent rows are click targets.
+		if start < m.listScroll || end > m.listScroll+listBodyH {
+			return false
+		}
+		if e.agent < 0 || e.agent >= len(m.filtered) {
+			return false
+		}
+		m.agentList.Select(e.agent)
+		m.refreshPreview(false)
+		return true
 	}
 	return false
 }
@@ -439,11 +479,18 @@ func (m Model) focusSelected() (Model, tea.Cmd) {
 }
 
 // rebuildFilter re-applies the query with Telescope/fzy-style fuzzy matching
-// over the session title, agent name, working directory, and full pane
-// capture (including content not currently visible in the preview panel),
-// plus the optional status filter. With a non-empty query, matches are
-// ranked by score (best first). Then rebuilds the grouped display items.
+// over agent name, session title, tmux path, project (path + git), and full
+// pane capture. Each whitespace-separated word is AND'd across those
+// fields (a term may hit a different field than the others). With a
+// non-empty query, matches are ranked by score (best first). Then rebuilds
+// the grouped display items. The previously selected agent is kept when it
+// still matches; filtering does not jump the selection to the first hit.
 func (m *Model) rebuildFilter() {
+	// Capture selection from the list items before filtered order changes.
+	// Reading selectedRow() after reassignment would point at the agent now
+	// sitting at the old index (often the top score), not the prior choice.
+	selPID := m.selectedAgentPID()
+
 	type scored struct {
 		idx   int
 		score int
@@ -471,51 +518,113 @@ func (m *Model) rebuildFilter() {
 	for _, s := range matches {
 		m.filtered = append(m.filtered, s.idx)
 	}
-	m.rebuildItems()
+	m.rebuildItems(selPID)
 }
 
-// agentSearchScore returns the best fuzzy score for query against the
-// agent's session title, display name (includes Hermes profile), CWD
-// (absolute and display forms), and pane capture text. Returns -1 when
-// nothing matches.
-func (m *Model) agentSearchScore(r Row) int {
-	q := m.query
-	title := r.Title
-	name := agentDisplayName(r)
-	cwd := r.CWD
-	if disp := displayCWD(r.CWD); disp != "" && disp != cwd {
-		cwd = cwd + " " + disp
+// selectedAgentPID is the PID of the agent currently selected in the list,
+// or 0 when nothing is selected. Uses the bubbles item (not filtered+index)
+// so it stays correct while rebuildFilter rewrites filtered.
+func (m Model) selectedAgentPID() int {
+	item := m.agentList.SelectedItem()
+	if item == nil {
+		return 0
 	}
+	ai, ok := item.(agentItem)
+	if !ok {
+		return 0
+	}
+	return ai.row.PID
+}
+
+// agentSearchScore scores query against one agent. Every whitespace-
+// separated term must match (AND) at least one searchable field:
+// agent name, session title, tmux path (session/window names and path),
+// project (cwd + git branch/PR), and pane capture. A term is scored only
+// within a single field so fuzzy matches cannot span field boundaries.
+// Returns -1 when any term fails.
+func (m *Model) agentSearchScore(r Row) int {
+	terms := strings.Fields(m.query)
+	if len(terms) == 0 {
+		return 0
+	}
+	fields := m.agentSearchFields(r)
+	total := 0
+	for _, term := range terms {
+		best := -1
+		matched := false
+		for _, f := range fields {
+			if f == "" || !fuzzyMatch(term, f) {
+				continue
+			}
+			matched = true
+			if s := fuzzyScore(term, f); s > best {
+				best = s
+			}
+		}
+		if !matched {
+			return -1
+		}
+		if best < 0 {
+			best = 0
+		}
+		total += best
+	}
+	return total
+}
+
+// agentSearchFields are the discrete fields search matches against. Each
+// term must hit at least one field; terms are not allowed to span fields.
+func (m *Model) agentSearchFields(r Row) []string {
+	name := agentDisplayName(r)
+	// Project: working directory (raw + home-relative display) and git context.
+	// Avoid duplicating identical path forms so fuzzy terms cannot chain
+	// across two copies of the same cwd (e.g. "gb" vs "blog blog").
+	projectParts := []string{r.CWD}
+	if disp := displayCWD(r.CWD); disp != "" && disp != r.CWD {
+		projectParts = append(projectParts, disp)
+	}
+	if r.Branch != "" {
+		projectParts = append(projectParts, r.Branch)
+	}
+	if r.PR != "" {
+		projectParts = append(projectParts, r.PR, "#"+r.PR)
+	}
+	project := strings.Join(projectParts, " ")
+	// Tmux path: structured names/indexes and the rendered path string.
+	tmux := strings.Join([]string{
+		r.SessionName, r.SessionID,
+		r.WindowName, r.WindowIndex,
+		r.PaneIndex, r.Pane,
+		tmuxPath(r),
+	}, " ")
 	preview := ""
 	if r.Pane != "" && r.Pane != "?" && m.paneCache != nil {
 		preview = ansi.Strip(m.paneCache[r.Pane])
 	}
-
-	best := -1
-	for _, field := range []string{title, name, r.Profile, cwd, preview} {
-		if field == "" {
-			continue
-		}
-		if s := fuzzyScoreTerms(q, field); s > best {
-			best = s
-		}
+	return []string{
+		name,
+		r.Profile,
+		r.Label,
+		r.Title, // session / conversation title
+		tmux,
+		project,
+		preview,
 	}
-	// Also allow a term to hit across fields (e.g. name + path fragments)
-	// by scoring the concatenated haystack — but only if per-field failed,
-	// or if it scores higher.
-	hay := title + "\n" + name + "\n" + r.Profile + "\n" + cwd + "\n" + preview
-	if s := fuzzyScoreTerms(q, hay); s > best {
-		best = s
-	}
-	return best
 }
 
 // rebuildItems rebuilds the flat agent list from the filtered rows (one
-// item per agent, in filtered order) and feeds it to the bubbles list.
-// Each item carries the agent's stripped pane capture so search can match
-// content beyond the visible preview. The bubbles list keeps its cursor
-// when items change, so the selection is clamped back into range here.
-func (m *Model) rebuildItems() {
+// item per agent) and feeds it to the bubbles list. For projects/status
+// views, filtered is reordered to the visual section order so j/k matches
+// the screen. Each item carries the agent's stripped pane capture so
+// search can match content beyond the visible preview. selPID is restored
+// when that agent is still in the list; otherwise the index is only
+// clamped into range (no jump to the first match).
+func (m *Model) rebuildItems(selPID int) {
+	if selPID == 0 {
+		selPID = m.selectedAgentPID()
+	}
+	m.filtered = m.orderFilteredForView(m.filtered)
+
 	items := make([]list.Item, 0, len(m.filtered))
 	for _, fi := range m.filtered {
 		r := m.rows[fi]
@@ -526,7 +635,22 @@ func (m *Model) rebuildItems() {
 		items = append(items, agentItem{row: r, capture: capture})
 	}
 	_ = m.agentList.SetItems(items)
-	if n := len(items); n > 0 && m.agentList.Index() >= n {
+
+	n := len(items)
+	if n == 0 {
+		return
+	}
+	if selPID != 0 {
+		for i, fi := range m.filtered {
+			if m.rows[fi].PID == selPID {
+				m.agentList.Select(i)
+				return
+			}
+		}
+	}
+	// Previous selection left the filter: keep a valid index without
+	// forcing the cursor to the top-ranked match.
+	if m.agentList.Index() >= n {
 		m.agentList.Select(n - 1)
 	}
 }

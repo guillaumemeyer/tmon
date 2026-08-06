@@ -9,6 +9,8 @@ import (
 	"github.com/guillaumemeyer/tmon/internal/blocked"
 	"github.com/guillaumemeyer/tmon/internal/config"
 	"github.com/guillaumemeyer/tmon/internal/detect"
+	"github.com/guillaumemeyer/tmon/internal/git"
+	"github.com/guillaumemeyer/tmon/internal/hide"
 	"github.com/guillaumemeyer/tmon/internal/pane"
 	"github.com/guillaumemeyer/tmon/internal/proc"
 	"github.com/guillaumemeyer/tmon/internal/tmux"
@@ -118,8 +120,51 @@ func loadFull(cfg config.Config) (Data, error) {
 	for i := range rows {
 		resolveFullCWD(&rows[i])
 	}
+	rows = filterHidden(rows, cfg)
+	for i := range rows {
+		resolveGit(&rows[i], cfg)
+	}
 	sortRows(rows)
 	return Data{Rows: rows}, nil
+}
+
+// filterHidden drops agents that match the configured hide patterns, so the
+// dashboard never shows what the status bar hides. Hidden agents stay in
+// state.json; hiding is a display concern only.
+func filterHidden(rows []Row, cfg config.Config) []Row {
+	if len(cfg.HidePatterns) == 0 {
+		return rows
+	}
+	kept := rows[:0]
+	for _, r := range rows {
+		if !hide.ShouldHide(cfg.HidePatterns, r.Label, r.CWD, r.SessionName) {
+			kept = append(kept, r)
+		}
+	}
+	return kept
+}
+
+// resolveGit fills a row's git context — repository root and current branch —
+// from its working directory, plus the open GitHub PR number when gh lookup
+// is enabled. It only resolves absolute CWDs: a short-form CWD would resolve
+// against the dashboard's own process directory, which is meaningless. All
+// lookups are best-effort; a non-repo CWD leaves the fields empty.
+func resolveGit(r *Row, cfg config.Config) {
+	if !strings.HasPrefix(r.CWD, "/") {
+		return
+	}
+	ws, ok := gitFind(r.CWD)
+	if !ok {
+		return
+	}
+	r.GitRoot = ws.Root
+	r.Branch = ws.Branch
+	if !cfg.PRLookup || r.Branch == "" {
+		return
+	}
+	if pr, ok := gitPR(ws.Root, r.Branch, git.DefaultPRTTL); ok {
+		r.PR = pr.Number
+	}
 }
 
 // resolveFullCWD upgrades a short-form CWD ("code/tmon") to the agent's
@@ -242,6 +287,10 @@ var (
 		}
 		return blocked.DetectPanePattern(paneTarget)
 	}
+	// Git-resolution seams: tests inject deterministic fakes so the reload
+	// does not depend on the repository the test binary runs in.
+	gitFind = git.Find
+	gitPR   = git.PRFor
 )
 
 // sortRows orders agents the way the bash popup did: by session id, window

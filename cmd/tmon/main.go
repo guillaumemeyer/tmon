@@ -55,6 +55,14 @@ Environment (set by tmon.tmux from the @tmon-* tmux options):
                               (blocked/working; idle clears to default): on|off
                               (default on)
   TMON_PANE_BORDER_POSITION   Where the strip sits: top|bottom (default top)
+  TMON_HIDE                   Comma-separated glob patterns of agents to hide
+                              from the status bar and dashboard; each pattern
+                              matches the agent label (case-insensitive), the
+                              working directory, or the tmux session name
+                              (default empty = show everything)
+  TMON_PR_LOOKUP              Resolve open GitHub PR numbers for agent
+                              branches in the dashboard via gh (default on;
+                              requires gh on PATH)
 `
 
 func main() {

@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/guillaumemeyer/tmon/internal/agent"
 	"github.com/guillaumemeyer/tmon/internal/config"
+	"github.com/guillaumemeyer/tmon/internal/hide"
 	"github.com/guillaumemeyer/tmon/internal/poll"
 	"github.com/guillaumemeyer/tmon/internal/statusbar"
 )
@@ -33,6 +35,10 @@ func cmdStatus(args []string) int {
 		fmt.Fprintln(os.Stderr, "tmon: save state:", err)
 	}
 
+	// Hide patterns apply to the indicator and the --json view alike, so the
+	// status bar and the dashboard never disagree about what is visible.
+	res.Agents = filterHiddenAgents(res.Agents, cfg)
+
 	if jsonOut {
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
@@ -45,4 +51,20 @@ func cmdStatus(args []string) int {
 
 	fmt.Print(statusbar.Render(res.Agents, cfg.BoldCounts, resolveTheme(cfg), cfg.ContextWarn))
 	return 0
+}
+
+// filterHiddenAgents drops agents that match the configured hide patterns.
+// The session name is parsed from the agent's stored pane target, matching
+// how the dashboard filters rows.
+func filterHiddenAgents(agents []agent.AgentState, cfg config.Config) []agent.AgentState {
+	if len(cfg.HidePatterns) == 0 {
+		return agents
+	}
+	kept := agents[:0]
+	for _, a := range agents {
+		if !hide.ShouldHide(cfg.HidePatterns, a.Label, a.CWD, hide.SessionFromPane(a.Pane)) {
+			kept = append(kept, a)
+		}
+	}
+	return kept
 }

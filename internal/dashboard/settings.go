@@ -16,7 +16,8 @@ const (
 
 // dashSettings is the on-disk dashboard UI preferences.
 type dashSettings struct {
-	PreviewPct int `json:"preview_pct"`
+	PreviewPct int    `json:"preview_pct"`
+	View       string `json:"view,omitempty"` // list | projects | status
 }
 
 // loadSettings reads persisted UI prefs from settingsPath, if set.
@@ -34,6 +35,9 @@ func (m *Model) loadSettings() {
 		return
 	}
 	m.previewPct = clampPreviewPct(s.PreviewPct)
+	if s.View != "" {
+		m.viewMode = parseViewMode(s.View)
+	}
 }
 
 // saveSettings writes the current UI prefs. Failures are ignored so a
@@ -45,7 +49,10 @@ func (m *Model) saveSettings() {
 	if err := os.MkdirAll(filepath.Dir(m.settingsPath), 0o755); err != nil {
 		return
 	}
-	data, err := json.Marshal(dashSettings{PreviewPct: clampPreviewPct(m.previewPct)})
+	data, err := json.Marshal(dashSettings{
+		PreviewPct: clampPreviewPct(m.previewPct),
+		View:       m.viewMode.String(),
+	})
 	if err != nil {
 		return
 	}

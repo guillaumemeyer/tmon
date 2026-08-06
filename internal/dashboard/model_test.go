@@ -115,12 +115,15 @@ func TestFilterFuzzyNameAndCWD(t *testing.T) {
 		{query: "gb", want: []string{"Grok"}},     // fuzzy subsequence of "Grok Build"
 		{query: "blog", want: []string{"Codex"}},  // CWD is searched
 		{query: "site", want: []string{"Claude"}}, // CWD
-		{query: "popup", want: []string{"Grok"}},  // session title is searched
-		{query: "SHELL"},                          // window name is not a search field
-		{query: "main"},                           // session name is not a search field
+		{query: "popup", want: []string{"Grok"}}, // session title is searched
+		{query: "shell", wantAny: []string{"Grok", "Claude"}, wantN: 2}, // tmux window name
+		{query: "main", wantAny: []string{"Grok", "Claude"}, wantN: 2},  // tmux session name
+		{query: "side", want: []string{"Codex"}},                        // tmux session name
 		{query: "", want: []string{"Grok", "Claude", "Codex"}},
 		// "code" hits Claude/Codex names and Grok's cwd "code/tmon".
 		{query: "code", wantAny: []string{"Grok", "Claude", "Codex"}, wantN: 3},
+		// Multi-word AND: cwd + agent name across fields.
+		{query: "blog codex", want: []string{"Codex"}},
 	}
 	for _, c := range cases {
 		m = applyMsg(t, m, key('/')) // filtering happens in search mode
@@ -258,6 +261,78 @@ func TestSearchModeKeys(t *testing.T) {
 	}
 	if m.searchInput.Value() != "" {
 		t.Fatalf("search input should reset after Esc, got %q", m.searchInput.Value())
+	}
+}
+
+func TestSearchFilterKeepsSelection(t *testing.T) {
+	old := capturePane
+	capturePane = func(p string) string { return "" }
+	t.Cleanup(func() { capturePane = old })
+
+	f := &fakeLoader{data: Data{Rows: testRows()}}
+	m := New(f.load, true)
+	m = applyMsg(t, m, initMsg{})
+
+	// Select Claude (index 1), then search for a term that still matches it.
+	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	if m.rows[m.filtered[m.agentList.Index()]].Label != "Claude" {
+		t.Fatalf("precondition: want Claude selected, got %v", labelsOf(m))
+	}
+	claudePID := m.rows[m.filtered[m.agentList.Index()]].PID
+
+	m = applyMsg(t, m, key('/'))
+	// Empty query keeps all agents; Claude stays selected.
+	if m.selectedAgentPID() != claudePID {
+		t.Fatalf("after /: selection PID = %d, want Claude %d", m.selectedAgentPID(), claudePID)
+	}
+	// "co" matches Claude Code, Codex CLI, and code/tmon — Claude must stay selected.
+	m = applyMsg(t, m, key('c'))
+	m = applyMsg(t, m, key('o'))
+	if m.selectedAgentPID() != claudePID {
+		t.Fatalf("after typing co: selection PID = %d (label %v), want Claude %d",
+			m.selectedAgentPID(), labelsOf(m), claudePID)
+	}
+	if m.agentList.Index() == 0 && m.rows[m.filtered[0]].Label != "Claude" {
+		t.Fatalf("filter jumped selection to first item %q", m.rows[m.filtered[0]].Label)
+	}
+}
+
+func TestSearchModeArrowsAndEnter(t *testing.T) {
+	f := &fakeLoader{data: Data{Rows: testRows()}}
+	m := New(f.load, true)
+	m = applyMsg(t, m, initMsg{})
+
+	var focused string
+	m.focusCmd = func(r Row) tea.Cmd {
+		focused = r.Pane
+		return nil
+	}
+
+	// Enter search with an empty query so all agents stay listed.
+	m = applyMsg(t, m, key('/'))
+	if m.agentList.Index() != 0 {
+		t.Fatalf("selection = %d, want 0", m.agentList.Index())
+	}
+	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	if m.agentList.Index() != 1 {
+		t.Fatalf("down in search: selection = %d, want 1", m.agentList.Index())
+	}
+	if m.query != "" || m.searchInput.Value() != "" {
+		t.Fatalf("arrows must not edit the query, got %q", m.query)
+	}
+	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyUp})
+	if m.agentList.Index() != 0 {
+		t.Fatalf("up in search: selection = %d, want 0", m.agentList.Index())
+	}
+
+	// Enter focuses the selected agent while still in search mode.
+	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyDown}) // Claude
+	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	if focused != "main:0.1" {
+		t.Fatalf("enter in search focused %q, want main:0.1", focused)
+	}
+	if !m.searching {
+		t.Fatal("enter should focus without leaving search mode in the model return path")
 	}
 }
 
@@ -655,8 +730,8 @@ func TestMouseClickFocusesInSearchFlatList(t *testing.T) {
 	}
 
 	// Narrow to a single agent: the flat list has one item at body row 0
-	// (screen row 5, below the top border, the wordmark header, divider, and
-	// the search input row shown while m.searching is still true).
+	// (screen row 4, below the top border, the wordmark header, and divider).
+	// The search input sits at the bottom of the list column, not above.
 	m = applyMsg(t, m, key('/'))
 	for _, r := range []rune{'c', 'o', 'd', 'e', 'x'} {
 		m = applyMsg(t, m, key(r))
@@ -664,7 +739,7 @@ func TestMouseClickFocusesInSearchFlatList(t *testing.T) {
 	if len(m.agentList.Items()) != 1 {
 		t.Fatalf("filtered items = %d, want 1", len(m.agentList.Items()))
 	}
-	m = applyMsg(t, m, click(2, 5))
+	m = applyMsg(t, m, click(2, 4))
 	if focused != "side:3.0" {
 		t.Fatalf("click in search list: focused %q, want side:3.0", focused)
 	}
@@ -782,10 +857,10 @@ func TestViewRendersFlatList(t *testing.T) {
 		asciiLogo[0],
 		"Popup preview scroll (Grok Build)", // session title + name
 		"Claude Code", "Codex CLI",
-		"code/tmon",       // cwd
-		"tmux: main / shell / 0", // pane location line (session / window / pane, names preferred)
-		"tmux: main / shell / 1",
-		"tmux: side / code / 0",
+		"code/tmon",              // cwd
+		"location: main / shell / 0", // pane location line (session / window / pane, names preferred)
+		"location: main / shell / 1",
+		"location: side / code / 0",
 	} {
 		if !strings.Contains(v, want) {
 			t.Fatalf("view missing %q:\n%s", want, v)
