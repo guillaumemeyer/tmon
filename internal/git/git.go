@@ -6,6 +6,7 @@
 package git
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -133,9 +134,16 @@ type PR struct {
 // once per branch per minute.
 const DefaultPRTTL = time.Minute
 
-// runGH is the gh runner seam. Tests replace it with a fake.
-var runGH = func(dir string, args ...string) (string, error) {
-	cmd := exec.Command("gh", args...)
+// ghTimeout bounds a single gh lookup. A wedged gh (hung network, stuck
+// credential prompt) must not hang the dashboard: the loader runs in the
+// popup's event loop, so an unbounded subprocess there makes the whole
+// popup unresponsive. A var so tests can shrink it.
+var ghTimeout = 3 * time.Second
+
+// runGH is the gh runner seam. Tests replace it with a fake. The context
+// carries the ghTimeout deadline so a hung gh is killed, never waited on.
+var runGH = func(ctx context.Context, dir string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "gh", args...)
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	return string(out), err
@@ -148,14 +156,28 @@ var ghCheck = func() bool {
 }
 
 var (
-	ghOnce   sync.Once
+	ghMu     sync.Mutex
 	ghCached bool
+	ghAt     time.Time
 )
 
-// ghOnPath reports whether gh is available, caching the answer after the
-// first call so PRFor does not walk PATH on every refresh.
+// ghAvailabilityTTL bounds how often the gh PATH check re-runs, so PRFor
+// does not walk PATH on every refresh. Re-checking after the TTL lets the
+// answer self-heal: a gh installed or removed mid-session is noticed within
+// a minute instead of the first verdict being locked in until restart.
+const ghAvailabilityTTL = time.Minute
+
+// ghOnPath reports whether gh is available. The answer is cached for
+// ghAvailabilityTTL; when gh is absent, PRFor returns a miss without ever
+// spawning a subprocess, so the dashboard simply omits PR numbers.
 func ghOnPath() bool {
-	ghOnce.Do(func() { ghCached = ghCheck() })
+	ghMu.Lock()
+	defer ghMu.Unlock()
+	if time.Since(ghAt) < ghAvailabilityTTL {
+		return ghCached
+	}
+	ghCached = ghCheck()
+	ghAt = time.Now()
 	return ghCached
 }
 
@@ -223,7 +245,9 @@ func prunePRCache(now time.Time) {
 // "null\tnull"; the // empty clause turns that into no output at all, and
 // the "null" guard covers older gh/jq combinations that still print it.
 func lookupPR(root, branch string) (PR, bool) {
-	out, err := runGH(root, "pr", "list", "--head", branch,
+	ctx, cancel := context.WithTimeout(context.Background(), ghTimeout)
+	defer cancel()
+	out, err := runGH(ctx, root, "pr", "list", "--head", branch,
 		"--json", "number,title", `--jq`, `.[0] // empty | "\(.number)\t\(.title)"`)
 	if err != nil {
 		return PR{}, false

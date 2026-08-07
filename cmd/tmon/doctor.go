@@ -83,6 +83,7 @@ func runChecks(cfg config.Config) []check {
 		checkTmux(),
 		checkTool("downloader", "curl", "wget"),
 		checkTool("checksum", "sha256sum", "shasum"),
+		checkGH(),
 		checkBinary(cfg),
 		checkStateDir(cfg),
 		checkAgents(),
@@ -158,6 +159,16 @@ func checkTool(name string, tools ...string) check {
 		}
 	}
 	return check{Name: name, Detail: "none of " + strings.Join(tools, ", ") + " on PATH", OK: false}
+}
+
+// checkGH reports whether gh is on PATH. Informational: gh only powers the
+// optional PR numbers in the dashboard, so its absence is a graceful
+// degradation (the dashboard omits PR numbers), never a failure.
+func checkGH() check {
+	if p, err := doctorLookPath("gh"); err == nil && p != "" {
+		return check{Name: "gh", Detail: "found (" + p + ") — dashboard PR numbers on", OK: true}
+	}
+	return check{Name: "gh", Detail: "not found — dashboard omits PR numbers (optional)", OK: true}
 }
 
 // checkBinary compares the running binary against the plugin's VERSION file

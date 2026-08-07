@@ -188,6 +188,25 @@ func TestParseVersion(t *testing.T) {
 	}
 }
 
+func TestCheckGH(t *testing.T) {
+	oldLook := doctorLookPath
+	t.Cleanup(func() { doctorLookPath = oldLook })
+
+	// gh on PATH → OK with the location in the detail.
+	doctorLookPath = func(string) (string, error) { return "/usr/bin/gh", nil }
+	c := checkGH()
+	if !c.OK || !strings.Contains(c.Detail, "found") {
+		t.Errorf("gh present = %+v, want ok + found detail", c)
+	}
+
+	// gh absent → still OK (informational), with the degradation explained.
+	doctorLookPath = func(string) (string, error) { return "", os.ErrNotExist }
+	c = checkGH()
+	if !c.OK || !strings.Contains(c.Detail, "not found") {
+		t.Errorf("gh absent = %+v, want informational ok + not found detail", c)
+	}
+}
+
 func TestCheckBinary(t *testing.T) {
 	oldVersion := version
 	t.Cleanup(func() { version = oldVersion })

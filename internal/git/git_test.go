@@ -1,9 +1,9 @@
 package git
 
 import (
+	"context"
 	"os"
 	"path/filepath"
-	"sync"
 	"testing"
 	"time"
 )
@@ -163,8 +163,10 @@ func TestParseHead(t *testing.T) {
 // resetGHCache forces the next gh availability check to re-run, so tests
 // can flip the seam between cases.
 func resetGHCache() {
-	ghOnce = sync.Once{}
+	ghMu.Lock()
 	ghCached = false
+	ghAt = time.Time{}
+	ghMu.Unlock()
 }
 
 // resetPRCache clears cached lookups between tests.
@@ -180,7 +182,7 @@ func TestPRForHit(t *testing.T) {
 	ghCheck = func() bool { return true }
 	oldRun := runGH
 	calls := 0
-	runGH = func(dir string, args ...string) (string, error) {
+	runGH = func(ctx context.Context, dir string, args ...string) (string, error) {
 		calls++
 		if dir != "/repo" {
 			t.Errorf("gh dir = %q, want /repo", dir)
@@ -212,7 +214,7 @@ func TestPRForCacheMiss(t *testing.T) {
 	ghCheck = func() bool { return true }
 	oldRun := runGH
 	calls := 0
-	runGH = func(dir string, args ...string) (string, error) {
+	runGH = func(ctx context.Context, dir string, args ...string) (string, error) {
 		calls++
 		return "", nil // gh succeeded but no open PR
 	}
@@ -235,7 +237,7 @@ func TestPRForNoOpenPRIsNull(t *testing.T) {
 	resetPRCache()
 	ghCheck = func() bool { return true }
 	oldRun := runGH
-	runGH = func(dir string, args ...string) (string, error) {
+	runGH = func(ctx context.Context, dir string, args ...string) (string, error) {
 		return "null\tnull\n", nil
 	}
 	t.Cleanup(func() { runGH = oldRun })
@@ -250,7 +252,7 @@ func TestPRForGHError(t *testing.T) {
 	resetPRCache()
 	ghCheck = func() bool { return true }
 	oldRun := runGH
-	runGH = func(dir string, args ...string) (string, error) {
+	runGH = func(ctx context.Context, dir string, args ...string) (string, error) {
 		return "", os.ErrPermission
 	}
 	t.Cleanup(func() { runGH = oldRun })
@@ -260,12 +262,37 @@ func TestPRForGHError(t *testing.T) {
 	}
 }
 
+func TestGHOnPathRechecks(t *testing.T) {
+	resetGHCache()
+	oldCheck := ghCheck
+	ghCheck = func() bool { return true }
+	t.Cleanup(func() { ghCheck = oldCheck })
+
+	if !ghOnPath() {
+		t.Fatal("ghOnPath = false, want true (gh on PATH)")
+	}
+	// Before the TTL elapses the answer stays cached: flipping the seam
+	// must not re-run the PATH walk.
+	ghCheck = func() bool { return false }
+	if !ghOnPath() {
+		t.Fatal("ghOnPath re-ran before the TTL, want cached answer")
+	}
+	// Once the TTL expires the answer self-heals, so a gh installed (or
+	// removed) mid-session is noticed without a restart.
+	ghMu.Lock()
+	ghAt = time.Time{}
+	ghMu.Unlock()
+	if ghOnPath() {
+		t.Fatal("ghOnPath = true after TTL re-check, want false (gh gone)")
+	}
+}
+
 func TestPRForNoGH(t *testing.T) {
 	resetGHCache()
 	resetPRCache()
 	ghCheck = func() bool { return false }
 	oldRun := runGH
-	runGH = func(dir string, args ...string) (string, error) {
+	runGH = func(ctx context.Context, dir string, args ...string) (string, error) {
 		t.Error("gh must not run when unavailable")
 		return "", nil
 	}
@@ -282,7 +309,7 @@ func TestPRForTTLExpiry(t *testing.T) {
 	ghCheck = func() bool { return true }
 	oldRun := runGH
 	calls := 0
-	runGH = func(dir string, args ...string) (string, error) {
+	runGH = func(ctx context.Context, dir string, args ...string) (string, error) {
 		calls++
 		return "7\told\n", nil
 	}
@@ -297,5 +324,38 @@ func TestPRForTTLExpiry(t *testing.T) {
 	}
 	if calls != 2 {
 		t.Fatalf("gh calls = %d, want 2 (TTL expired)", calls)
+	}
+}
+
+// TestPRForHangingGHBounded runs the real gh runner against a fake gh that
+// never returns. The lookup must come back (as a miss) once ghTimeout
+// elapses — a wedged gh must not hang PRFor, because the dashboard runs the
+// loader on its event loop and an unbounded subprocess freezes the popup.
+func TestPRForHangingGHBounded(t *testing.T) {
+	oldTimeout := ghTimeout
+	ghTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { ghTimeout = oldTimeout })
+
+	// The fake gh hangs; the real runner must find it on PATH and kill it
+	// when the context deadline fires. Earlier tests leave ghCheck stubbed,
+	// so pin it to true here to force the lookup through the real runner.
+	bin := t.TempDir()
+	gh := filepath.Join(bin, "gh")
+	if err := os.WriteFile(gh, []byte("#!/bin/sh\nexec sleep 30\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	resetGHCache()
+	resetPRCache()
+	oldCheck := ghCheck
+	ghCheck = func() bool { return true }
+	t.Cleanup(func() { ghCheck = oldCheck })
+
+	start := time.Now()
+	if _, ok := PRFor("/repo", "feat", time.Minute); ok {
+		t.Fatal("PRFor = hit, want miss (gh hung and was killed)")
+	}
+	if d := time.Since(start); d > 5*time.Second {
+		t.Fatalf("PRFor took %v, want it bounded by ghTimeout", d)
 	}
 }
