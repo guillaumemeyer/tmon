@@ -275,7 +275,7 @@ func claudeParseUsage(line []byte) int64 {
 // "claude-sonnet-5"), or "".
 func claudeTranscriptModel(path string) string {
 	model := ""
-	for _, l := range tailEvents(path) {
+	for _, l := range tailEvents(path, grokEventTailBytes) {
 		var ev struct {
 			Message struct {
 				Model string `json:"model"`

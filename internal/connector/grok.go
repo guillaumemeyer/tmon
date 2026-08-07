@@ -153,7 +153,7 @@ func sessionDir(home, cwd, sessionID string) string {
 // pending permission.
 func enrichGrok(rec *Record, dir string) {
 	var lastPhase, lastTool, lastPermission, lastCompletion, lastTurnEnd grokEvent
-	for _, l := range tailEvents(filepath.Join(dir, "events.jsonl")) {
+	for _, l := range tailEvents(filepath.Join(dir, "events.jsonl"), grokEventTailBytes) {
 		var e grokEvent
 		if err := json.Unmarshal([]byte(l), &e); err != nil {
 			continue // first (truncated) line in the window or noise
@@ -349,9 +349,9 @@ func readGrokTitle(dir string) string {
 }
 
 // tailEvents returns the complete lines from the end of path, bounded by
-// grokEventTailBytes. The first line in the window is partial when the file
-// is larger than the window; callers drop it via the JSON parse.
-func tailEvents(path string) []string {
+// maxBytes. The first line in the window is partial when the file is
+// larger than the window; callers drop it via the JSON parse.
+func tailEvents(path string, maxBytes int64) []string {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil
@@ -362,7 +362,7 @@ func tailEvents(path string) []string {
 	if err != nil {
 		return nil
 	}
-	start := fi.Size() - grokEventTailBytes
+	start := fi.Size() - maxBytes
 	if start < 0 {
 		start = 0
 	}
