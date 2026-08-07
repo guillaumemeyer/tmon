@@ -27,7 +27,7 @@ vet: ## Run go vet
 	$(GO) vet ./...
 
 lint: vet ## Vet + shellcheck the shell components (if available)
-	@command -v shellcheck >/dev/null 2>&1 && shellcheck tmon.tmux scripts/bootstrap.sh scripts/bump-version.sh || echo "shellcheck not installed; skipping"
+	@command -v shellcheck >/dev/null 2>&1 && shellcheck install.sh tmon.tmux scripts/bootstrap.sh scripts/bump-version.sh || echo "shellcheck not installed; skipping"
 
 cross: ## Cross-compile the release binaries into ./dist
 	@mkdir -p dist

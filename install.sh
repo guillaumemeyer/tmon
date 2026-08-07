@@ -3,78 +3,70 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/guillaumemeyer/tmon/main/install.sh | sh
 #
-# Pure POSIX sh. Detects which install mode applies:
+# Pure POSIX sh. This installer prepares the tmux config for tmon: it adds
+# the TPM plugin line
 #
-#   TPM mode    — ~/.tmux.conf already has a `guillaumemeyer/tmon` plugin
-#                 line and TPM is installed: delegate to TPM's installer
-#                 (TPM stays the owner of the plugin).
-#   Manual mode — otherwise: clone the plugin into ~/.tmux/plugins/tmon,
-#                 wire a run-shell line into ~/.tmux.conf, reload tmux.
+#   set -g @plugin 'guillaumemeyer/tmon'
 #
-# Safe to re-run: an existing checkout is updated with git pull; the config
-# line is added only once. Overrides for testing: TMUX_CONF, TMON_DIR,
-# TMON_REPO_URL.
+# to ~/.tmux.conf at the right place when it is not there yet. It does not
+# install TPM and it does not run tmux. Finish the install inside tmux by
+# pressing prefix + I (TPM then clones tmon and loads it).
+#
+# Safe to re-run: the plugin line is added only once. Override for
+# testing: TMUX_CONF.
 
 set -eu
 
 TMUX_CONF="${TMUX_CONF:-$HOME/.tmux.conf}"
-TMON_DIR="${TMON_DIR:-$HOME/.tmux/plugins/tmon}"
-TPM_DIR="${TPM_DIR:-$HOME/.tmux/plugins/tpm}"
-REPO_URL="${TMON_REPO_URL:-https://github.com/guillaumemeyer/tmon.git}"
+PLUGIN_LINE="set -g @plugin 'guillaumemeyer/tmon'"
 
 fail() {
   echo "tmon: $1" >&2
   exit 1
 }
 
-have() {
-  command -v "$1" >/dev/null 2>&1
+# Add the plugin line at the right place:
+#   - before the TPM initializer line, when the config has one (the
+#     initializer must stay at the bottom of the config), otherwise
+#   - after the last existing `set -g @plugin` line, otherwise
+#   - at the end of the config.
+add_plugin_line() {
+  tmp="$TMUX_CONF.tmon.$$"
+  trap 'rm -f "$tmp"' HUP INT TERM EXIT
+  awk -v line="$PLUGIN_LINE" '
+    /tpm\/tpm/ && !init { init_line = NR; init = 1 }
+    /^[[:space:]]*set(-option)?[[:space:]]+-g[[:space:]]+@plugin/ { last_plugin = NR }
+    { rows[NR] = $0 }
+    END {
+      if (init) at = init_line
+      else if (last_plugin) at = last_plugin + 1
+      else at = NR + 1
+      for (i = 1; i < at; i++) print rows[i]
+      print line
+      for (i = at; i <= NR; i++) print rows[i]
+    }
+  ' "$TMUX_CONF" > "$tmp" || fail "could not write $TMUX_CONF"
+  mv "$tmp" "$TMUX_CONF"
+  echo "tmon: added $PLUGIN_LINE to $TMUX_CONF"
 }
 
 main() {
-  have git || fail "git is required to install tmon"
-  have tmux || fail "tmux is required (install tmux >= 3.2, or use WSL2 on Windows)"
-
-  # TPM mode: the plugin line is already in tmux.conf and TPM is installed —
-  # let TPM own the install (and future updates via `prefix I`).
-  if grep -qs "guillaumemeyer/tmon" "$TMUX_CONF" 2>/dev/null && [ -d "$TPM_DIR" ]; then
-    echo "tmon: TPM detected — installing through TPM"
-    "$TPM_DIR/bin/install_plugins" || fail "TPM install failed"
-    echo "tmon: done. Press prefix + I inside tmux to finish (or run: tmux source-file $TMUX_CONF)"
-    return 0
-  fi
-
-  # Manual mode.
-  if [ -d "$TMON_DIR/.git" ]; then
-    echo "tmon: already installed — updating"
-    (cd "$TMON_DIR" && git pull --ff-only) || fail "update failed (stash local changes and re-run)"
+  if grep -qs "guillaumemeyer/tmon" "$TMUX_CONF" 2>/dev/null; then
+    echo "tmon: plugin line already present in $TMUX_CONF"
   else
-    if [ -e "$TMON_DIR" ]; then
-      fail "$TMON_DIR exists but is not a git checkout — move it aside and re-run"
+    if [ ! -f "$TMUX_CONF" ]; then
+      : > "$TMUX_CONF"
+      echo "tmon: created $TMUX_CONF"
     fi
-    mkdir -p "$(dirname "$TMON_DIR")"
-    echo "tmon: cloning into $TMON_DIR"
-    git clone --depth 1 "$REPO_URL" "$TMON_DIR" || fail "clone failed — check network access to GitHub"
+    add_plugin_line
   fi
 
-  # Wire the plugin into tmux.conf (idempotent).
-  if [ ! -f "$TMUX_CONF" ]; then
-    : > "$TMUX_CONF"
-    echo "tmon: created $TMUX_CONF"
-  fi
-  if ! grep -qs "plugins/tmon/tmon.tmux" "$TMUX_CONF"; then
-    printf '\n# tmon — AI agent monitor\nrun-shell "%s/tmon.tmux"\n' "$TMON_DIR" >> "$TMUX_CONF"
-    echo "tmon: added run-shell line to $TMUX_CONF"
-  fi
-
-  if [ -n "${TMUX:-}" ]; then
-    if tmux source-file "$TMUX_CONF"; then
-      echo "tmon: done — tmux config reloaded"
-    else
-      echo "tmon: done — installed, but reloading tmux config failed (reload manually)" >&2
-    fi
+  if grep -qs 'tpm/tpm' "$TMUX_CONF" 2>/dev/null; then
+    echo "tmon: done. Inside tmux, press prefix + I to install and load tmon"
   else
-    echo "tmon: done. Start tmux (or run: tmux source-file $TMUX_CONF)"
+    echo "tmon: done. $TMUX_CONF does not load TPM yet." >&2
+    echo "tmon: add the TPM initializer (run '~/.tmux/plugins/tpm/tpm') at the" >&2
+    echo "tmon: bottom of $TMUX_CONF, then inside tmux press prefix + I." >&2
   fi
 }
 

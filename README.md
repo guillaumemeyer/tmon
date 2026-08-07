@@ -42,9 +42,16 @@ dashboard — or just **click the status bar indicator**.
 curl -fsSL https://raw.githubusercontent.com/guillaumemeyer/tmon/main/install.sh | sh
 ```
 
-Detects whether TPM manages your tmux config or not, clones the plugin
-(updating an existing checkout), wires `~/.tmux.conf`, and reloads tmux if
-you're inside it. Safe to re-run.
+Adds the TPM plugin line
+
+```tmux
+set -g @plugin 'guillaumemeyer/tmon'
+```
+
+to `~/.tmux.conf` at the right place when it is not there yet (before the
+TPM initializer, or grouped with your other plugins). It does not install
+TPM and does not run tmux. If you do not have TPM yet, install it and press
+`prefix + I` inside tmux to clone and load tmon. Safe to re-run.
 
 See "Alternative installation modes" if necessary.
 
