@@ -68,6 +68,11 @@ func run(cfg config.Config, records []connector.Record) (Result, error) {
 	for _, r := range records {
 		connByPID[r.PID] = r
 	}
+	// Labels whose connectors require a live session (exact tier). A
+	// detected process of one of these labels with no connector record is
+	// not doing agent work — its own state surface is the ground truth —
+	// so the CPU/IO heuristics below must not mark it working.
+	exact := exactLabels(cfg)
 
 	agents, _ := detectAgents()
 	baseByPID := make(map[int]detect.Agent, len(agents))
@@ -90,6 +95,9 @@ func run(cfg config.Config, records []connector.Record) (Result, error) {
 		if _, ok := connByPID[a.PID]; ok {
 			return // authoritative path: no heuristics needed
 		}
+		if exact[strings.ToLower(a.Label)] {
+			return // exact tier without a live session: no heuristics at all
+		}
 		s.cpu, _ = readCPU(a.PID)
 		s.io, _ = readIO(a.PID)
 		s.blocked = paneBlocked(s.paneTarget)
@@ -108,6 +116,12 @@ func run(cfg config.Config, records []connector.Record) (Result, error) {
 				cwd = rec.CWD
 			}
 			st = tracker.EvaluateAuthoritative(a.PID, a.Label, cwd, s.paneTarget, rec.Status, rec.Detail, rec.Title)
+		} else if exact[strings.ToLower(a.Label)] {
+			// Exact tier, no live session: the process is not doing agent
+			// work (e.g. a wedged session picker spinning on CPU). Keep
+			// the row visible as idle — it surfaces the wedged process —
+			// instead of letting the CPU heuristic read it as working.
+			st = tracker.EvaluateAuthoritative(a.PID, a.Label, a.CWD, s.paneTarget, agent.StatusIdle, "no session", "")
 		} else {
 			st = tracker.Evaluate(a.PID, a.Label, a.CWD, s.paneTarget, s.cpu, s.io, s.blocked)
 		}
@@ -253,6 +267,9 @@ var (
 	readIO       = proc.ReadIOBytes
 	paneBlocked  = func(paneTarget string) bool {
 		return paneTarget != "?" && tmux.Available() && blocked.DetectPane(paneTarget)
+	}
+	exactLabels = func(cfg config.Config) map[string]bool {
+		return connector.LiveSessionLabels(cfg)
 	}
 	// Border-strip seams: per-pane user option holds a themed format fragment;
 	// #{E:@tmon_border} re-expands #[fg=…] styles in pane-border-format.

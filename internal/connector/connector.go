@@ -50,6 +50,15 @@ type Connector interface {
 	Probe(cfg config.Config) ([]Record, error)
 }
 
+// SessionExact is a Connector whose rows are only meaningful while the
+// agent holds a live session. A connector that opts in tells the poll loop
+// that a detected process of its label without a connector record is not
+// doing agent work (e.g. a wedged session picker) — so CPU/IO heuristics
+// must never mark that process working.
+type SessionExact interface {
+	RequiresLiveSession() bool
+}
+
 // Registry is the ordered set of connectors, one per supported agent.
 // Connectors are added as their agents land (Phases 2-5); an empty registry
 // means the poll loop behaves exactly as it did before connectors existed.
@@ -176,6 +185,27 @@ func selectConnectors(cfg config.Config, conns []Connector) []Connector {
 		}
 	}
 	return out
+}
+
+// liveSessionLabels returns the lowercased labels of the selected, enabled
+// connectors that require a live session. The poll loop uses this to gate
+// detected processes of those labels when no connector record exists: with
+// the connector active, the absence of a record is itself a signal.
+func liveSessionLabels(cfg config.Config, conns []Connector) map[string]bool {
+	labels := make(map[string]bool)
+	for _, c := range selectConnectors(cfg, conns) {
+		if se, ok := c.(SessionExact); ok && se.RequiresLiveSession() {
+			labels[strings.ToLower(c.Name())] = true
+		}
+	}
+	return labels
+}
+
+// LiveSessionLabels reports the agent labels whose connectors require a
+// live session, for the connectors selected by cfg and enabled on this
+// machine.
+func LiveSessionLabels(cfg config.Config) map[string]bool {
+	return liveSessionLabels(cfg, Registry)
 }
 
 // procAlive reports whether pid is a live process. kill(pid, 0) returning

@@ -59,6 +59,14 @@ type grokEvent struct {
 
 func (Grok) Name() string { return "grok" }
 
+// RequiresLiveSession reports that a detected grok process is only doing
+// agent work while it holds a live session (active_sessions.json or
+// installed hook state). A grok process without a record — e.g. a wedged
+// pager or session picker spinning on CPU — must never read as "working"
+// from the CPU heuristic: its own state surface is the ground truth, and
+// it says there is no session.
+func (Grok) RequiresLiveSession() bool { return true }
+
 // Enabled reports whether the Grok state surface exists: the live
 // active_sessions.json, or hook state written by installed tmon hooks
 // (which covers background sessions that never appear in the file).

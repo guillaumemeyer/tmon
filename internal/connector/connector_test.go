@@ -225,3 +225,52 @@ func TestCollectEmptyRegistryIsNoop(t *testing.T) {
 		t.Fatalf("collect with no connectors = %+v, want none", got)
 	}
 }
+
+// ─── Exact tier (live-session gating) ─────────────────────────────────────
+
+// exactFakeConn is a fakeConn that also implements SessionExact.
+type exactFakeConn struct {
+	fakeConn
+	exact bool
+}
+
+func (e exactFakeConn) RequiresLiveSession() bool { return e.exact }
+
+func TestLiveSessionLabels(t *testing.T) {
+	// Only the selected, enabled, exact connectors appear in the set.
+	now := time.Now()
+	conns := []Connector{
+		exactFakeConn{fakeConn: fakeConn{name: "grok", enabled: true, recs: []Record{{PID: 1, Label: "Grok", At: now}}}, exact: true},
+		fakeConn{name: "claude", enabled: true, recs: []Record{{PID: 2, Label: "Claude", At: now}}},
+	}
+	labels := liveSessionLabels(testConfig(), conns)
+	if len(labels) != 1 || !labels["grok"] {
+		t.Fatalf("liveSessionLabels = %v, want only grok", labels)
+	}
+}
+
+func TestLiveSessionLabelsSelectionAndEnablement(t *testing.T) {
+	// A connector that is not selected, not enabled, or not exact is left
+	// out of the label set.
+	now := time.Now()
+	conns := []Connector{
+		exactFakeConn{fakeConn: fakeConn{name: "grok", enabled: true, recs: []Record{{PID: 1, Label: "Grok", At: now}}}, exact: true},
+		exactFakeConn{fakeConn: fakeConn{name: "hermes", enabled: true, recs: []Record{{PID: 2, Label: "Hermes", At: now}}}, exact: false},
+		exactFakeConn{fakeConn: fakeConn{name: "claude", enabled: false, recs: []Record{{PID: 3, Label: "Claude", At: now}}}, exact: true},
+	}
+	cfg := testConfig()
+	cfg.Connectors = "grok, claude" // hermes unselected
+	labels := liveSessionLabels(cfg, conns)
+	if len(labels) != 1 || !labels["grok"] {
+		t.Fatalf("liveSessionLabels = %v, want only grok (claude disabled, hermes not exact)", labels)
+	}
+}
+
+func TestGrokRequiresLiveSession(t *testing.T) {
+	// Grok opts into the exact tier: its rows are only meaningful while a
+	// live session exists.
+	var _ SessionExact = Grok{}
+	if !(Grok{}).RequiresLiveSession() {
+		t.Fatal("Grok must require a live session")
+	}
+}

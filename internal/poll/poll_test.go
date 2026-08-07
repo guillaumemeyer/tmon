@@ -31,6 +31,17 @@ func stubDetect(t *testing.T, agents []detect.Agent) {
 	t.Cleanup(func() { detectAgents = old })
 }
 
+// stubExact pins the exact-tier label lookup for the duration of the test.
+// The default consults the live connector registry, which depends on what
+// agents are installed on this machine; tests pin it so the heuristic and
+// authoritative paths they exercise are deterministic everywhere.
+func stubExact(t *testing.T, labels map[string]bool) {
+	t.Helper()
+	old := exactLabels
+	exactLabels = func(config.Config) map[string]bool { return labels }
+	t.Cleanup(func() { exactLabels = old })
+}
+
 func TestAuthoritativeWinsOverBlockedPane(t *testing.T) {
 	// The pane looks blocked, but the connector says working: the agent's own
 	// event must win.
@@ -61,6 +72,7 @@ func TestAuthoritativeWinsOverBlockedPane(t *testing.T) {
 func TestPaneBlockedFallbackWithoutConnector(t *testing.T) {
 	// No connector record: the pane-based check is the only signal.
 	stubDetect(t, []detect.Agent{{PID: 42, Label: "Grok", CWD: "code/tmon"}})
+	stubExact(t, nil) // grok connector off: heuristic path applies
 	old := paneBlocked
 	paneBlocked = func(string) bool { return true }
 	t.Cleanup(func() { paneBlocked = old })
@@ -76,6 +88,7 @@ func TestPaneBlockedFallbackWithoutConnector(t *testing.T) {
 
 func TestSeedFromStateDetectsWorking(t *testing.T) {
 	stubDetect(t, []detect.Agent{{PID: 42, Label: "Grok", CWD: "code"}})
+	stubExact(t, nil) // grok connector off: heuristic path applies
 	oldB := paneBlocked
 	paneBlocked = func(string) bool { return false }
 	t.Cleanup(func() { paneBlocked = oldB })
@@ -107,6 +120,7 @@ func TestSeedFromStateDetectsWorking(t *testing.T) {
 func TestNoStateFirstPollIsIdle(t *testing.T) {
 	// Regression: first ever sighting stays idle (baseline poll).
 	stubDetect(t, []detect.Agent{{PID: 42, Label: "Grok", CWD: "code"}})
+	stubExact(t, nil) // grok connector off: heuristic path applies
 	oldB := paneBlocked
 	paneBlocked = func(string) bool { return false }
 	t.Cleanup(func() { paneBlocked = oldB })
@@ -122,6 +136,137 @@ func TestNoStateFirstPollIsIdle(t *testing.T) {
 	}
 	if res.Agents[0].Status != agent.StatusIdle {
 		t.Errorf("cold start = %q, want idle", res.Agents[0].Status)
+	}
+}
+
+// ─── Exact tier (live-session gating) ─────────────────────────────────────
+
+func TestExactTierNoSessionNeverWorking(t *testing.T) {
+	// A Grok process with no live session (no connector record) must not
+	// read as working from the CPU heuristic, however much CPU it burns —
+	// e.g. a wedged session picker, not an agent at work.
+	stubDetect(t, []detect.Agent{{PID: 222338, Label: "Grok", CWD: "code/tmon"}})
+	stubExact(t, map[string]bool{"grok": true})
+	oldB := paneBlocked
+	paneBlocked = func(string) bool { return false }
+	t.Cleanup(func() { paneBlocked = oldB })
+
+	cfg := testConfig(t)
+	// Seed a prior poll so the CPU delta math has a baseline; with it, the
+	// enormous delta below would read as working for a heuristic agent.
+	sf := agent.NewState()
+	sf.Agents = []agent.AgentState{{PID: 222338, Label: "Grok", Status: agent.StatusIdle, CPU: 1000, IO: 0, CWD: "code/tmon"}}
+	if err := sf.Save(cfg.StateFilePath()); err != nil {
+		t.Fatal(err)
+	}
+	oldCPU, oldIO := readCPU, readIO
+	readCPU = func(pid int) (int64, error) { return 1 << 30, nil } // huge CPU delta
+	readIO = func(pid int) (int64, error) { return 0, nil }
+	t.Cleanup(func() { readCPU, readIO = oldCPU, oldIO })
+
+	res, err := run(cfg, nil) // grok connector active but finds no session
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Agents) != 1 {
+		t.Fatalf("agents = %+v, want 1", res.Agents)
+	}
+	if res.Agents[0].Status != agent.StatusIdle {
+		t.Errorf("status = %q, want idle (no live session, huge CPU ignored)", res.Agents[0].Status)
+	}
+	if res.Agents[0].Detail != "no session" {
+		t.Errorf("Detail = %q, want no session", res.Agents[0].Detail)
+	}
+}
+
+func TestExactTierRecordStillWins(t *testing.T) {
+	// A live session record overrides the no-session gate: the record's
+	// authoritative status is what the row shows.
+	stubDetect(t, []detect.Agent{{PID: 42, Label: "Grok", CWD: "code/tmon"}})
+	stubExact(t, map[string]bool{"grok": true})
+	cfg := testConfig(t)
+	records := []connector.Record{{
+		PID: 42, Label: "Grok", Status: agent.StatusWorking, Detail: "tool:Bash", At: time.Now(),
+	}}
+	res, err := run(cfg, records)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Agents) != 1 {
+		t.Fatalf("agents = %+v, want 1", res.Agents)
+	}
+	if res.Agents[0].Status != agent.StatusWorking || res.Agents[0].Detail != "tool:Bash" {
+		t.Errorf("agent = %+v, want working tool:Bash from the record", res.Agents[0])
+	}
+}
+
+func TestExactTierOnlyGatesItsOwnLabel(t *testing.T) {
+	// The gate is per-label: a Claude process with no record keeps the
+	// heuristic path even while grok is exact.
+	stubDetect(t, []detect.Agent{{PID: 43, Label: "Claude", CWD: "code/tmon"}})
+	stubExact(t, map[string]bool{"grok": true})
+	oldB := paneBlocked
+	paneBlocked = func(string) bool { return false }
+	t.Cleanup(func() { paneBlocked = oldB })
+
+	cfg := testConfig(t)
+	sf := agent.NewState()
+	sf.Agents = []agent.AgentState{{PID: 43, Label: "Claude", Status: agent.StatusIdle, CPU: 1000, IO: 0, CWD: "code/tmon"}}
+	if err := sf.Save(cfg.StateFilePath()); err != nil {
+		t.Fatal(err)
+	}
+	oldCPU, oldIO := readCPU, readIO
+	readCPU = func(pid int) (int64, error) { return 1200, nil } // +200 ≥ 150 → working
+	readIO = func(pid int) (int64, error) { return 0, nil }
+	t.Cleanup(func() { readCPU, readIO = oldCPU, oldIO })
+
+	res, err := run(cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Agents) != 1 {
+		t.Fatalf("agents = %+v, want 1", res.Agents)
+	}
+	if res.Agents[0].Status != agent.StatusWorking {
+		t.Errorf("status = %q, want working (claude keeps the heuristic)", res.Agents[0].Status)
+	}
+	if res.Agents[0].Detail != "" {
+		t.Errorf("Detail = %q, want empty on the heuristic path", res.Agents[0].Detail)
+	}
+}
+
+func TestExactTierDisabledConnectorKeepsHeuristic(t *testing.T) {
+	// With the grok connector disabled (or unselected), the gate does not
+	// apply: an empty exact set means the CPU heuristic runs as before.
+	stubDetect(t, []detect.Agent{{PID: 222338, Label: "Grok", CWD: "code/tmon"}})
+	stubExact(t, nil) // grok connector not enabled/selected on this run
+	oldB := paneBlocked
+	paneBlocked = func(string) bool { return false }
+	t.Cleanup(func() { paneBlocked = oldB })
+
+	cfg := testConfig(t)
+	sf := agent.NewState()
+	sf.Agents = []agent.AgentState{{PID: 222338, Label: "Grok", Status: agent.StatusIdle, CPU: 1000, IO: 0, CWD: "code/tmon"}}
+	if err := sf.Save(cfg.StateFilePath()); err != nil {
+		t.Fatal(err)
+	}
+	oldCPU, oldIO := readCPU, readIO
+	readCPU = func(pid int) (int64, error) { return 1200, nil } // +200 ≥ 150 → working
+	readIO = func(pid int) (int64, error) { return 0, nil }
+	t.Cleanup(func() { readCPU, readIO = oldCPU, oldIO })
+
+	res, err := run(cfg, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Agents) != 1 {
+		t.Fatalf("agents = %+v, want 1", res.Agents)
+	}
+	if res.Agents[0].Status != agent.StatusWorking {
+		t.Errorf("status = %q, want working (gate off, CPU heuristic applies)", res.Agents[0].Status)
+	}
+	if res.Agents[0].Detail != "" {
+		t.Errorf("Detail = %q, want empty on the heuristic path", res.Agents[0].Detail)
 	}
 }
 
@@ -676,6 +821,7 @@ func TestApplyBordersHidesBySession(t *testing.T) {
 
 func TestBorderDisabledNoOp(t *testing.T) {
 	stubDetect(t, []detect.Agent{{PID: 42, Label: "Grok", CWD: "code/tmon"}})
+	stubExact(t, nil) // grok connector off: heuristic path applies
 	r := borderCalls(t)
 	cfg := testConfig(t)
 	cfg.PaneBorder = false
