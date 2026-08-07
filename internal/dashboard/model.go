@@ -74,6 +74,8 @@ type Model struct {
 	draggingSplit       bool              // true while the user is dragging the │ separator
 	preview             viewport.Model    // right-side pane preview (scrollable, bottom-pinned)
 	previewFollowBottom bool              // keep the viewport on the latest lines (default true)
+	previewWrap         bool              // fit-to-width: wrap captured lines to the preview width
+	previewWrapWidth    int               // preview width the viewport content is wrapped at (0 = raw)
 
 	// settingsPath is where UI prefs (e.g. preview width) are persisted.
 	// Empty disables load/save (tests and ad-hoc construction).

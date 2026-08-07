@@ -586,6 +586,11 @@ func (m Model) previewLines(w, n int) []string {
 	if bodyH < 1 {
 		bodyH = 1
 	}
+	// Fit-to-width mode replaces the raw capture with a version hard-wrapped
+	// to the current panel width, so whole lines stay visible instead of
+	// being cut at the pane edge. Re-wrap only when the width or the content
+	// changed since the last render; truncation mode restores the raw lines.
+	m.applyPreviewWrap(w)
 	m.preview.Width = w
 	m.preview.Height = bodyH
 	if m.previewFollowBottom {
@@ -634,11 +639,16 @@ func (m Model) previewLines(w, n int) []string {
 // do not fit the panel width are dropped from the end so the more useful
 // scroll tip stays when the pane is narrow.
 func (m Model) previewTipsLine(w int) string {
-	parts := make([]string, 0, 2)
+	parts := make([]string, 0, 3)
 	if m.previewNavTipVisible() {
 		parts = append(parts, "[C-u/C-d] scroll preview")
 	}
 	parts = append(parts, "[←/→ h/l · drag │] resize preview")
+	if m.previewWrap {
+		parts = append(parts, "[f] fit (on)")
+	} else {
+		parts = append(parts, "[f] fit")
+	}
 	// Trailing space matches the main footer right margin.
 	text := strings.Join(parts, "  ") + " "
 	for ansi.StringWidth(text) > w && len(parts) > 1 {

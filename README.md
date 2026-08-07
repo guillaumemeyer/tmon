@@ -33,6 +33,7 @@ dashboard — or just **click the status bar indicator**.
 - 🎨 **Live themes** — preview Catppuccin, Nord, Dracula and friends right in the popup, apply with `Enter`.
 - 🕵️ **Hide the noise** — glob patterns drop agents you don't care about from the status bar and dashboard. The agent keeps running; you just stop seeing it.
 - 🩺 **`tmon doctor`** — one command that checks everything and explains itself in plain text (or JSON, for the CI crowd).
+- 📐 **Fit-to-width preview** — press `f` inside the dashboard to wrap long captured lines to the preview width instead of cutting them at the edge. The choice persists.
 - 🤖 **11 agents and counting** — Grok Build, Claude Code, Codex CLI, Cursor, Cline, Aider, Copilot, CodeBuddy, Windsurf, Hermes Agent, OpenClaw.
 
 
@@ -686,6 +687,7 @@ state path with `TMON_STATE_DIR` if you need a custom location.
 |---------|--------|
 | `prefix a a` | Open the agent navigation popup |
 | Click status bar indicator | Open the agent navigation popup |
+| `f` (in dashboard) | Toggle fit-to-width: wrap long preview lines to the panel width instead of cutting them at the edge (the choice persists) |
 
 ## Troubleshooting
 

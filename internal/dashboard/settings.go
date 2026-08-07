@@ -16,8 +16,9 @@ const (
 
 // dashSettings is the on-disk dashboard UI preferences.
 type dashSettings struct {
-	PreviewPct int    `json:"preview_pct"`
-	View       string `json:"view,omitempty"` // list | projects | status
+	PreviewPct  int    `json:"preview_pct"`
+	View        string `json:"view,omitempty"` // list | projects | status
+	PreviewWrap bool   `json:"preview_wrap,omitempty"`
 }
 
 // loadSettings reads persisted UI prefs from settingsPath, if set.
@@ -35,6 +36,7 @@ func (m *Model) loadSettings() {
 		return
 	}
 	m.previewPct = clampPreviewPct(s.PreviewPct)
+	m.previewWrap = s.PreviewWrap
 	if s.View != "" {
 		m.viewMode = parseViewMode(s.View)
 	}
@@ -50,8 +52,9 @@ func (m *Model) saveSettings() {
 		return
 	}
 	data, err := json.Marshal(dashSettings{
-		PreviewPct: clampPreviewPct(m.previewPct),
-		View:       m.viewMode.String(),
+		PreviewPct:  clampPreviewPct(m.previewPct),
+		View:        m.viewMode.String(),
+		PreviewWrap: m.previewWrap,
 	})
 	if err != nil {
 		return

@@ -184,6 +184,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		// Highlight the theme already in effect so the list and the
 		// palette preview match the popup (not the first preset).
 		m = m.selectThemeByName(m.theme.Name)
+	case "f":
+		// Fit-to-width: wrap captured preview lines to the panel width so
+		// nothing is cut at the pane edge. The choice persists. The next
+		// render re-wraps (or restores) the viewport content.
+		m.previewWrap = !m.previewWrap
+		m.saveSettings()
 	case "esc", "q", "ctrl+c":
 		return m, tea.Quit
 	case "left", "h":
@@ -471,6 +477,9 @@ func (m *Model) refreshPreview(force bool) {
 	}
 	m.previewPane = pane
 	m.previewText = m.cachedPane(pane)
+	// The content is raw here; fit-to-width re-wraps it at the current panel
+	// width on the next render (see applyPreviewWrap).
+	m.previewWrapWidth = 0
 	// Trim blank edges so the bottom pin lands on real content (tmux pane
 	// captures pad with empty lines and end with a newline).
 	m.preview.SetContent(strings.Join(trimEmptyEdges(strings.Split(m.previewText, "\n")), "\n"))
