@@ -8,8 +8,10 @@
 // the daemon's own session list (`prime-agent list --json`, TTL-gated: the
 // spawn takes ~380 ms) plus each session's JSONL tail for token usage, and
 // pairs sessions to the tty-owning client by cwd so pane teleport works.
-// taskState "needs_input" is prime-agent's native "waiting for the user"
-// signal and maps to blocked without any hooks.
+// The daemon's activity field is the working signal; its taskState is only
+// defined for idle sessions ("needs_input": turn finished, awaiting the
+// next user message; "completed") and both map to idle — prime-agent
+// exposes no native blocked signal.
 package connector
 
 import (
@@ -247,11 +249,10 @@ func primeRecord(s primeSession, clientPID int, hook primeHookState, now time.Ti
 		case agent.StatusWorking:
 			status, detail, at = agent.StatusWorking, hook.detail, now
 		case agent.StatusIdle:
-			// turn_end fired: the daemon's taskState is the authoritative
-			// needs_input vs completed distinction. Only override a stale
-			// "working" from the TTL-cached list — the hook event is
-			// fresher than the last snapshot.
-			if status == agent.StatusWorking {
+			// turn_end fired: the hook event is fresher than the
+			// TTL-cached daemon list. Override a stale "working" and
+			// replace the daemon's needs:input fallback detail.
+			if status == agent.StatusWorking || detail == "needs:input" {
 				status, detail, at = agent.StatusIdle, "turn-complete", now
 			}
 		}
@@ -296,8 +297,10 @@ func primeRecord(s primeSession, clientPID int, hook primeHookState, now time.Ti
 }
 
 // primeNativeStatus maps the daemon's own signals to the tmon status
-// machine. working/idle decay with lastActivityAt like Grok; a session
-// waiting for input (needs_input) is a persistent blocked signal.
+// machine. The daemon's activity field is the working signal; taskState is
+// only computed for idle sessions and distinguishes "needs_input" (turn
+// finished, awaiting the next user message) from "completed" — both are
+// idle. prime-agent exposes no native blocked signal.
 func primeNativeStatus(s primeSession, now time.Time) (agent.Status, string, time.Time) {
 	at := now
 	if t, err := time.Parse(time.RFC3339Nano, s.LastActivityAt); err == nil {
@@ -319,7 +322,7 @@ func primeNativeStatus(s primeSession, now time.Time) (agent.Status, string, tim
 		}
 		return agent.StatusWorking, detail, at
 	case s.TaskState == "needs_input":
-		return agent.StatusBlocked, "needs:input", now
+		return agent.StatusIdle, "needs:input", at
 	default:
 		return agent.StatusIdle, "turn-complete", at
 	}
@@ -337,6 +340,15 @@ func primeModelLabel(m primeModel) string {
 }
 
 // ─── usage (session JSONL) ──────────────────────────────────────────────────
+
+// primeEventTailBytes bounds how much of a session JSONL is read per poll
+// when hunting the last assistant message's usage. Prime Agent writes an
+// agent_status heartbeat line roughly every 25 s even while idle, so the
+// file grows continuously between turns; a Grok-sized window (128 KB)
+// would silently lose the usage record after a few hours of idle. One
+// megabyte keeps the last assistant message visible through ~30 h of idle
+// heartbeat growth while bounding the per-poll read for active sessions.
+const primeEventTailBytes = 1 * 1024 * 1024
 
 // primeMsgEvent is one line of a session JSONL; only message events with
 // assistant usage are decoded.
@@ -373,7 +385,7 @@ func primeUsage(sessionFile string, window int64) agent.Usage {
 // missing or carries no usage yet.
 func primeLastAssistantTokens(sessionFile string) int64 {
 	var used int64
-	for _, l := range tailEvents(sessionFile) {
+	for _, l := range tailEvents(sessionFile, primeEventTailBytes) {
 		var e primeMsgEvent
 		if json.Unmarshal([]byte(l), &e) != nil || e.Type != "message" {
 			continue // first (truncated) line in the window or noise

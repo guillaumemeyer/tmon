@@ -32,6 +32,7 @@ var probes = []Probe{
 	{Key: "grok", Label: "Grok", Run: probeGrok},
 	{Key: "codex", Label: "Codex", Run: probeCodex},
 	{Key: "hermes", Label: "Hermes", Run: probeHermes},
+	{Key: "prime", Label: "Prime", Run: probePrime},
 }
 
 // runQuotaProbes probes every source and returns the quota map. A failing

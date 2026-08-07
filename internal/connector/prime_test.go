@@ -165,13 +165,13 @@ func TestPrimeListSessionsFailureGated(t *testing.T) {
 func TestPrimeRecord(t *testing.T) {
 	now := time.Now()
 
-	t.Run("needs_input blocked with client pid", func(t *testing.T) {
+	t.Run("needs_input idle with client pid", func(t *testing.T) {
 		rec := primeRecord(fixturePrimeSession(""), 42, primeHookState{}, now)
 		if rec.PID != 42 {
 			t.Errorf("PID = %d, want 42 (client)", rec.PID)
 		}
-		if rec.Status != agent.StatusBlocked {
-			t.Errorf("Status = %q, want blocked", rec.Status)
+		if rec.Status != agent.StatusIdle {
+			t.Errorf("Status = %q, want idle", rec.Status)
 		}
 		if rec.Detail != "needs:input · model:deepseek/deepseek-v4-pro" {
 			t.Errorf("Detail = %q", rec.Detail)
@@ -182,8 +182,9 @@ func TestPrimeRecord(t *testing.T) {
 		if rec.Title != "how did you get your deepseek credentials?" {
 			t.Errorf("Title = %q", rec.Title)
 		}
-		if !rec.At.After(now.Add(-time.Second)) {
-			t.Errorf("blocked At = %v, want ~now", rec.At)
+		want, _ := time.Parse(time.RFC3339Nano, "2026-08-07T19:36:20.208Z")
+		if !rec.At.Equal(want) {
+			t.Errorf("At = %v, want %v (lastActivityAt)", rec.At, want)
 		}
 		if rec.Usage.WindowTokens != 1000000 {
 			t.Errorf("WindowTokens = %d, want 1000000", rec.Usage.WindowTokens)
@@ -288,12 +289,12 @@ func TestPrimeHookJoin(t *testing.T) {
 		}
 	})
 
-	t.Run("idle hook keeps native needs_input", func(t *testing.T) {
+	t.Run("idle hook replaces native needs_input detail", func(t *testing.T) {
 		rec := primeRecord(fixturePrimeSession(""), 0, primeHookState{status: agent.StatusIdle, detail: "turn-complete", valid: true}, now)
-		if rec.Status != agent.StatusBlocked {
-			t.Errorf("Status = %q, want blocked (native needs_input)", rec.Status)
+		if rec.Status != agent.StatusIdle {
+			t.Errorf("Status = %q, want idle", rec.Status)
 		}
-		if rec.Detail != "needs:input · model:deepseek/deepseek-v4-pro" {
+		if rec.Detail != "turn-complete · model:deepseek/deepseek-v4-pro" {
 			t.Errorf("Detail = %q", rec.Detail)
 		}
 	})
