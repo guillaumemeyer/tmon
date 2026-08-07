@@ -32,7 +32,7 @@ jobs:
       - name: Shellcheck
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
-          shellcheck install.sh tmon.tmux scripts/bootstrap.sh scripts/bump-version.sh
+          shellcheck install.sh tmon.tmux scripts/bootstrap.sh scripts/bump-version.sh cmd/tmon/hooks/*.sh
 
       - name: golangci-lint
         uses: golangci/golangci-lint-action@v9

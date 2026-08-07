@@ -43,6 +43,30 @@ func writeFile(t *testing.T, path, content string) {
 	}
 }
 
+// grokTestConfig returns a config whose hook state dir is isolated in a
+// temp dir, so connector tests are immune to hooks installed on the real
+// machine (~/.local/state/tmon/hooks/grok).
+func grokTestConfig(t *testing.T) config.Config {
+	t.Helper()
+	cfg := config.Defaults()
+	cfg.HookStateDir = filepath.Join(t.TempDir(), "hooks")
+	return cfg
+}
+
+// stubRunningByCWD overrides the runningByCWD seam for one label, so hook
+// state files pair with a deterministic process table.
+func stubRunningByCWD(t *testing.T, label string, by map[string]int) {
+	t.Helper()
+	old := runningByCWD
+	runningByCWD = func(l string) map[string]int {
+		if l != label {
+			return nil
+		}
+		return by
+	}
+	t.Cleanup(func() { runningByCWD = old })
+}
+
 // nowTS returns a strictly increasing RFC3339Nano timestamp. The tick
 // offset guarantees that consecutive calls order correctly even on clocks
 // with coarse granularity (e.g. macOS runners), which the phase-mapping
@@ -83,7 +107,7 @@ func TestGrokPhaseMapping(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			grokFixture(t, c.events, "2026-08-02T09:00:00Z")
-			recs, err := (Grok{}).Probe(config.Defaults())
+			recs, err := (Grok{}).Probe(grokTestConfig(t))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -109,7 +133,7 @@ func TestGrokPhaseMapping(t *testing.T) {
 
 func TestGrokSessionWithoutEventsIsIdle(t *testing.T) {
 	grokFixture(t, "", "2026-08-02T09:00:00Z")
-	recs, err := (Grok{}).Probe(config.Defaults())
+	recs, err := (Grok{}).Probe(grokTestConfig(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +158,7 @@ func TestGrokSignalsEnrichment(t *testing.T) {
 	grokHome = func() string { return home }
 	t.Cleanup(func() { grokHome = old })
 
-	recs, err := (Grok{}).Probe(config.Defaults())
+	recs, err := (Grok{}).Probe(grokTestConfig(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +183,7 @@ func TestGrokSessionTitle(t *testing.T) {
 	grokHome = func() string { return home }
 	t.Cleanup(func() { grokHome = old })
 
-	recs, err := (Grok{}).Probe(config.Defaults())
+	recs, err := (Grok{}).Probe(grokTestConfig(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +207,7 @@ func TestGrokSessionTitleFallsBackToSummary(t *testing.T) {
 	grokHome = func() string { return home }
 	t.Cleanup(func() { grokHome = old })
 
-	recs, err := (Grok{}).Probe(config.Defaults())
+	recs, err := (Grok{}).Probe(grokTestConfig(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +218,7 @@ func TestGrokSessionTitleFallsBackToSummary(t *testing.T) {
 
 func TestGrokSessionWithoutSummaryHasNoTitle(t *testing.T) {
 	grokFixture(t, "", "2026-08-02T09:00:00Z")
-	recs, err := (Grok{}).Probe(config.Defaults())
+	recs, err := (Grok{}).Probe(grokTestConfig(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +239,7 @@ func TestGrokMultipleSessions(t *testing.T) {
 	grokHome = func() string { return home }
 	t.Cleanup(func() { grokHome = old })
 
-	recs, err := (Grok{}).Probe(config.Defaults())
+	recs, err := (Grok{}).Probe(grokTestConfig(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +267,7 @@ func stubGrokLive(t *testing.T) {
 func TestGrokFreshPhaseSurvivesCollect(t *testing.T) {
 	grokFixture(t, `{"ts":"`+nowTS()+`","type":"phase_changed","phase":"streaming_reasoning"}`+"\n", "2026-08-02T09:00:00Z")
 	stubGrokLive(t)
-	got := Collect(config.Defaults(), time.Now())
+	got := Collect(grokTestConfig(t), time.Now())
 	if len(got) != 1 || got[0].Status != agent.StatusWorking {
 		t.Fatalf("collect = %+v, want one active record", got)
 	}
@@ -253,7 +277,7 @@ func TestGrokStalePhaseDroppedByCollect(t *testing.T) {
 	stale := time.Now().Add(-2 * time.Minute).UTC().Format(time.RFC3339Nano)
 	grokFixture(t, `{"ts":"`+stale+`","type":"phase_changed","phase":"streaming_reasoning"}`+"\n", "2026-08-02T09:00:00Z")
 	stubGrokLive(t)
-	got := Collect(config.Defaults(), time.Now())
+	got := Collect(grokTestConfig(t), time.Now())
 	if len(got) != 0 {
 		t.Fatalf("collect = %+v, want none (stale phase dropped)", got)
 	}
@@ -281,7 +305,7 @@ func TestGrokCompletedTurnKeptAsIdleWithUsage(t *testing.T) {
 	t.Cleanup(func() { grokHome = old })
 	stubGrokLive(t)
 
-	got := Collect(config.Defaults(), time.Now())
+	got := Collect(grokTestConfig(t), time.Now())
 	if len(got) != 1 {
 		t.Fatalf("collect = %+v, want 1 (completed turn kept as idle)", got)
 	}
@@ -310,7 +334,7 @@ func TestGrokMidTurnStaleStillDropped(t *testing.T) {
 	stale := time.Now().Add(-2 * time.Minute).UTC().Format(time.RFC3339Nano)
 	grokFixture(t, `{"ts":"`+stale+`","type":"phase_changed","phase":"streaming_text"}`+"\n", "2026-08-02T09:00:00Z")
 	stubGrokLive(t)
-	got := Collect(config.Defaults(), time.Now())
+	got := Collect(grokTestConfig(t), time.Now())
 	if len(got) != 0 {
 		t.Fatalf("collect = %+v, want none (stalled mid-turn dropped)", got)
 	}
@@ -324,11 +348,11 @@ func TestGrokEnabledGatesOnStatePath(t *testing.T) {
 	t.Cleanup(func() { grokHome = old })
 
 	// Empty fixture home: the state surface is absent, so not enabled.
-	if (Grok{}).Enabled(config.Defaults()) {
+	if (Grok{}).Enabled(grokTestConfig(t)) {
 		t.Error("enabled before active_sessions.json exists")
 	}
 	writeFile(t, filepath.Join(home, "active_sessions.json"), "[]")
-	if !(Grok{}).Enabled(config.Defaults()) {
+	if !(Grok{}).Enabled(grokTestConfig(t)) {
 		t.Error("not enabled with active_sessions.json present")
 	}
 }
@@ -350,5 +374,141 @@ func TestGrokSessionDirFallback(t *testing.T) {
 	writeFile(t, filepath.Join(direct, "marker"), "x")
 	if got := sessionDir(home, grokCWD, grokSessionID); got != direct {
 		t.Errorf("sessionDir = %q, want direct path %q", got, direct)
+	}
+}
+
+// ─── hook state (dir-kind install) ──────────────────────────────────────────
+
+// TestGrokEnabledOnHookDir guards the Enabled surface added for the hooks
+// integration: a hook state dir alone (no active_sessions.json yet) must
+// enable the connector — that is the background-session case.
+func TestGrokEnabledOnHookDir(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, ".grok")
+	old := grokHome
+	grokHome = func() string { return home }
+	t.Cleanup(func() { grokHome = old })
+
+	cfg := grokTestConfig(t)
+	if (Grok{}).Enabled(cfg) {
+		t.Error("enabled with no state surface at all")
+	}
+	if err := os.MkdirAll(filepath.Join(cfg.HookStateDir, "grok"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if !(Grok{}).Enabled(cfg) {
+		t.Error("not enabled with hook state dir present")
+	}
+}
+
+// TestGrokHookMerge: a native session (active_sessions.json + phase log +
+// signals/summary enrichment) and installed hook state for the same PID.
+// The hook record's status/detail win (it sees permission waits and running
+// tools the phase log misses); the native record keeps supplying usage,
+// title, and the " · model:… · ctx:…%" detail suffix.
+func TestGrokHookMerge(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, ".grok")
+	writeFile(t, filepath.Join(home, "active_sessions.json"),
+		fmt.Sprintf(`[{"session_id":%q,"pid":4242,"cwd":%q,"opened_at":"2026-08-02T09:00:00Z"}]`, grokSessionID, grokCWD))
+	dir := filepath.Join(home, "sessions", url.PathEscape(grokCWD), grokSessionID)
+	writeFile(t, filepath.Join(dir, "events.jsonl"),
+		`{"ts":"`+nowTS()+`","type":"phase_changed","phase":"streaming_reasoning"}`+"\n")
+	writeFile(t, filepath.Join(dir, "signals.json"),
+		`{"primaryModelId":"grok-4.5","contextWindowUsage":26,"contextTokensUsed":52367,"contextWindowTokens":200000}`)
+	writeFile(t, filepath.Join(dir, "summary.json"),
+		`{"generated_title":"Hook Merge Session","session_summary":"same"}`)
+	old := grokHome
+	grokHome = func() string { return home }
+	t.Cleanup(func() { grokHome = old })
+
+	// Hook state for the same session: blocked on a permission prompt.
+	cfg := grokTestConfig(t)
+	writeFile(t, filepath.Join(cfg.HookStateDir, "grok", grokSessionID+".json"),
+		fmt.Sprintf(`{"status":"blocked","detail":"permission:write","cwd":%q}`, grokCWD))
+	stubRunningByCWD(t, "Grok", map[string]int{"code/tmon": 4242})
+
+	recs, err := (Grok{}).Probe(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("records = %+v, want 1", recs)
+	}
+	r := recs[0]
+	if r.Status != agent.StatusBlocked {
+		t.Errorf("status = %q, want blocked (hook wins)", r.Status)
+	}
+	if !strings.Contains(r.Detail, "permission:write") {
+		t.Errorf("Detail = %q, want hook permission:write", r.Detail)
+	}
+	if !strings.Contains(r.Detail, "model:grok-4.5") || !strings.Contains(r.Detail, "ctx:26%") {
+		t.Errorf("Detail = %q, want native model+ctx suffix carried over", r.Detail)
+	}
+	if u := r.Usage; u.TokensUsed != 52367 || u.WindowTokens != 200000 {
+		t.Errorf("Usage = %+v, want native usage carried over", u)
+	}
+	if r.Title != "Hook Merge Session" {
+		t.Errorf("Title = %q, want native title carried over", r.Title)
+	}
+	if r.CWD != "code/tmon" {
+		t.Errorf("CWD = %q, want code/tmon", r.CWD)
+	}
+}
+
+// TestGrokHookOnlyBackgroundSession: the exact case the hooks exist for — a
+// background grok session absent from active_sessions.json ("[]") whose
+// state arrives only through hook events. It must surface, paired to the
+// running process by CWD.
+func TestGrokHookOnlyBackgroundSession(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, ".grok")
+	writeFile(t, filepath.Join(home, "active_sessions.json"), "[]")
+	old := grokHome
+	grokHome = func() string { return home }
+	t.Cleanup(func() { grokHome = old })
+
+	cfg := grokTestConfig(t)
+	writeFile(t, filepath.Join(cfg.HookStateDir, "grok", "bg-1.json"),
+		`{"status":"working","detail":"tool:read_file","cwd":"/home/guillaume/code/decant"}`)
+	stubRunningByCWD(t, "Grok", map[string]int{"code/decant": 782479})
+
+	recs, err := (Grok{}).Probe(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("records = %+v, want 1 background session from hooks", recs)
+	}
+	r := recs[0]
+	if r.PID != 782479 || r.Label != "Grok" {
+		t.Errorf("record = %+v, want PID 782479 label Grok", r)
+	}
+	if r.Status != agent.StatusWorking || r.Detail != "tool:read_file" || r.CWD != "code/decant" {
+		t.Errorf("record = %+v, want working tool:read_file at code/decant", r)
+	}
+}
+
+// TestGrokHookUnpairedNotListed: hook state for a session whose process is
+// not running (or runs elsewhere) emits nothing — the pairing is by CWD.
+func TestGrokHookUnpairedNotListed(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, ".grok")
+	writeFile(t, filepath.Join(home, "active_sessions.json"), "[]")
+	old := grokHome
+	grokHome = func() string { return home }
+	t.Cleanup(func() { grokHome = old })
+
+	cfg := grokTestConfig(t)
+	writeFile(t, filepath.Join(cfg.HookStateDir, "grok", "bg-1.json"),
+		`{"status":"working","detail":"tool:read_file","cwd":"/home/guillaume/code/decant"}`)
+	stubRunningByCWD(t, "Grok", map[string]int{"code/tmon": 4242})
+
+	recs, err := (Grok{}).Probe(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 0 {
+		t.Fatalf("records = %+v, want none (no grok process in that cwd)", recs)
 	}
 }

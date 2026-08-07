@@ -76,13 +76,24 @@ Usage:
                                @tmon-auto-hooks is on; default is off)
   tmon hooks status            Show which agents have hooks installed
 
-Supported agents: claude codex cursor copilot windsurf hermes
+Supported agents: claude codex cursor copilot windsurf grok hermes
 `
 
 // hookTarget describes one installable agent's hook wiring.
+//
+// kind: "file" merges tmon's hook groups into one settings file (Claude,
+// Codex, Cursor, Copilot, Windsurf); "dir" writes its own two files into a
+// hooks directory that loads every *.json (Grok's ~/.grok/hooks).
+// flat: Copilot CLI entries are flat {type,bash,matcher} objects, not the
+// nested {matcher,hooks:[...]} groups the others use.
+// eventArg: the installed command passes "--event <name>" because the
+// agent's payload carries no event name (Copilot camelCase payloads).
 type hookTarget struct {
 	name       string                 // CLI name ("claude")
-	settings   func() (string, error) // absolute config file path
+	kind       string                 // "file" (default) or "dir"
+	flat       bool                   // Copilot-style flat entries
+	eventArg   bool                   // command carries "--event <name>"
+	settings   func() (string, error) // absolute config file path (file) or hooks dir (dir)
 	events     []hookEvent            // events to install
 	scriptName string                 // embedded script filename
 	useMatcher bool                   // group objects carry a matcher
@@ -110,18 +121,28 @@ var claudeTarget = hookTarget{
 	},
 	events: []hookEvent{
 		{event: "SessionStart"},
+		{event: "Setup"},
 		{event: "UserPromptSubmit"},
+		{event: "UserPromptExpansion"},
 		{event: "PreToolUse"},
 		{event: "PostToolUse"},
 		{event: "PostToolUseFailure"},
+		{event: "PostToolBatch"},
 		{event: "PermissionRequest"},
 		{event: "PermissionDenied"},
+		{event: "Elicitation"},
 		{event: "Notification", matcher: "permission_prompt", status: "blocked", detail: "waiting:permission"},
 		{event: "Notification", matcher: "idle_prompt", status: "idle", detail: "idle"},
 		{event: "Notification", matcher: "agent_needs_input", status: "blocked", detail: "needs:input"},
 		{event: "Stop"},
+		{event: "StopFailure"},
 		{event: "SubagentStart"},
 		{event: "SubagentStop"},
+		{event: "TaskCreated"},
+		{event: "TaskCompleted"},
+		{event: "WorktreeCreate"},
+		{event: "WorktreeRemove"},
+		{event: "TeammateIdle"},
 		{event: "PreCompact"},
 		{event: "PostCompact"},
 		{event: "SessionEnd"},
@@ -141,15 +162,21 @@ var codexTarget = hookTarget{
 	},
 	events: []hookEvent{
 		{event: "SessionStart"},
+		{event: "UserPromptSubmit"},
 		{event: "PreToolUse"},
 		{event: "PostToolUse"},
 		{event: "PermissionRequest"},
+		{event: "PreCompact"},
+		{event: "PostCompact"},
+		{event: "SubagentStart"},
+		{event: "SubagentStop"},
 		{event: "Stop"},
 		{event: "SessionEnd"},
 	},
 }
 
-// cursorTarget wires Cursor's hooks (camelCase event names).
+// cursorTarget wires Cursor's hooks (camelCase event names; payload fields
+// stay snake_case: hook_event_name, session_id, tool_name).
 var cursorTarget = hookTarget{
 	name:       "cursor",
 	scriptName: "agent-hook.sh",
@@ -161,22 +188,30 @@ var cursorTarget = hookTarget{
 	events: []hookEvent{
 		{event: "sessionStart"},
 		{event: "beforeSubmitPrompt"},
+		// Generic pre/postToolUse fire for every tool (the specialized
+		// afterShellExecution / afterFileEdit / beforeMCPExecution are
+		// subsets of them).
 		{event: "preToolUse"},
-		{event: "afterShellExecution"},
-		{event: "afterFileEdit"},
-		{event: "beforeMCPExecution"},
+		{event: "postToolUse"},
 		{event: "postToolUseFailure"},
+		{event: "subagentStart"},
+		{event: "subagentStop"},
+		{event: "preCompact"},
 		{event: "stop"},
 		{event: "sessionEnd"},
 	},
 }
 
-// copilotTarget wires GitHub Copilot CLI's hooks. Its settings.json is
-// JSONC, so comments are stripped before parsing.
+// copilotTarget wires GitHub Copilot CLI's hooks. Copilot CLI uses flat
+// entries ({type,bash,matcher}) with camelCase event names; its camelCase
+// payloads carry no event name, so the installed command passes --event
+// explicitly. Its settings.json is JSONC, so comments are stripped before
+// parsing.
 var copilotTarget = hookTarget{
 	name:       "copilot",
 	scriptName: "agent-hook.sh",
-	useMatcher: true,
+	flat:       true,
+	eventArg:   true,
 	jsonc:      true,
 	binaries:   []string{"copilot"},
 	settings: func() (string, error) {
@@ -184,15 +219,27 @@ var copilotTarget = hookTarget{
 	},
 	events: []hookEvent{
 		{event: "sessionStart"},
+		{event: "userPromptSubmitted"},
 		{event: "preToolUse"},
 		{event: "postToolUse"},
+		{event: "postToolUseFailure"},
 		{event: "permissionRequest"},
+		{event: "notification", matcher: "permission_prompt", status: "blocked", detail: "waiting:permission"},
+		{event: "notification", matcher: "elicitation_dialog", status: "blocked", detail: "needs:input"},
+		{event: "notification", matcher: "agent_idle", status: "idle", detail: "idle"},
+		{event: "notification", matcher: "shell_completed|shell_detached_completed|agent_completed", status: "working", detail: "notified"},
 		{event: "agentStop"},
+		{event: "subagentStart"},
+		{event: "subagentStop"},
+		{event: "preCompact"},
+		{event: "errorOccurred"},
 		{event: "sessionEnd"},
 	},
 }
 
-// windsurfTarget wires Windsurf's hooks (snake_case event names).
+// windsurfTarget wires Windsurf's hooks (snake_case event names, payload
+// via agent_action_name/trajectory_id). Windsurf has no stop or session
+// lifecycle events: idle relies on post_cascade_response plus decay.
 var windsurfTarget = hookTarget{
 	name:       "windsurf",
 	scriptName: "agent-hook.sh",
@@ -203,11 +250,48 @@ var windsurfTarget = hookTarget{
 	},
 	events: []hookEvent{
 		{event: "pre_user_prompt"},
-		{event: "pre_run_command"},
+		{event: "pre_read_code"},
+		{event: "post_read_code"},
 		{event: "pre_write_code"},
+		{event: "post_write_code"},
+		{event: "pre_run_command"},
+		{event: "post_run_command"},
 		{event: "pre_mcp_tool_use"},
+		{event: "post_mcp_tool_use"},
+		{event: "post_setup_worktree"},
 		{event: "post_cascade_response"},
 		{event: "post_cascade_response_with_transcript"},
+	},
+}
+
+// grokTarget wires Grok Build's hooks. Grok loads every ~/.grok/hooks/*.json
+// (always trusted, applies to every session including background ones), so
+// this is a "dir" target: tmon writes its own tmon-grok.json plus the hook
+// script next to it (command paths resolve relative to the JSON file), and
+// remove deletes exactly those two files. Grok's payload is camelCase
+// (sessionId, hookEventName with snake_case values like "pre_tool_use").
+var grokTarget = hookTarget{
+	name:       "grok",
+	kind:       "dir",
+	scriptName: "tmon-grok-hook.sh",
+	binaries:   []string{"grok"},
+	settings: func() (string, error) {
+		return homeFile(".grok", "hooks")
+	},
+	events: []hookEvent{
+		{event: "SessionStart"},
+		{event: "UserPromptSubmit"},
+		{event: "PreToolUse"},
+		{event: "PostToolUse"},
+		{event: "PostToolUseFailure"},
+		{event: "PermissionDenied"},
+		{event: "Stop"},
+		{event: "StopFailure"},
+		{event: "SubagentStart"},
+		{event: "SubagentStop"},
+		{event: "PreCompact"},
+		{event: "PostCompact"},
+		{event: "SessionEnd"},
 	},
 }
 
@@ -230,6 +314,7 @@ var hookTargets = map[string]*hookTarget{
 	"cursor":   &cursorTarget,
 	"copilot":  &copilotTarget,
 	"windsurf": &windsurfTarget,
+	"grok":     &grokTarget,
 }
 
 // hooksInstall writes the embedded hook script into the plugin dir and
@@ -242,9 +327,13 @@ func hooksInstall(name string) int {
 		return 2
 	}
 
+	stateDir := filepath.Join(cfg.HookStateDir, name)
+	if target.kind == "dir" {
+		return hooksInstallDir(target, stateDir)
+	}
+
 	pluginDir := filepath.Dir(cfg.BinDir)
 	scriptPath := filepath.Join(pluginDir, "hooks", target.scriptName)
-	stateDir := filepath.Join(cfg.HookStateDir, name)
 
 	// 1. Extract the embedded hook script.
 	if err := os.MkdirAll(filepath.Dir(scriptPath), 0o755); err != nil {
@@ -285,6 +374,61 @@ func hooksInstall(name string) int {
 	return 0
 }
 
+// hooksInstallDir installs a "dir"-kind target (Grok): the hook script and
+// one tmon-owned hooks.json written into the agent's hooks directory. The
+// command references the script relative to the JSON file (./<script>), as
+// Grok resolves command paths relative to the hook file. Nothing else in
+// the directory is touched and no backup is made — the two files are tmon's
+// own, and remove deletes exactly them. Reinstalling overwrites both files,
+// so install is idempotent by construction.
+func hooksInstallDir(target *hookTarget, stateDir string) int {
+	dir, err := target.settings()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "tmon: hooks install:", err)
+		return 1
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		fmt.Fprintln(os.Stderr, "tmon: hooks install:", err)
+		return 1
+	}
+	scriptPath := filepath.Join(dir, target.scriptName)
+	if err := os.WriteFile(scriptPath, []byte(agentHookScript), 0o755); err != nil {
+		fmt.Fprintln(os.Stderr, "tmon: hooks install:", err)
+		return 1
+	}
+	jsonPath := filepath.Join(dir, "tmon-"+target.name+".json")
+	if err := writeDirHookFile(jsonPath, scriptPath, stateDir, target); err != nil {
+		fmt.Fprintln(os.Stderr, "tmon: hooks install:", err)
+		return 1
+	}
+	fmt.Printf("tmon: installed %s hooks\n  script:  %s\n  state:   %s\n  config:  %s\n",
+		target.name, scriptPath, stateDir, jsonPath)
+	fmt.Println("Restart your agent session (or reload hooks in-session, e.g. /hooks + r) for the hooks to take effect.")
+	return 0
+}
+
+// writeDirHookFile writes the full hooks.json for a "dir"-kind target. The
+// file is tmon-owned, so a reinstall overwrites it wholesale.
+func writeDirHookFile(jsonPath, scriptPath, stateDir string, target *hookTarget) error {
+	rel := "./" + filepath.Base(scriptPath)
+	hooks := map[string]any{}
+	for _, ev := range target.events {
+		cmd := hookCommandString(rel, stateDir, ev, target)
+		group := map[string]any{"hooks": []any{map[string]any{"type": "command", "command": cmd}}}
+		if target.useMatcher && ev.matcher != "" {
+			group["matcher"] = ev.matcher
+		}
+		groups, _ := hooks[ev.event].([]any)
+		hooks[ev.event] = append(groups, group)
+	}
+	b, err := json.MarshalIndent(map[string]any{"hooks": hooks}, "", "  ")
+	if err != nil {
+		return err
+	}
+	b = append(b, '\n')
+	return os.WriteFile(jsonPath, b, 0o644)
+}
+
 // hooksRemove strips tmon's hook entries from the agent's settings file.
 func hooksRemove(name string) int {
 	cfg := config.FromEnv()
@@ -292,6 +436,10 @@ func hooksRemove(name string) int {
 	if !ok {
 		fmt.Fprintf(os.Stderr, "tmon: no hook target %q (supported: %s)\n", name, hookTargetList())
 		return 2
+	}
+
+	if target.kind == "dir" {
+		return hooksRemoveDir(target)
 	}
 
 	pluginDir := filepath.Dir(cfg.BinDir)
@@ -302,7 +450,7 @@ func hooksRemove(name string) int {
 		fmt.Fprintln(os.Stderr, "tmon: hooks remove:", err)
 		return 1
 	}
-	removed, err := stripHooks(settingsPath, scriptPath)
+	removed, err := stripHooks(settingsPath, scriptPath, target.jsonc)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "tmon: hooks remove:", err)
 		return 1
@@ -312,6 +460,34 @@ func hooksRemove(name string) int {
 		fmt.Printf("tmon: a pre-install backup remains at %s.tmon.bak\n", settingsPath)
 	} else {
 		fmt.Printf("tmon: no %s hooks were installed in %s\n", name, settingsPath)
+	}
+	return 0
+}
+
+// hooksRemoveDir deletes exactly the two files tmon owns in a "dir"-kind
+// target's hooks directory: tmon-<name>.json and the hook script.
+func hooksRemoveDir(target *hookTarget) int {
+	dir, err := target.settings()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "tmon: hooks remove:", err)
+		return 1
+	}
+	removed := false
+	for _, f := range []string{"tmon-" + target.name + ".json", target.scriptName} {
+		p := filepath.Join(dir, f)
+		if _, err := os.Stat(p); err != nil {
+			continue
+		}
+		if err := os.Remove(p); err != nil {
+			fmt.Fprintln(os.Stderr, "tmon: hooks remove:", err)
+			return 1
+		}
+		removed = true
+	}
+	if removed {
+		fmt.Printf("tmon: removed %s hooks from %s\n", target.name, dir)
+	} else {
+		fmt.Printf("tmon: no %s hooks were installed in %s\n", target.name, dir)
 	}
 	return 0
 }
@@ -718,6 +894,21 @@ func agentPresent(target *hookTarget) bool {
 }
 
 func hooksInstalled(target *hookTarget) (bool, error) {
+	if target.kind == "dir" {
+		dir, err := target.settings()
+		if err != nil {
+			return false, err
+		}
+		for _, f := range []string{"tmon-" + target.name + ".json", target.scriptName} {
+			if _, err := os.Stat(filepath.Join(dir, f)); err != nil {
+				if os.IsNotExist(err) {
+					return false, nil
+				}
+				return false, err
+			}
+		}
+		return true, nil
+	}
 	settingsPath, err := target.settings()
 	if err != nil {
 		return false, err
@@ -742,14 +933,37 @@ func hookTargetList() string {
 
 // ─── settings merge (preserves all unknown fields) ──────────────────────────
 
-// mergeHooks adds one hook group per event to the settings file, skipping
-// any group whose command already references the script. Idempotent.
+// mergeHooks adds one hook entry per event to the settings file, skipping
+// any entry whose command already references the script. Idempotent.
+// "file"-kind targets use nested groups ({matcher, hooks:[{type,command}]})
+// for Claude-style configs; flat targets (Copilot CLI) get one flat entry
+// per event ({type, bash, matcher}).
 func mergeHooks(settingsPath, scriptPath, stateDir string, target *hookTarget) error {
 	root := readSettings(settingsPath, target.jsonc)
 	hooks := readHooks(root)
 
 	for _, ev := range target.events {
-		cmd := hookCommandString(scriptPath, stateDir, ev)
+		cmd := hookCommandString(scriptPath, stateDir, ev, target)
+		if target.flat {
+			entry := map[string]any{"type": "command", "bash": cmd}
+			if ev.matcher != "" {
+				entry["matcher"] = ev.matcher
+			}
+			if containsFlatCommand(hooks[ev.event], cmd) {
+				continue
+			}
+			b, err := json.Marshal(entry)
+			if err != nil {
+				return err
+			}
+			groups := append(rawSlice(hooks[ev.event]), b)
+			raw, err := json.Marshal(groups)
+			if err != nil {
+				return err
+			}
+			hooks[ev.event] = raw
+			continue
+		}
 		if containsCommand(hooks[ev.event], cmd) {
 			continue
 		}
@@ -775,10 +989,10 @@ func mergeHooks(settingsPath, scriptPath, stateDir string, target *hookTarget) e
 	return writeSettings(settingsPath, root, hooks)
 }
 
-// stripHooks removes every hook group whose command references the script.
+// stripHooks removes every hook entry whose command references the script.
 // Returns whether anything was removed.
-func stripHooks(settingsPath, scriptPath string) (bool, error) {
-	root := readSettings(settingsPath, false)
+func stripHooks(settingsPath, scriptPath string, jsonc bool) (bool, error) {
+	root := readSettings(settingsPath, jsonc)
 	hooks := readHooks(root)
 	removed := false
 
@@ -812,8 +1026,14 @@ func stripHooks(settingsPath, scriptPath string) (bool, error) {
 
 // hookCommandString builds the installed command, e.g.
 // "/plugin/hooks/agent-hook.sh /plugin/state/hooks/claude blocked waiting:permission".
-func hookCommandString(scriptPath, stateDir string, ev hookEvent) string {
+// For eventArg targets (Copilot) a plain event becomes "... --event <name>",
+// since the camelCase payload carries no event name; matcher-encoded
+// entries keep the status/detail form.
+func hookCommandString(scriptPath, stateDir string, ev hookEvent, target *hookTarget) string {
 	cmd := scriptPath + " " + stateDir
+	if target != nil && target.eventArg && ev.status == "" {
+		return cmd + " --event " + ev.event
+	}
 	if ev.status != "" {
 		cmd += " " + ev.status + " " + ev.detail
 	}
@@ -869,14 +1089,35 @@ func containsCommand(groupsRaw json.RawMessage, cmd string) bool {
 	return false
 }
 
+// containsFlatCommand reports whether a Copilot-style flat entry with the
+// same bash command already exists.
+func containsFlatCommand(groupsRaw json.RawMessage, cmd string) bool {
+	for _, g := range rawSlice(groupsRaw) {
+		var entry struct {
+			Bash string `json:"bash"`
+		}
+		if json.Unmarshal(g, &entry) == nil && entry.Bash == cmd {
+			return true
+		}
+	}
+	return false
+}
+
+// groupReferencesScript reports whether a hook entry references the tmon
+// script: a nested Claude-style group (hooks[].command) or a Copilot-style
+// flat entry (bash).
 func groupReferencesScript(g json.RawMessage, scriptPath string) bool {
 	var group struct {
 		Hooks []struct {
 			Command string `json:"command"`
 		} `json:"hooks"`
+		Bash string `json:"bash"`
 	}
 	if json.Unmarshal(g, &group) != nil {
 		return false
+	}
+	if strings.Contains(group.Bash, scriptPath) {
+		return true
 	}
 	for _, h := range group.Hooks {
 		if strings.Contains(h.Command, scriptPath) {

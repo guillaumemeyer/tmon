@@ -126,4 +126,3 @@ PY
     exit 0
     ;;
 esac
-exit 0

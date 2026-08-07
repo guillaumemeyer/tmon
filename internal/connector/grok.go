@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -58,25 +59,48 @@ type grokEvent struct {
 
 func (Grok) Name() string { return "grok" }
 
-// Enabled reports whether the Grok state surface exists.
+// Enabled reports whether the Grok state surface exists: the live
+// active_sessions.json, or hook state written by installed tmon hooks
+// (which covers background sessions that never appear in the file).
 func (Grok) Enabled(cfg config.Config) bool {
+	if hookDirExists(cfg, "grok") {
+		return true
+	}
 	p := filepath.Join(grokHome(), "active_sessions.json")
 	fi, err := os.Stat(p)
 	return err == nil && !fi.IsDir()
 }
 
-// Probe returns one record per active Grok session.
+// Probe returns one record per active Grok session: status from the
+// session's events.jsonl, overridden by installed hook state (hook events
+// expose permission waits and running tools the phase log does not), with
+// usage/title enrichment from signals.json and summary.json. Hook-only
+// records — background sessions absent from active_sessions.json — are
+// kept: that is the exact case the hooks exist for.
 func (Grok) Probe(cfg config.Config) ([]Record, error) {
 	path := filepath.Join(grokHome(), "active_sessions.json")
 	b, err := os.ReadFile(path)
-	if err != nil {
+	var recs []Record
+	if err == nil {
+		var sessions []activeSession
+		if err := json.Unmarshal(b, &sessions); err != nil {
+			return nil, err
+		}
+		recs = grokNativeRecords(sessions)
+	} else if !hookDirExists(cfg, "grok") {
 		return nil, err
 	}
-	var sessions []activeSession
-	if err := json.Unmarshal(b, &sessions); err != nil {
-		return nil, err
+	if hookDirExists(cfg, "grok") {
+		hookRecs, err := pairHookSessions(cfg, "grok", "Grok")
+		if err == nil && len(hookRecs) > 0 {
+			recs = mergeGrokRecords(recs, hookRecs)
+		}
 	}
+	return recs, nil
+}
 
+// grokNativeRecords builds one record per active_sessions.json entry.
+func grokNativeRecords(sessions []activeSession) []Record {
 	home := grokHome()
 	now := time.Now()
 	recs := make([]Record, 0, len(sessions))
@@ -102,7 +126,7 @@ func (Grok) Probe(cfg config.Config) ([]Record, error) {
 		}
 		recs = append(recs, rec)
 	}
-	return recs, nil
+	return recs
 }
 
 // sessionDir locates the session directory under ~/.grok/sessions. Grok
@@ -216,6 +240,49 @@ func mapGrokPhase(phase string) (agent.Status, string) {
 	default:
 		return agent.StatusIdle, "phase:" + phase
 	}
+}
+
+// mergeGrokRecords overlays hook records (authoritative status/detail from
+// lifecycle events) onto native records (active_sessions.json + phase
+// log), keyed by PID. The hook record's status, detail and signal time
+// win; the native record supplies the Usage, Title, and the " · model:… ·
+// ctx:…%" enrichment suffix when the hook record lacks them. Hook-only
+// PIDs (background sessions not listed in active_sessions.json — the exact
+// case the hooks exist for) are kept as-is.
+func mergeGrokRecords(native, hooks []Record) []Record {
+	byPID := make(map[int]Record, len(native)+len(hooks))
+	for _, r := range native {
+		byPID[r.PID] = r
+	}
+	for _, h := range hooks {
+		if cur, ok := byPID[h.PID]; ok {
+			if !cur.Usage.Empty() {
+				h.Usage = cur.Usage
+			}
+			if cur.Title != "" {
+				h.Title = cur.Title
+			}
+			if s := grokDetailSuffix(cur.Detail); s != "" && !strings.Contains(h.Detail, "model:") {
+				h.Detail += s
+			}
+		}
+		byPID[h.PID] = h
+	}
+	out := make([]Record, 0, len(byPID))
+	for _, r := range byPID {
+		out = append(out, r)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].PID < out[j].PID })
+	return out
+}
+
+// grokDetailSuffix extracts the " · model:… · ctx:…%" enrichment tail that
+// enrichGrok appends to a native record's detail, or "" when absent.
+func grokDetailSuffix(detail string) string {
+	if i := strings.Index(detail, " · model:"); i >= 0 {
+		return detail[i:]
+	}
+	return ""
 }
 
 // turnEndedAtOrAfter reports whether a turn_ended event occurred at or
