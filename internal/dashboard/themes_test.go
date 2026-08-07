@@ -54,6 +54,26 @@ func TestThemeSelectorOpensAndListsThemes(t *testing.T) {
 	}
 }
 
+func TestThemeFooterRightAlignedNoName(t *testing.T) {
+	m := New(nil, true).WithTheme(theme.Resolve(theme.Options{Name: "nord"}))
+	m.width, m.height = 100, 24
+
+	m = applyMsg(t, m, key('t'))
+	rows := strings.Split(ansi.Strip(m.View()), "\n")
+	footer := rows[m.height-2]
+	// The hints sit at the right edge with one cell of margin.
+	if !strings.HasSuffix(footer, "[esc/q] revert │") {
+		t.Fatalf("footer should end with the revert hint at the right edge, got %q", footer)
+	}
+	if !strings.Contains(footer, "[↑/↓ j/k] preview") || !strings.Contains(footer, "[enter/space] apply") {
+		t.Fatalf("footer should show the browse and apply hints, got %q", footer)
+	}
+	// The theme name no longer appears in the footer.
+	if strings.Contains(footer, "nord") {
+		t.Fatalf("footer should not show the theme name, got %q", footer)
+	}
+}
+
 func TestThemeSelectorMoveUpdatesPreview(t *testing.T) {
 	old := capturePane
 	capturePane = func(p string) string { return "x" }

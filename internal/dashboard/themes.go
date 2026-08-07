@@ -8,6 +8,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/guillaumemeyer/tmon/internal/theme"
 	"github.com/guillaumemeyer/tmon/internal/tmux"
 )
@@ -277,13 +278,20 @@ func (m Model) themePreviewLines(w, n int, name string) []string {
 	return out
 }
 
-// themeFooterLine is the selector footer: preview/apply/revert hints with
-// the highlighted theme name aligned right.
+// themeFooterLine is the theme selector's bottom status bar: the browse
+// and apply hints, right-aligned with one cell of right margin — matching
+// the doctor report's footer. Hints that do not fit the popin width are
+// truncated from the end.
 func (m Model) themeFooterLine(w int) string {
-	left := " " + m.st.dim.Render("[↑/↓ j/k] preview  [enter/space] apply  [esc/q] revert")
-	right := ""
-	if names := m.themeNames(); len(names) > 0 {
-		right = m.st.dim.Render(" " + names[m.themes.Index()])
+	text := "[↑/↓ j/k] preview  [enter/space] apply  [esc/q] revert"
+	if ansi.StringWidth(text)+1 <= w {
+		text += " "
+	} else {
+		text = ansi.Truncate(text, w, "")
 	}
-	return m.twoSided(left, right, w)
+	pad := w - ansi.StringWidth(text)
+	if pad > 0 {
+		text = strings.Repeat(" ", pad) + text
+	}
+	return m.st.dim.Render(text)
 }
