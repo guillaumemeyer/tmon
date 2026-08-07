@@ -108,11 +108,13 @@ func probeClaude(cfg config.Config) (Quota, error) {
 }
 
 // claudeUsageResp is the OAuth usage response: either the legacy top-level
-// windows (five_hour/seven_day) or the newer limits array (or both).
+// windows (five_hour/seven_day) or the newer limits array (or both), plus
+// the optional extra_usage pay-as-you-go block.
 type claudeUsageResp struct {
-	FiveHour *claudeWindow `json:"five_hour"`
-	SevenDay *claudeWindow `json:"seven_day"`
-	Limits   []claudeLimit `json:"limits"`
+	FiveHour   *claudeWindow     `json:"five_hour"`
+	SevenDay   *claudeWindow     `json:"seven_day"`
+	Limits     []claudeLimit     `json:"limits"`
+	ExtraUsage *claudeExtraUsage `json:"extra_usage"`
 }
 
 type claudeWindow struct {
@@ -131,12 +133,23 @@ type claudeLimit struct {
 	} `json:"scope"`
 }
 
+// claudeExtraUsage is the monthly pay-as-you-go block of the usage
+// response. Amounts are in minor currency units (cents), so the probe
+// divides by 100 before storing dollars.
+type claudeExtraUsage struct {
+	IsEnabled    bool     `json:"is_enabled"`
+	MonthlyLimit *float64 `json:"monthly_limit"` // cents; null when disabled
+	UsedCredits  *float64 `json:"used_credits"`  // cents spent so far this month; null when disabled
+	Currency     string   `json:"currency"`      // ISO code, e.g. "USD"
+}
+
 // parseClaudeUsage maps every rate-limit window in the response to a quota
 // window in a fixed display order: session, weekly all-models, then weekly
-// per-model (e.g. "Current week (Fable)"). Legacy top-level windows
-// (five_hour/seven_day) fill in for their limits[] counterparts. The first
-// window becomes the quota's primary Pct/Label/ResetAt so older consumers
-// keep a single-window view.
+// per-model (e.g. "Current week (Fable)"), and finally the monthly
+// extra-usage window as a dollar window when pay-as-you-go is enabled.
+// Legacy top-level windows (five_hour/seven_day) fill in for their
+// limits[] counterparts. The first window becomes the quota's primary
+// Pct/Label/ResetAt so older consumers keep a single-window view.
 func parseClaudeUsage(body []byte) (Quota, error) {
 	var resp claudeUsageResp
 	if err := json.Unmarshal(body, &resp); err != nil {
@@ -179,6 +192,11 @@ func parseClaudeUsage(body []byte) (Quota, error) {
 			add(l.Percent, l.ResetsAt, "Current week ("+l.Scope.Model.DisplayName+")")
 		}
 	}
+	if resp.ExtraUsage != nil && resp.ExtraUsage.IsEnabled {
+		if w := claudeExtraWindow(*resp.ExtraUsage); w != nil {
+			windows = append(windows, *w)
+		}
+	}
 	if len(windows) == 0 {
 		return Quota{StatusText: "no rate-limit window in Claude usage response"}, nil
 	}
@@ -188,6 +206,36 @@ func parseClaudeUsage(body []byte) (Quota, error) {
 		ResetAt: windows[0].ResetAt,
 		Windows: windows,
 	}, nil
+}
+
+// claudeExtraWindow maps the monthly extra-usage block into a dollar quota
+// window. The API reports cents; the window stores dollars (Spend consumed,
+// Limit cap) with the currency's display symbol. nil when the block carries
+// neither a limit nor a spent amount (e.g. everything null at 0).
+func claudeExtraWindow(e claudeExtraUsage) *agent.QuotaWindow {
+	var limit, spend float64
+	if e.MonthlyLimit != nil {
+		limit = *e.MonthlyLimit / 100
+	}
+	if e.UsedCredits != nil {
+		spend = *e.UsedCredits / 100
+	}
+	if limit <= 0 && spend <= 0 {
+		return nil
+	}
+	w := agent.QuotaWindow{
+		Label: "Extra usage (monthly)",
+		Limit: limit,
+		Spend: spend,
+	}
+	w.Currency = currencySymbol(e.Currency)
+	if w.Currency == "" {
+		w.Currency = "$"
+	}
+	if limit > 0 {
+		w.Pct = int(spend*100/limit + 0.5)
+	}
+	return &w
 }
 
 // normalizeResetAt parses an API reset timestamp into UTC RFC3339, keeping

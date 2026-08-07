@@ -217,6 +217,83 @@ func TestParseClaudeUsageEmpty(t *testing.T) {
 	}
 }
 
+func TestParseClaudeUsageExtraUsage(t *testing.T) {
+	// The extra_usage block is monthly pay-as-you-go in cents: the probe
+	// divides by 100 and appends a dollar window after the percent
+	// windows, so the dashboard shows "consumed and remaining" in $.
+	body := []byte(`{
+	  "limits": [
+	    {"kind": "session", "percent": 10, "resets_at": "2026-08-06T14:00:00Z"},
+	    {"kind": "weekly_all", "percent": 55, "resets_at": "2026-08-09T00:00:00Z"}
+	  ],
+	  "extra_usage": {
+	    "is_enabled": true,
+	    "monthly_limit": 10000,
+	    "used_credits": 1856.0,
+	    "utilization": 18.56,
+	    "currency": "USD"
+	  }
+	}`)
+	q, err := parseClaudeUsage(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if q.Pct != 10 || q.Label != "Current session" {
+		t.Errorf("primary = %+v, want the session window", q)
+	}
+	want := []agent.QuotaWindow{
+		{Pct: 10, Label: "Current session", ResetAt: "2026-08-06T14:00:00Z"},
+		{Pct: 55, Label: "Current week (all models)", ResetAt: "2026-08-09T00:00:00Z"},
+		{Pct: 19, Label: "Extra usage (monthly)", Limit: 100, Spend: 18.56, Currency: "$"},
+	}
+	if !reflect.DeepEqual(q.Windows, want) {
+		t.Errorf("windows = %+v, want %+v", q.Windows, want)
+	}
+}
+
+func TestParseClaudeUsageExtraUsageDisabled(t *testing.T) {
+	// A disabled extra_usage block (or one with no numbers) adds no dollar
+	// window; the percent windows stand alone.
+	body := []byte(`{
+	  "limits": [{"kind": "session", "percent": 3, "resets_at": "2026-08-06T14:00:00Z"}],
+	  "extra_usage": {"is_enabled": false, "monthly_limit": null, "used_credits": null}
+	}`)
+	q, err := parseClaudeUsage(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []agent.QuotaWindow{
+		{Pct: 3, Label: "Current session", ResetAt: "2026-08-06T14:00:00Z"},
+	}
+	if !reflect.DeepEqual(q.Windows, want) {
+		t.Errorf("windows = %+v, want %+v", q.Windows, want)
+	}
+}
+
+func TestParseClaudeUsageExtraUsageOnly(t *testing.T) {
+	// A response with no rate-limit windows but a live extra_usage block
+	// still yields a quota — the dollar window alone.
+	body := []byte(`{
+	  "extra_usage": {
+	    "is_enabled": true,
+	    "monthly_limit": 5000,
+	    "used_credits": 1250.0,
+	    "currency": "USD"
+	  }
+	}`)
+	q, err := parseClaudeUsage(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(q.Windows) != 1 {
+		t.Fatalf("windows = %+v, want the single extra-usage window", q.Windows)
+	}
+	w := q.Windows[0]
+	if w.Label != "Extra usage (monthly)" || w.Limit != 50 || w.Spend != 12.5 || w.Currency != "$" {
+		t.Errorf("window = %+v, want $12.50 used of $50.00", w)
+	}
+}
+
 func TestParseClaudeUsageGarbage(t *testing.T) {
 	if _, err := parseClaudeUsage([]byte(`{nope`)); err == nil {
 		t.Fatal("garbage body: want an error")

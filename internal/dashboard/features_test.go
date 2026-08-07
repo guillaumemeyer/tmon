@@ -1142,11 +1142,13 @@ func TestContextLineMovesToPreview(t *testing.T) {
 		}
 	}
 
-	// The usage section stays on top, marked "?" when the agent reports no
-	// quota windows. The session line carries the token counts next to the
-	// "💬 Session:" label, and the context bar sits on its own line under
-	// it. The preview panel is 59 cells here, so the progress bar takes
-	// the full 30-cell cap; 26% of 30 fills 8 cells (rounded).
+	// The usage section stays on top. With no quota windows the header
+	// shows a bare "📊 Usage: ?": the percent bar and the dollar amounts
+	// only exist when a provider reports a quota window. The session line
+	// carries the token counts next to the "💬 Session:" label, and the
+	// context bar sits on its own line under it. The preview panel is 59
+	// cells here, so the progress bar takes the full 30-cell cap; 26% of
+	// 30 fills 8 cells (rounded).
 	if !strings.Contains(v, "📊 Usage: ?") {
 		t.Fatalf("preview missing the no-quota usage header:\n%s", v)
 	}
@@ -1157,8 +1159,8 @@ func TestContextLineMovesToPreview(t *testing.T) {
 		t.Fatalf("preview missing the Grok context bar:\n%s", v)
 	}
 
-	// An agent without token stats still shows "💬 Session: ?" in the
-	// preview.
+	// An agent without token stats or quota still shows "📊 Usage: ?" and
+	// "💬 Session: ?" in the preview.
 	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyDown}) // select Claude
 	v = ansi.Strip(m.View())
 	if !strings.Contains(v, "📊 Usage: ?") {
@@ -1175,13 +1177,15 @@ func TestQuotaWindowsInPreview(t *testing.T) {
 	t.Cleanup(func() { capturePane = old })
 
 	// Claude carries three quota windows (session, weekly all-models,
-	// weekly per-model); the other agents have none. The usage lines
-	// render at the top of the preview pane for the selected agent.
+	// weekly per-model) plus the monthly extra-usage dollar window; the
+	// other agents have none. The usage lines render at the top of the
+	// preview pane for the selected agent.
 	rows := testRows()
 	rows[1].Usage = agent.Usage{QuotaWindows: []agent.QuotaWindow{
 		{Pct: 0, Label: "Current session"},
 		{Pct: 5, Label: "Current week (all models)"},
 		{Pct: 2, Label: "Current week (Fable)"},
+		{Limit: 100, Spend: 18.56, Label: "Extra usage (monthly)", Currency: "$"},
 	}}
 	f := &fakeLoader{data: Data{Rows: rows}}
 	m := New(f.load, true)
@@ -1204,12 +1208,17 @@ func TestQuotaWindowsInPreview(t *testing.T) {
 		}
 	}
 
-	// The preview pane leads with the "📊 Usage:" header and one bar per
-	// quota window, above the "💬 Session" line.
+	// The preview pane leads with the "📊 Usage:" header and one row per
+	// quota window — the percent windows render bars, the monthly
+	// extra-usage window renders its dollar amounts — above the
+	// "💬 Session" line.
 	for _, want := range []string{"📊 Usage", "Current session", "Current week (all models)", "Current week (Fable)", "💬 Session"} {
 		if !strings.Contains(v, want) {
 			t.Errorf("preview missing %q:\n%s", want, v)
 		}
+	}
+	if !strings.Contains(v, "$18.56 used · $81.44 left · Extra usage (monthly)") {
+		t.Errorf("preview missing the dollar window:\n%s", v)
 	}
 	// With quota data present the header reads "📊 Usage", not "📊 Usage: ?".
 	if strings.Contains(v, "📊 Usage: ?") {
@@ -1340,6 +1349,23 @@ func TestQuotaDetailFormat(t *testing.T) {
 			"██████████████████████████████ 100% · Current session"},
 		{"negative clamps", agent.QuotaWindow{Pct: -5, Label: "Current session"},
 			"░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 0% · Current session"},
+		// Dollar windows replace the bar entirely: a budget with a spent
+		// amount shows consumed and remaining, an account balance shows the
+		// remaining top-up, and a spend without a limit shows just the spend.
+		{"budget and spend", agent.QuotaWindow{Limit: 100, Spend: 18.56, Label: "Extra usage (monthly)", Currency: "$"},
+			"$18.56 used · $81.44 left · Extra usage (monthly)"},
+		{"budget only", agent.QuotaWindow{Limit: 50, Label: "Extra usage (monthly)", Currency: "$"},
+			"$50.00 budget · Extra usage (monthly)"},
+		{"spend only", agent.QuotaWindow{Spend: 4.12, Currency: "$"},
+			"$4.12 spent"},
+		{"balance", agent.QuotaWindow{Balance: 65.85, Label: "DeepSeek balance", Currency: "$"},
+			"$65.85 remaining · DeepSeek balance"},
+		{"balance yen", agent.QuotaWindow{Balance: 110, Label: "DeepSeek balance", Currency: "¥"},
+			"¥110.00 remaining · DeepSeek balance"},
+		{"over budget clamps left", agent.QuotaWindow{Limit: 100, Spend: 120, Label: "Extra usage (monthly)", Currency: "$"},
+			"$120.00 used · $0.00 left · Extra usage (monthly)"},
+		{"default currency", agent.QuotaWindow{Balance: 9.5, Label: "DeepSeek balance"},
+			"$9.50 remaining · DeepSeek balance"},
 	}
 	for _, tc := range cases {
 		if got := ansi.Strip(quotaDetail(m.st, m.contextWarn, tc.w, 200)); got != tc.want {

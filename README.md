@@ -93,7 +93,7 @@ connector provides:
 | CodeBuddy | native (`~/.codebuddy`) | idle | — | session id | — | — |
 | Aider | native (`.aider.chat.history.md`) | working | — | editing | — | — |
 | OpenClaw | native (`~/.openclaw` + gateway lock) | gateway | — | gateway · N active sessions | — | — |
-| Prime Agent | native (daemon list + session JSONL) + hooks (extension) | exact | ✓ (needs:input) | needs:input · tool · model | ✓ | ✓ + window % |
+| Prime Agent | native (daemon list + session JSONL) + hooks (extension) | exact | — | needs:input · tool · model | ✓ | ✓ + window % |
 
 **Status** is how precisely tmon knows the working / blocked / idle state:
 `exact` from the agent's own signals, a partial signal (`working`, `idle`,
@@ -107,11 +107,15 @@ next reset, plan tier — probed in the background by the usage worker for
 Claude, Grok, and Codex, plus the configured provider's balance for Hermes
 (it is bring-your-own-key, so there is no central account to bill), and
 shown in the dashboard popup at the top of the preview
-pane: a `📊 Usage:` header with one progress-bar row per window (`████ 38% ·
-Current session (reset at 19:39 PDT)`), a divider, then a `💬 Session:`
-line with the token counts and the context-window bar on its own line
-below it. All bars share a four-space left margin so they line up. When
-the agent reports no quota windows, the header reads `📊 Usage: ?`.
+pane: a `📊 Usage:` header with one row per window, a divider, then a
+`💬 Session:` line with the token counts and the context-window bar on its
+own line below it. Each quota row renders **dollars when the provider
+reports them, percent otherwise** — a window with money data shows its
+amounts without a bar (`$18.56 used · $81.44 left · Extra usage (monthly)`,
+or a remaining balance like `$65.85 remaining · DeepSeek balance`), while a
+percent-only window shows its progress bar (`████ 38% · Current session
+(reset at 19:39 PDT)`). All bars share a four-space left margin so they
+line up. Only an agent with no quota at all shows `📊 Usage: ?`.
 
 **Hermes** lists only live **CLI/TUI** sessions (not the messaging gateway).
 The dashboard name is `Title (Hermes - <profile>)` when a profile is known
@@ -121,21 +125,28 @@ token stats come from each home's `state.db`. Dangerous-command waits become
 Hermes may prompt once to allowlist the shell hook. Its usage line shows the
 configured provider's balance (from `model.provider` / `model.base_url` in
 `~/.hermes/config.yaml` and the key in `~/.hermes/.env`) as a `📊 Usage:` row
-like `DeepSeek balance $66.09`, so the account level is visible without a
-central Hermes account.
+like `$66.09 remaining · DeepSeek balance`, so the account level is visible
+without a central Hermes account.
 
 **Prime Agent** reads its daemon's own session list (`prime-agent list
 --json`, TTL-gated — the spawn costs ~380 ms) plus each session's JSONL for
 token usage, so working/idle, the model, and the context bar are exact
-without hooks. `taskState: "needs_input"` is prime-agent's native "waiting
-for you" signal and maps to **blocked** (`needs:input`). One session is a
-client + supervisor + catalog + worker set of processes that all share the
-process title `prime-agent`; tmon keeps only the tty-owning client for pane
-teleport and falls back to the worker PID for detached sessions (pane "?"),
-which is prime-agent's headline feature. Installing the extension
-(`tmon hooks install prime`, then `/reload` in prime-agent) adds exact
-mid-turn tool names. Prime Agent has no permission event, so a permission
-wait still reads as working and falls back to the pane-pattern heuristic.
+without hooks. Prime is bring-your-own-key on DeepSeek, so its `📊 Usage:`
+row shows the DeepSeek account balance (`$65.85 remaining · DeepSeek
+balance`), probed by the worker via `DEEPSEEK_API_KEY` in the worker
+environment — the same account Hermes shows when Hermes is on DeepSeek
+too. The daemon's `activity` field is the working signal; its
+`taskState` (`needs_input` / `completed`) is only defined for idle sessions
+and distinguishes a finished turn awaiting your next message
+(`needs:input`) from one marked completed (`turn-complete`) — tmon shows
+both as idle. One session is a client + supervisor + catalog + worker set
+of processes that all share the process title `prime-agent`; tmon keeps
+only the tty-owning client for pane teleport and falls back to the worker
+PID for detached sessions (pane "?"), which is prime-agent's headline
+feature. Installing the extension (`tmon hooks install prime`, then
+`/reload` in prime-agent) adds exact mid-turn tool names. Prime Agent has
+no permission event and no native blocked signal, so a permission wait
+still reads as working and falls back to the pane-pattern heuristic.
 
 Hooks are **off by default** (`@tmon-auto-hooks off`). Install them with
 `tmon hooks auto` or `tmon hooks install <agent>` when you want authoritative
@@ -162,8 +173,10 @@ The status poll must stay fast and never touch the network, so quota
 probing runs in a small background worker that `tmon status` auto-spawns on
 its first poll (one fork+exec, well under the poll budget; a flock keeps it
 single-instance per state dir). The worker probes the Claude OAuth usage
-endpoint, the Grok Build billing endpoint, and the Codex `app-server`
-JSON-RPC interface at most once per 15
+endpoint, the Grok Build billing endpoint, the Codex `app-server` JSON-RPC
+interface, and the configured provider's balance for Hermes and Prime (both
+bring-your-own-key; Prime's probe reads `DEEPSEEK_API_KEY` from the worker
+environment) at most once per 15
 minutes, writes `<state>/usage.json` (quota blocks; the token ledger lands
 here in a later phase), and exits after 30 minutes with no live agents and
 no open dashboard. A crashed worker is detected via its heartbeat file and
@@ -174,14 +187,18 @@ block per agent with a `windows` list — one entry per reported window
 (session, weekly all-models, weekly per-model), each with the percent used,
 a display label and the next reset time — plus the plan tier when the API
 exposes it and a `statusText`/`authHelpText` pair explaining an absent
-window (no credentials, rate limited, …). Claude's windows match its own
+window (no credentials, rate limited, …). A window that carries money data
+also stores `balance`/`limit`/`spend`/`currency`, so the dashboard can
+render amounts instead of a bar. Claude's windows match its own
 /usage view: "Current session", "Current week (all models)", and per-model
 windows such as "Current week (Fable)". Each status poll reads it cheaply
 and attaches the windows to every live record of that agent (quota is
 account-level, so each session of an agent shows the same windows); the
-dashboard renders one `████ 38% · Current session (reset at 19:39
-PDT)` row per window under the `📊 Usage:` header at the top of the preview
-pane (or `📊 Usage: ?` when the agent reports no quota windows), with the
+dashboard renders one row per window under the `📊 Usage:` header at the
+top of the preview pane — the dollar amounts when the window has them
+(`$18.56 used · $81.44 left · Extra usage (monthly)`), else the progress
+bar (`████ 38% · Current session (reset at 19:39 PDT)`); `📊 Usage: ?`
+only when nothing is known — with the
 context-window bar on its own line under the `💬 Session:` token counts
 below a divider. The ledger fields (`today`,
 `recentDays`, `modelUsage`) are reserved for the next phase.

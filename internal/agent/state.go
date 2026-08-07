@@ -57,11 +57,20 @@ type Usage struct {
 // QuotaWindow is one account quota window reported by a provider: the
 // percent of the window used, a display label naming the window (e.g.
 // "Current session", "Current week (all models)", "Current week (Fable)"),
-// and the next reset as RFC3339 when the provider reports one.
+// and the next reset as RFC3339 when the provider reports one. The dollar
+// fields carry the window's money amounts when the provider exposes them
+// (Claude's extra_usage, provider account balances); the dashboard then
+// renders the window as "$X used · $Y left" (or a remaining balance)
+// instead of a percent bar. Zero/empty dollar fields mean "unknown": the
+// percent bar is the fallback.
 type QuotaWindow struct {
-	Pct     int    `json:"pct"`
-	Label   string `json:"label"`
-	ResetAt string `json:"resetAt"`
+	Pct      int     `json:"pct"`
+	Label    string  `json:"label"`
+	ResetAt  string  `json:"resetAt"`
+	Balance  float64 `json:"balance,omitempty"`  // dollars remaining (account balance, e.g. a DeepSeek top-up); 0 = none
+	Limit    float64 `json:"limit,omitempty"`    // dollar limit of the window (e.g. Claude's monthly extra-usage cap); 0 = none
+	Spend    float64 `json:"spend,omitempty"`    // dollars consumed in the window; 0 = none
+	Currency string  `json:"currency,omitempty"` // display symbol ($, ¥, €, …); "" = $
 }
 
 // Empty reports whether no usage stat is known at all.

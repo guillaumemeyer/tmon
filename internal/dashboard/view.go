@@ -492,11 +492,13 @@ const previewChromeLines = 2
 const minPreviewViewport = 2
 
 // previewLines renders the right-side preview panel in four sections: the
-// selected agent's stats block — a "📊 Usage:" header with one bar per
-// account quota window (or "📊 Usage: ?" when the agent reports no quota
-// windows), a divider, then the "💬 Session:" line with the token counts
-// and the context-window bar on its own line below it when a window is
-// known — a separator, then the pane preview — a header line naming the selected agent, the bubbles
+// selected agent's stats block — a "📊 Usage:" header with one row per
+// account quota window (a dollar amount when the provider reports one,
+// e.g. "$18.56 used · $81.44 left" or a remaining balance, otherwise a
+// percent bar; "📊 Usage: ?" when nothing is known), a divider, then the
+// "💬 Session:" line with the token counts and the context-window bar on
+// its own line below it when a window is known — a separator, then the
+// pane preview — a header line naming the selected agent, the bubbles
 // viewport holding the pane capture (scrollable with ctrl+u/ctrl+d and the
 // mouse wheel), a separator and a tips line at the bottom. Every line is
 // exactly w cells so it joins cleanly with the list column. The list
@@ -516,14 +518,17 @@ func (m Model) previewLines(w, n int) []string {
 	out := make([]string, 0, n)
 
 	// Section 1: the stats block of the selected agent — the usage header
-	// and one quota bar per window (or "📊 Usage: ?" when the agent reports
-	// no quota windows), a divider, then the "💬 Session:" line with the
-	// token counts and the context-window bar on its own line when a window
-	// is known. All bars share a four-space left margin so the usage and
-	// context bars line up. The block is dropped on panes too short to keep
-	// minPreviewViewport capture rows under it, so the preview stays usable
-	// when the popup is small. Headless agents have no pane to show, so the
-	// stats always render there.
+	// and one quota row per window (a dollar amount when the provider
+	// reports one, e.g. "$18.56 used · $81.44 left" or a remaining
+	// balance, otherwise a percent bar; "📊 Usage: ?" when nothing is
+	// known), a divider, then the
+	// "💬 Session:" line with the token counts and the context-window bar
+	// on its own line when a window is known. All bars share a four-space
+	// left margin so the usage and context bars line up. The block is
+	// dropped on panes too short to keep minPreviewViewport capture rows
+	// under it, so the preview stays usable when the popup is small.
+	// Headless agents have no pane to show, so the stats always render
+	// there.
 	noPane := len(m.filtered) == 0 || m.previewPane == "" || m.previewPane == "?"
 	if r := m.selectedRow(); r != nil {
 		qn := len(r.Usage.QuotaWindows)
@@ -534,13 +539,15 @@ func (m Model) previewLines(w, n int) []string {
 		}
 		statsN++ // the separator below the block
 		if noPane || contentN >= statsN+1+minPreviewViewport {
-			if qn > 0 {
+			switch {
+			case qn > 0:
 				out = append(out, fit(m.st.dim.Render(" 📊 Usage:"), w))
 				for _, q := range r.Usage.QuotaWindows {
 					out = append(out, fit("    "+quotaDetail(m.st, m.contextWarn, q, w-4), w))
 				}
-			} else {
-				// No quota data: the usage section stays on top, marked "?".
+			default:
+				// No quota data for this agent: the usage section stays on
+				// top, marked "?".
 				out = append(out, fit(m.st.dim.Render(" 📊 Usage: ?"), w))
 			}
 			// The divider separates the usage section from the session line.
@@ -807,14 +814,21 @@ func sessionBar(st styles, contextWarn int, u agent.Usage, maxWidth int) string 
 }
 
 // quotaDetail renders one account quota window as a prefix-free row under
-// the 📊 Usage: header: "███████████░░░░░░░░░░░░░░░░░░░ 38% · Current
-// session (reset at 19:39 PDT)". The bar shows the used percent, the label
-// names the window (session, weekly all-models, or weekly per-model), and
-// the reset time is local with its zone abbreviation when the provider
-// reported one. The bar turns warn-colored at the same threshold as the
-// context bar.
+// the 📊 Usage: header. A window with dollar data renders as its amounts —
+// "$18.56 used · $81.44 left · Extra usage (monthly)" for a budget with a
+// spent amount, "$65.85 remaining · DeepSeek balance" for an account
+// balance — with no bar: dollars replace the percent. A window without
+// dollar data renders the percent bar: "███████████░░░░░░░░░░░░░░░░░░░ 38%
+// · Current session (reset at 19:39 PDT)". The bar shows the used percent,
+// the label names the window (session, weekly all-models, or weekly
+// per-model), and the reset time is local with its zone abbreviation when
+// the provider reported one. The bar turns warn-colored at the same
+// threshold as the context bar.
 func quotaDetail(st styles, contextWarn int, w agent.QuotaWindow, maxWidth int) string {
 	dim, green, warn := st.dim, st.green, st.warn
+	if d := dollarText(w); d != "" {
+		return dim.Render(d)
+	}
 	pct := w.Pct
 	if pct < 0 {
 		pct = 0
@@ -838,6 +852,49 @@ func quotaDetail(st styles, contextWarn int, w agent.QuotaWindow, maxWidth int) 
 	b.WriteString(usageBar(pct, barW, contextWarn, green, warn, dim))
 	b.WriteString(dim.Render(" " + strconv.Itoa(pct) + "%" + tail))
 	return b.String()
+}
+
+// dollarText renders one quota window's dollar amounts when the provider
+// reported any, e.g. "$18.56 used · $81.44 left · Extra usage (monthly)" or
+// "$65.85 remaining · DeepSeek balance"; "" when the window carries no
+// dollar data and the percent bar is the fallback. Balance is an account
+// balance (nothing consumed); Limit/Spend are a budget with its consumed
+// amount, so the remaining is derived. Currency is the display symbol the
+// probe stored ($, ¥, …); "" means dollars.
+func dollarText(w agent.QuotaWindow) string {
+	sym := w.Currency
+	if sym == "" {
+		sym = "$"
+	}
+	var parts []string
+	switch {
+	case w.Limit > 0:
+		if w.Spend > 0 {
+			parts = append(parts, sym+money(w.Spend)+" used")
+			left := w.Limit - w.Spend
+			if left < 0 {
+				left = 0
+			}
+			parts = append(parts, sym+money(left)+" left")
+		} else {
+			parts = append(parts, sym+money(w.Limit)+" budget")
+		}
+	case w.Spend > 0:
+		parts = append(parts, sym+money(w.Spend)+" spent")
+	case w.Balance > 0:
+		parts = append(parts, sym+money(w.Balance)+" remaining")
+	default:
+		return ""
+	}
+	if w.Label != "" {
+		parts = append(parts, w.Label)
+	}
+	return strings.Join(parts, " · ")
+}
+
+// money renders a dollar amount with two decimals.
+func money(v float64) string {
+	return fmt.Sprintf("%.2f", v)
 }
 
 // formatReset renders a quota reset time in the local zone: "19:39 PDT",

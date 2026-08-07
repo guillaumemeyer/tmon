@@ -237,7 +237,15 @@ func attachQuota(cfg config.Config, records []connector.Record) {
 		if len(u.QuotaWindows) == 0 && q.Label != "" {
 			// Single-window sources (codex, lazy fallback) carry the
 			// window in the top-level fields; surface it as one window.
-			u.QuotaWindows = []agent.QuotaWindow{{Pct: q.Pct, Label: q.Label, ResetAt: q.ResetAt}}
+			u.QuotaWindows = []agent.QuotaWindow{{
+				Pct:      q.Pct,
+				Label:    q.Label,
+				ResetAt:  q.ResetAt,
+				Balance:  q.Balance,
+				Limit:    q.Limit,
+				Spend:    q.Spend,
+				Currency: q.Currency,
+			}}
 		}
 		u.QuotaPct = q.Pct
 		if t, err := time.Parse(time.RFC3339, q.ResetAt); err == nil {

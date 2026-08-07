@@ -38,14 +38,19 @@ type UsageFile struct {
 // Quota is one provider's account quota. Quota is account-level, never
 // per-agent: multiple sessions share one window. Pct/Label/ResetAt mirror
 // the first window in Windows (the session window for Claude) so older
-// consumers keep working; Windows carries one entry per window the provider
-// reports (session, weekly all-models, weekly per-model). Tier is the plan
+// consumers keep working; Balance/Limit/Spend/Currency mirror its dollar
+// amounts. Windows carries one entry per window the provider reports
+// (session, weekly all-models, weekly per-model). Tier is the plan
 // tier when the API exposes it. StatusText/AuthHelpText carry why a window
 // is absent (no credentials, rate limited, …) so the dashboard can show it.
 type Quota struct {
 	Pct          int                 `json:"pct"`
 	Label        string              `json:"label"`
 	ResetAt      string              `json:"resetAt"`
+	Balance      float64             `json:"balance,omitempty"`  // dollars remaining (account balance); 0 = none
+	Limit        float64             `json:"limit,omitempty"`    // dollar limit of the first window; 0 = none
+	Spend        float64             `json:"spend,omitempty"`    // dollars consumed in the first window; 0 = none
+	Currency     string              `json:"currency,omitempty"` // display symbol ($, ¥, …); "" = $
 	Tier         string              `json:"tier,omitempty"`
 	Windows      []agent.QuotaWindow `json:"windows,omitempty"`
 	StatusText   string              `json:"statusText,omitempty"`

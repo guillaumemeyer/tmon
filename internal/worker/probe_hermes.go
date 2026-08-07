@@ -143,9 +143,10 @@ func hermesAPIKey(home, provider string) string {
 // probeHermes reports the balance of the provider Hermes is configured with,
 // so a Hermes row gets an account-level usage line instead of "📊 Usage: ?".
 // A balance is not a usage percent, so the quota is a single 0% window whose
-// label carries the amount ("DeepSeek balance ¥110.00"). No home, no key, an
-// HTTP error, or an unparseable body produce a Quota with StatusText instead
-// of an error, so the worker keeps running and the dashboard shows why.
+// Balance field carries the amount and whose label names the account
+// ("DeepSeek balance"). No home, no key, an HTTP error, or an unparseable
+// body produce a Quota with StatusText instead of an error, so the worker
+// keeps running and the dashboard shows why.
 func probeHermes(cfg config.Config) (Quota, error) {
 	q := Quota{}
 	home := hermesHomeDir()
@@ -173,7 +174,18 @@ func probeHermes(cfg config.Config) (Quota, error) {
 		q.AuthHelpText = "run: hermes setup"
 		return q, nil
 	}
+	return fetchBalanceQuota(baseURL, key, provider)
+}
 
+// fetchBalanceQuota GETs a provider's balance endpoint and parses the body
+// into a single balance window: Pct 0, the label naming the account
+// ("DeepSeek balance"), and Balance/Currency carrying the amount. A request
+// that cannot be built is an error; HTTP-level failures and unparseable
+// bodies return a Quota with StatusText so the worker keeps running.
+// OpenAI-compatible providers expose GET {base}/user/balance; OpenRouter
+// exposes GET {base}/credits.
+func fetchBalanceQuota(baseURL, key, provider string) (Quota, error) {
+	q := Quota{}
 	endpoint := "user/balance"
 	if strings.EqualFold(provider, "openrouter") {
 		endpoint = "credits"
@@ -186,19 +198,19 @@ func probeHermes(cfg config.Config) (Quota, error) {
 	client := &http.Client{Timeout: hermesProbeTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
-		q.StatusText = "Hermes provider balance API unreachable: " + err.Error()
+		q.StatusText = "provider balance API unreachable: " + err.Error()
 		return q, nil
 	}
 	defer resp.Body.Close()
 	switch {
 	case resp.StatusCode == http.StatusTooManyRequests:
-		q.StatusText = "Hermes provider balance API rate limited"
+		q.StatusText = "provider balance API rate limited"
 		return q, nil
 	case resp.StatusCode == http.StatusUnauthorized:
-		q.StatusText = "Hermes provider key invalid or expired (run hermes setup)"
+		q.StatusText = "provider API key invalid or expired"
 		return q, nil
 	case resp.StatusCode != http.StatusOK:
-		q.StatusText = fmt.Sprintf("Hermes provider balance API HTTP %d", resp.StatusCode)
+		q.StatusText = fmt.Sprintf("provider balance API HTTP %d", resp.StatusCode)
 		return q, nil
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
@@ -206,43 +218,53 @@ func probeHermes(cfg config.Config) (Quota, error) {
 		return q, err
 	}
 
-	var label string
+	var amount float64
+	var currency string
 	if strings.EqualFold(provider, "openrouter") {
-		label, err = hermesOpenRouterLabel(body)
+		amount, err = hermesOpenRouterBalance(body)
+		currency = "$"
 	} else {
-		label, err = hermesOpenAIBalanceLabel(body, provider)
+		amount, currency, err = hermesOpenAIBalance(body)
 	}
 	if err != nil {
 		q.StatusText = err.Error()
 		return q, nil
 	}
-	if label == "" {
-		q.StatusText = "no usable balance in Hermes provider response"
+	if amount <= 0 {
+		q.StatusText = "no usable balance in provider response"
 		return q, nil
 	}
+	label := hermesProviderName(provider) + " balance"
 	return Quota{
-		Pct:     0,
-		Label:   label,
-		Windows: []agent.QuotaWindow{{Pct: 0, Label: label}},
+		Pct:      0,
+		Label:    label,
+		Balance:  amount,
+		Currency: currency,
+		Windows: []agent.QuotaWindow{{
+			Pct:      0,
+			Label:    label,
+			Balance:  amount,
+			Currency: currency,
+		}},
 	}, nil
 }
 
-// hermesOpenRouterLabel parses GET {base}/credits into a display label.
+// hermesOpenRouterBalance parses GET {base}/credits into the dollar amount.
 // total_credits is a pointer so a missing field (error shape) is reported
 // instead of silently reading as a $0.00 balance.
-func hermesOpenRouterLabel(body []byte) (string, error) {
+func hermesOpenRouterBalance(body []byte) (float64, error) {
 	var resp struct {
 		TotalCredits *float64 `json:"total_credits"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil || resp.TotalCredits == nil {
-		return "", fmt.Errorf("unexpected OpenRouter credits response")
+		return 0, fmt.Errorf("unexpected OpenRouter credits response")
 	}
-	return fmt.Sprintf("OpenRouter balance $%.2f", *resp.TotalCredits), nil
+	return *resp.TotalCredits, nil
 }
 
-// hermesOpenAIBalanceLabel parses an OpenAI-compatible GET /user/balance
-// response into a display label: "DeepSeek balance ¥110.00".
-func hermesOpenAIBalanceLabel(body []byte, provider string) (string, error) {
+// hermesOpenAIBalance parses an OpenAI-compatible GET /user/balance
+// response into the available amount and its currency display symbol.
+func hermesOpenAIBalance(body []byte) (float64, string, error) {
 	var resp struct {
 		IsAvailable  bool `json:"is_available"`
 		BalanceInfos []struct {
@@ -251,20 +273,19 @@ func hermesOpenAIBalanceLabel(body []byte, provider string) (string, error) {
 		} `json:"balance_infos"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return "", fmt.Errorf("unexpected Hermes provider balance response: %w", err)
+		return 0, "", fmt.Errorf("unexpected Hermes provider balance response: %w", err)
 	}
 	if !resp.IsAvailable {
-		return "", fmt.Errorf("Hermes provider account unavailable")
+		return 0, "", fmt.Errorf("Hermes provider account unavailable")
 	}
 	if len(resp.BalanceInfos) == 0 {
-		return "", fmt.Errorf("no balance info in Hermes provider response")
+		return 0, "", fmt.Errorf("no balance info in Hermes provider response")
 	}
 	amount, err := hermesBalanceAmount(resp.BalanceInfos[0].TotalBalance)
 	if err != nil {
-		return "", fmt.Errorf("unexpected Hermes provider balance value: %w", err)
+		return 0, "", fmt.Errorf("unexpected Hermes provider balance value: %w", err)
 	}
-	currency := resp.BalanceInfos[0].Currency
-	return fmt.Sprintf("%s balance %s%.2f", hermesProviderName(provider), hermesCurrencySymbol(currency), amount), nil
+	return amount, currencySymbol(resp.BalanceInfos[0].Currency), nil
 }
 
 // hermesBalanceAmount parses total_balance, which providers emit as either a
@@ -284,9 +305,9 @@ func hermesBalanceAmount(raw json.RawMessage) (float64, error) {
 	return strconv.ParseFloat(strings.TrimSpace(s), 64)
 }
 
-// hermesCurrencySymbol maps ISO currency codes to symbols; unknown codes
+// currencySymbol maps ISO currency codes to display symbols; unknown codes
 // fall back to the bare code so the amount stays readable.
-func hermesCurrencySymbol(currency string) string {
+func currencySymbol(currency string) string {
 	switch strings.ToUpper(strings.TrimSpace(currency)) {
 	case "CNY", "JPY":
 		return "¥"

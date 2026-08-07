@@ -108,8 +108,8 @@ func TestHermesCurrencySymbol(t *testing.T) {
 		{"", ""},
 	}
 	for _, c := range cases {
-		if got := hermesCurrencySymbol(c.in); got != c.want {
-			t.Errorf("hermesCurrencySymbol(%q) = %q, want %q", c.in, got, c.want)
+		if got := currencySymbol(c.in); got != c.want {
+			t.Errorf("currencySymbol(%q) = %q, want %q", c.in, got, c.want)
 		}
 	}
 }
@@ -153,11 +153,14 @@ func TestProbeHermesDeepSeek(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantLabel := "DeepSeek balance ¥110.00"
-	if q.Label != wantLabel || q.Pct != 0 {
-		t.Errorf("quota = %+v, want label %q at 0%%", q, wantLabel)
+	// The balance is structured now: the label names the account and the
+	// amount lives in Balance with its currency symbol, so the dashboard
+	// renders "$110.00 remaining" style amounts instead of a hardcoded
+	// label string.
+	if q.Label != "DeepSeek balance" || q.Balance != 110.0 || q.Currency != "¥" {
+		t.Errorf("quota = %+v, want DeepSeek balance ¥110.00", q)
 	}
-	want := []agent.QuotaWindow{{Pct: 0, Label: wantLabel}}
+	want := []agent.QuotaWindow{{Pct: 0, Label: "DeepSeek balance", Balance: 110.0, Currency: "¥"}}
 	if !reflect.DeepEqual(q.Windows, want) {
 		t.Errorf("windows = %+v, want %+v", q.Windows, want)
 	}
@@ -179,8 +182,8 @@ func TestProbeHermesDeepSeekNumericBalance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "DeepSeek balance $66.09"; q.Label != want {
-		t.Errorf("label = %q, want %q", q.Label, want)
+	if q.Label != "DeepSeek balance" || q.Balance != 66.09 || q.Currency != "$" {
+		t.Errorf("quota = %+v, want DeepSeek balance $66.09", q)
 	}
 }
 
@@ -202,8 +205,8 @@ func TestProbeHermesOpenRouter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "OpenRouter balance $12.50"; q.Label != want {
-		t.Errorf("label = %q, want %q", q.Label, want)
+	if q.Label != "OpenRouter balance" || q.Balance != 12.5 || q.Currency != "$" {
+		t.Errorf("quota = %+v, want OpenRouter balance $12.50", q)
 	}
 }
 
