@@ -23,6 +23,9 @@ func ReadEnv(pid int, key string) string { return "" }
 // ParentPID is not supported on this platform.
 func ParentPID(pid int) (int, error) { return 0, unsupported("ParentPID") }
 
+// StartTimeUnix is not supported on this platform.
+func StartTimeUnix(pid int) (int64, error) { return 0, unsupported("StartTimeUnix") }
+
 // ReadCPUTicks is not supported on this platform.
 func ReadCPUTicks(pid int) (int64, error) { return 0, unsupported("ReadCPUTicks") }
 

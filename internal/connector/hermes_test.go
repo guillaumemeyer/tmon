@@ -47,6 +47,7 @@ func stubHermesProcs(t *testing.T, procs []hermesProc) {
 	oldCmd := hermesReadCmdline
 	oldCWD := hermesReadCWD
 	oldEnv := hermesReadEnv
+	oldStart := hermesReadStart
 	byPID := make(map[int]hermesProc, len(procs))
 	pids := make([]int, 0, len(procs))
 	for _, p := range procs {
@@ -72,11 +73,18 @@ func stubHermesProcs(t *testing.T, procs []hermesProc) {
 		}
 		return ""
 	}
+	hermesReadStart = func(pid int) (int64, error) {
+		if p, ok := byPID[pid]; ok {
+			return p.startedAt, nil
+		}
+		return 0, os.ErrNotExist
+	}
 	t.Cleanup(func() {
 		hermesListPIDs = oldList
 		hermesReadCmdline = oldCmd
 		hermesReadCWD = oldCWD
 		hermesReadEnv = oldEnv
+		hermesReadStart = oldStart
 	})
 }
 
@@ -151,6 +159,84 @@ func TestHermesContextTokens(t *testing.T) {
 	}
 	if got := hermesContextTokens(nil); got != 0 {
 		t.Errorf("nil = %d, want 0", got)
+	}
+}
+
+func TestLookupModelWindowDeterministic(t *testing.T) {
+	// The model appears under two providers with different windows. Map
+	// iteration order is randomized, so the old first-match walk returned
+	// either value depending on the run; the walk must now always return the
+	// smallest one.
+	body := `{
+		"deepseek": {"models": {"deepseek-v4-flash": {"limit": {"context": 1048576}}}},
+		"deepseek-moe": {"models": {"deepseek-v4-flash": {"limit": {"context": 1000000}}}}
+	}`
+	path := filepath.Join(t.TempDir(), "models_dev_cache.json")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 20; i++ {
+		if got := lookupModelWindow(path, "deepseek-v4-flash"); got != 1000000 {
+			t.Fatalf("run %d: lookupModelWindow = %d, want 1000000 (min of both matches)", i, got)
+		}
+	}
+}
+
+func TestLookupModelWindowSingleMatch(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "models_dev_cache.json")
+	if err := os.WriteFile(path, []byte(`{"deepseek":{"models":{"deepseek-v4-flash":{"limit":{"context":1000000}}}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := lookupModelWindow(path, "deepseek-v4-flash"); got != 1000000 {
+		t.Errorf("lookupModelWindow = %d, want 1000000", got)
+	}
+}
+
+func TestLookupModelWindowNoMatch(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "models_dev_cache.json")
+	if err := os.WriteFile(path, []byte(`{"deepseek":{"models":{"deepseek-v4-flash":{"limit":{"context":1000000}}}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := lookupModelWindow(path, "no-such-model"); got != 0 {
+		t.Errorf("lookupModelWindow = %d, want 0", got)
+	}
+	if got := lookupModelWindow(filepath.Join(t.TempDir(), "missing.json"), "deepseek-v4-flash"); got != 0 {
+		t.Errorf("missing file = %d, want 0", got)
+	}
+	if got := lookupModelWindow(path, ""); got != 0 {
+		t.Errorf("empty model = %d, want 0", got)
+	}
+}
+
+func TestLookupModelWindowExactWinsOverSubstring(t *testing.T) {
+	// A different model whose id merely contains the target (deepseek-v4-
+	// flash-free) must not cap the real model's window: an exact final
+	// segment beats any substring match.
+	body := `{
+		"opencode": {"models": {"deepseek-v4-flash-free": {"limit": {"context": 200000}}}},
+		"deepseek": {"models": {"deepseek-v4-flash": {"limit": {"context": 1000000}}}}
+	}`
+	path := filepath.Join(t.TempDir(), "models_dev_cache.json")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 20; i++ {
+		if got := lookupModelWindow(path, "deepseek-v4-flash"); got != 1000000 {
+			t.Fatalf("run %d: lookupModelWindow = %d, want 1000000 (exact wins over substring)", i, got)
+		}
+	}
+}
+
+func TestLookupModelWindowSubstringOnlyFallback(t *testing.T) {
+	// With no exact segment present, a substring match still resolves, so a
+	// slightly different listing (e.g. provider/model suffixes) keeps a
+	// conservative window instead of falling back to "context: ?".
+	path := filepath.Join(t.TempDir(), "models_dev_cache.json")
+	if err := os.WriteFile(path, []byte(`{"opencode":{"models":{"deepseek-v4-flash-free":{"limit":{"context":200000}}}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := lookupModelWindow(path, "deepseek-v4-flash"); got != 200000 {
+		t.Errorf("lookupModelWindow = %d, want 200000 (substring fallback)", got)
 	}
 }
 
@@ -504,5 +590,109 @@ func TestPairHermesSessionSoleEmptyCWDFallback(t *testing.T) {
 	// Multiple live PIDs: never guess even with empty CWD.
 	if got := pairHermesSession(p, "", sessions, 2); got != nil {
 		t.Fatalf("got %+v, want nil when multiple PIDs and no CWD match", got)
+	}
+}
+
+func TestPairHermesSessionSkipsStaleCWDSession(t *testing.T) {
+	// The exact bug shape: a fresh TUI (started now) in a directory where an
+	// abandoned open row (started days ago) shares the cwd. The row must not
+	// pair — the fresh TUI has no row of its own until the first prompt.
+	now := time.Now().Unix()
+	sessions := []hermesSession{
+		{ID: "old", Title: "Root Cause of Gateway Auth Failure", CWD: "/home/u",
+			InTokens: 22498, CacheRead: 740992, APICalls: 31, StartedAt: float64(now - 5*24*3600)},
+	}
+	p := hermesProc{cwdFull: "/home/u", cwd: "home/u", startedAt: now}
+	if got := pairHermesSession(p, "", sessions, 1); got != nil {
+		t.Fatalf("got %+v, want nil (stale CWD-matched row must not pair)", got)
+	}
+}
+
+func TestPairHermesSessionKeepsFreshCWDSession(t *testing.T) {
+	now := time.Now().Unix()
+	sessions := []hermesSession{
+		{ID: "fresh", Title: "Right", CWD: "/home/u", StartedAt: float64(now - 30)},
+		{ID: "older", Title: "Wrong", CWD: "/home/u", StartedAt: float64(now - 2*24*3600)},
+	}
+	p := hermesProc{cwdFull: "/home/u", cwd: "home/u", startedAt: now - 60}
+	got := pairHermesSession(p, "", sessions, 1)
+	if got == nil || got.Title != "Right" {
+		t.Fatalf("got %+v, want the fresh row (started within the skew), not the stale one", got)
+	}
+}
+
+func TestPairHermesSessionUnknownStartNeverStale(t *testing.T) {
+	// When the process start time cannot be read (startedAt 0), the guard is
+	// disabled: an old CWD-matched row still pairs, so platforms without
+	// process start times behave exactly as before.
+	now := time.Now().Unix()
+	sessions := []hermesSession{
+		{ID: "old", Title: "Old but only candidate", CWD: "/home/u",
+			StartedAt: float64(now - 5*24*3600)},
+	}
+	p := hermesProc{cwdFull: "/home/u", cwd: "home/u"} // startedAt 0
+	if got := pairHermesSession(p, "", sessions, 1); got == nil || got.Title != "Old but only candidate" {
+		t.Fatalf("got %+v, want pairing when the process start time is unknown", got)
+	}
+}
+
+func TestHermesStaleSession(t *testing.T) {
+	now := float64(time.Now().Unix())
+	cases := []struct {
+		name      string
+		s         hermesSession
+		procStart int64
+		want      bool
+	}{
+		{"row much older than process", hermesSession{StartedAt: now - 3600}, int64(now), true},
+		{"row just before process (within skew)", hermesSession{StartedAt: now - 30}, int64(now), false},
+		{"row after process", hermesSession{StartedAt: now + 10}, int64(now), false},
+		{"unknown process start", hermesSession{StartedAt: now - 3600}, 0, false},
+		{"unknown row start", hermesSession{StartedAt: 0}, int64(now), false},
+	}
+	for _, c := range cases {
+		if got := hermesStaleSession(c.s, c.procStart); got != c.want {
+			t.Errorf("%s: hermesStaleSession = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestHermesFreshTUIStaleCWDSessionUnpaired(t *testing.T) {
+	// End to end: a fresh TUI process (started now) shares a cwd with an
+	// abandoned open row (started days ago). The row must not pair; the
+	// record falls through to the empty-bar path with the model window.
+	// A unique model keeps the package-level window cache isolated.
+	home := hermesFixtureHome(t)
+	writeFile(t, filepath.Join(home, "config.yaml"), "model:\n  default: stale-guard-model\n")
+	writeFile(t, filepath.Join(home, "models_dev_cache.json"),
+		`{"p": {"id": "p", "models": {"stale-guard-model": {"id": "stale-guard-model", "limit": {"context": 500000}}}}}`)
+	writeHermesStateDB(t, home, hermesSession{
+		ID: "old", Source: "tui", Title: "Root Cause of Gateway Auth Failure",
+		Model: "stale-guard-model", CWD: "/home/u",
+		InTokens: 100, OutTokens: 50, StartedAt: float64(time.Now().Add(-5 * 24 * time.Hour).Unix()),
+	}, 0)
+	stubHermesProcs(t, []hermesProc{{
+		pid: 42, cmdline: "hermes --tui",
+		cwdFull: "/home/u", cwd: "home/u",
+		envHome:   home,
+		startedAt: time.Now().Unix(),
+	}})
+
+	recs, err := (Hermes{}).Probe(hermesTestCfg(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("records = %+v, want 1", recs)
+	}
+	r := recs[0]
+	if r.Title != "" {
+		t.Errorf("Title = %q, want empty (stale session must not pair)", r.Title)
+	}
+	if r.Usage.TokensUsed != 0 || r.Usage.WindowTokens != 500000 {
+		t.Errorf("Usage = %+v, want 0/500000 (empty bar on the model's window)", r.Usage)
+	}
+	if r.Detail != "model:stale-guard-model" {
+		t.Errorf("Detail = %q, want model from config fallback", r.Detail)
 	}
 }

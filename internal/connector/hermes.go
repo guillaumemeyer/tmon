@@ -221,11 +221,12 @@ func profileNameFromHome(homePath, root string) string {
 // ─── process discovery ───────────────────────────────────────────────────────
 
 type hermesProc struct {
-	pid     int
-	cmdline string
-	cwd     string // short form
-	cwdFull string
-	envHome string // HERMES_HOME from environ, may be empty
+	pid       int
+	cmdline   string
+	cwd       string // short form
+	cwdFull   string
+	envHome   string // HERMES_HOME from environ, may be empty
+	startedAt int64  // unix seconds; 0 when unknown
 }
 
 // hermesListPIDs / hermesReadCmdline are seams for tests.
@@ -234,6 +235,7 @@ var (
 	hermesReadCmdline = proc.ReadCmdline
 	hermesReadCWD     = proc.ReadCWD
 	hermesReadEnv     = proc.ReadEnv
+	hermesReadStart   = proc.StartTimeUnix
 )
 
 func hermesCLIProcesses() ([]hermesProc, error) {
@@ -257,6 +259,9 @@ func hermesCLIProcesses() ([]hermesProc, error) {
 		if c, err := hermesReadCWD(pid); err == nil {
 			p.cwdFull = c
 			p.cwd = proc.CWDShort(c)
+		}
+		if t, err := hermesReadStart(pid); err == nil {
+			p.startedAt = t
 		}
 		out = append(out, p)
 	}
@@ -325,17 +330,17 @@ func readActiveProfile(root string) string {
 // ─── sessions (state.db) ─────────────────────────────────────────────────────
 
 type hermesSession struct {
-	ID         string
-	Title      string
-	Model      string
-	CWD        string
-	Source     string
-	InTokens   int64
-	OutTokens  int64
-	CacheRead  int64
-	APICalls   int64
-	StartedAt  float64
-	LastMsgAt  int64 // unix seconds of newest message; 0 if unknown
+	ID        string
+	Title     string
+	Model     string
+	CWD       string
+	Source    string
+	InTokens  int64
+	OutTokens int64
+	CacheRead int64
+	APICalls  int64
+	StartedAt float64
+	LastMsgAt int64 // unix seconds of newest message; 0 if unknown
 }
 
 func loadHermesLocalSessions(home string) []hermesSession {
@@ -396,6 +401,31 @@ func loadHermesLocalSessions(home string) []hermesSession {
 	return out
 }
 
+// hermesPairSkew is how much later a session row may start relative to the
+// process that would claim it and still be considered "the process's
+// session". Both timestamps are wall-clock unix seconds; the tolerance
+// covers HZ rounding in the process start time and small clock skew without
+// swallowing a session that legitimately began around the same moment.
+const hermesPairSkew = 60
+
+// hermesStaleSession reports whether an open session row predates the
+// process that would claim it. Hermes leaves many "open" rows behind when a
+// TUI is killed, and a fresh TUI has no row of its own until the first
+// prompt (rows persist lazily) — so without this check a brand-new process
+// in a directory with an abandoned open row (same cwd) steals that row's old
+// title and token counts. A resumed session keeps its original started_at
+// too, but a resume creates a fresh row with a new started_at on the first
+// prompt, which takes over immediately. When either timestamp is unknown
+// (start time unreadable, or the row predates started_at recording) the
+// session is never considered stale, so nothing regresses on platforms
+// without process start times.
+func hermesStaleSession(s hermesSession, procStart int64) bool {
+	if procStart <= 0 || s.StartedAt <= 0 {
+		return false
+	}
+	return int64(s.StartedAt) < procStart-hermesPairSkew
+}
+
 // pairHermesSession binds a live CLI/TUI process to an open state.db session.
 // Pairing is conservative: a wrong title is worse than no title. Hermes leaves
 // many "open" rows (ended_at IS NULL) from prior TUIs, so guessing the newest
@@ -403,10 +433,13 @@ func loadHermesLocalSessions(home string) []hermesSession {
 // brand-new process in a different workspace.
 //
 // Match order:
-//  1. Session CWD equals the process CWD (strong signal).
+//  1. Session CWD equals the process CWD (strong signal), provided the row
+//     is not older than the process itself (see hermesStaleSession) — a
+//     fresh TUI must not inherit an abandoned row that happens to share the
+//     directory.
 //  2. Sole open session with no recorded CWD, and only one live PID in this
 //     home — older Hermes rows omit cwd; safe only when there is nothing else
-//     to confuse them with.
+//     to confuse them with, and the row is still not older than the process.
 //  3. Otherwise unpaired (Title/Usage stay empty; model falls back to config).
 func pairHermesSession(p hermesProc, homePath string, sessions []hermesSession, pidsInHome int) *hermesSession {
 	if len(sessions) == 0 {
@@ -423,14 +456,18 @@ func pairHermesSession(p hermesProc, homePath string, sessions []hermesSession, 
 				continue
 			}
 			if proc.CWDShort(s.CWD) == short || s.CWD == p.cwdFull {
+				if hermesStaleSession(*s, p.startedAt) {
+					continue
+				}
 				return s
 			}
 		}
 	}
 	// No CWD match. Do not fall back to "newest open session" — that is how
 	// stale titles leak into the popup. Only accept a sole empty-CWD row when
-	// a single process owns the home (nothing to disambiguate against).
-	if pidsInHome <= 1 && len(sessions) == 1 && sessions[0].CWD == "" {
+	// a single process owns the home (nothing to disambiguate against) and
+	// the row is not older than the process.
+	if pidsInHome <= 1 && len(sessions) == 1 && sessions[0].CWD == "" && !hermesStaleSession(sessions[0], p.startedAt) {
 		return &sessions[0]
 	}
 	return nil
@@ -539,7 +576,14 @@ func hermesModelWindow(home, model string) int64 {
 }
 
 // lookupModelWindow walks a models.dev-style JSON tree for limit.context
-// entries whose path contains the model id.
+// entries whose path matches the model id. The tree is decoded into maps,
+// whose iteration order is randomized, so the walk collects every match and
+// returns the smallest window per match class (exact segment first, then
+// substring): a model may be listed under several providers with different
+// limits, and the smallest consistent value is both the conservative
+// estimate for a context bar and a deterministic one. Exact segment matches
+// win so a different model whose name merely contains the id (e.g.
+// deepseek-v4-flash-free) never caps the real model's window.
 func lookupModelWindow(path, model string) int64 {
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -550,26 +594,31 @@ func lookupModelWindow(path, model string) int64 {
 		return 0
 	}
 	want := strings.ToLower(model)
-	var found int64
+	var exact, sub int64
 	var walk func(any, string)
 	walk = func(v any, pathKey string) {
-		if found > 0 {
-			return
-		}
 		switch t := v.(type) {
 		case map[string]any:
 			if lim, ok := t["limit"].(map[string]any); ok {
-				if ctx, ok := lim["context"]; ok && modelKeyMatch(pathKey, want) {
-					found = jsonNumber(ctx)
-					return
+				if ctx, ok := lim["context"]; ok {
+					if isExact, matched := modelMatchClass(pathKey, want); matched {
+						if isExact {
+							exact = minNonZero(exact, jsonNumber(ctx))
+						} else {
+							sub = minNonZero(sub, jsonNumber(ctx))
+						}
+					}
 				}
 			}
 			// Also accept direct context_window / max_context fields.
 			for _, k := range []string{"context_window", "max_context", "context"} {
-				if n, ok := t[k]; ok && modelKeyMatch(pathKey, want) {
-					if v := jsonNumber(n); v > 0 {
-						found = v
-						return
+				if n, ok := t[k]; ok {
+					if isExact, matched := modelMatchClass(pathKey, want); matched {
+						if isExact {
+							exact = minNonZero(exact, jsonNumber(n))
+						} else {
+							sub = minNonZero(sub, jsonNumber(n))
+						}
 					}
 				}
 			}
@@ -588,20 +637,45 @@ func lookupModelWindow(path, model string) int64 {
 		}
 	}
 	walk(root, "")
-	return found
+	if exact > 0 {
+		return exact
+	}
+	return sub
 }
 
-func modelKeyMatch(pathKey, want string) bool {
+// minNonZero returns the smaller of the two values, treating 0 as "no value
+// yet": the first nonzero value wins, then the minimum of both.
+func minNonZero(a, b int64) int64 {
+	if a == 0 {
+		return b
+	}
+	if b == 0 || b >= a {
+		return a
+	}
+	return b
+}
+
+// modelMatchClass classifies how a JSON path matches a model id. The first
+// result reports an exact match: the final path segment, ignoring a
+// ":variant" suffix (e.g. ":thinking"), equals the model id. The second
+// result is false when the path does not match at all. Exact matches win
+// over substring matches (provider/model paths where the id is a suffix, or
+// longer names that merely contain it).
+func modelMatchClass(pathKey, want string) (exact, ok bool) {
 	if pathKey == "" || want == "" {
-		return false
+		return false, false
 	}
-	if strings.Contains(pathKey, want) {
-		return true
+	last := pathKey
+	if i := strings.LastIndex(last, "/"); i >= 0 {
+		last = last[i+1:]
 	}
-	// path may be provider/model; want may be bare model
-	parts := strings.Split(want, "/")
-	bare := parts[len(parts)-1]
-	return bare != "" && strings.Contains(pathKey, bare)
+	if i := strings.IndexByte(last, ':'); i >= 0 {
+		last = last[:i]
+	}
+	if last == want {
+		return true, true
+	}
+	return false, strings.Contains(pathKey, want)
 }
 
 func jsonNumber(v any) int64 {

@@ -93,6 +93,54 @@ func TestParentPID(t *testing.T) {
 	}
 }
 
+func TestStartTimeUnix(t *testing.T) {
+	// Fixture: btime = 1700000000, starttime (0-based index 19) = 900
+	// ticks. /proc/stat idle ticks (360000) ÷ /proc/uptime idle seconds
+	// (3600.00) derives HZ = 100, so the start is btime + 9 exactly.
+	dir := writeFixture(t, 12345, testStat, "", "")
+	procDir := filepath.Join(dir, "..")
+	stat := "cpu  1 2 3 360000 5 6 7 8 9 10\nbtime 1700000000\n"
+	if err := os.WriteFile(filepath.Join(procDir, "stat"), []byte(stat), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(procDir, "uptime"), []byte("3600.00 3600.00\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := StartTimeUnix(12345)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := int64(1700000009); got != want {
+		t.Errorf("StartTimeUnix = %d, want %d", got, want)
+	}
+}
+
+func TestStartTimeUnixFallsBackToUserHz(t *testing.T) {
+	// No btime in /proc/stat: the boot time read fails and StartTimeUnix
+	// reports the error.
+	writeFixture(t, 12345, testStat, "", "")
+	if _, err := StartTimeUnix(12345); err == nil {
+		t.Error("expected error when /proc/stat has no btime")
+	}
+}
+
+func TestClkTckDerivedFromKernelCounters(t *testing.T) {
+	dir := writeFixture(t, 1, "", "", "")
+	procDir := filepath.Join(dir, "..")
+	// 500000 idle ticks over 5000.00 idle seconds → HZ = 100.
+	if err := os.WriteFile(filepath.Join(procDir, "stat"),
+		[]byte("cpu  1 2 3 500000 5 6 7 8 9 10\ncpu0 0 0 0 250000 0 0 0 0 0 0\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(procDir, "uptime"), []byte("5000.00 5000.00\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := clkTck(); got != 100 {
+		t.Errorf("clkTck = %d, want 100 derived from idle counters", got)
+	}
+}
+
 func TestReadIOBytes(t *testing.T) {
 	writeFixture(t, 12345, "", "", "rchar: 1000\nwchar: 2000\nsyscr: 5\nsyscw: 6\n")
 	got, err := ReadIOBytes(12345)

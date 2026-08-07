@@ -14,6 +14,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -119,6 +120,92 @@ func StatField(pid int, idx int) (int64, error) {
 func ParentPID(pid int) (int, error) {
 	v, err := StatField(pid, 1)
 	return int(v), err
+}
+
+// clkTck returns the kernel clock tick rate (HZ) that /proc/<pid>/stat
+// starttime is expressed in. Go on Linux cannot call sysconf(3), and
+// getconf CLK_TCK always reports the fixed POSIX USER_HZ (100) rather than
+// the configured HZ, so the rate is derived from the kernel's own counters:
+// the idle tick counter of /proc/stat divided by the idle seconds
+// /proc/uptime reports. Both measure the same accumulation, so the ratio is
+// exactly HZ regardless of load or architecture. Falls back to 100 (the
+// USER_HZ default) when the derivation fails. A var so tests can inject a
+// fixed rate.
+var clkTck = func() int64 {
+	stat, err := os.ReadFile(filepath.Join(procRoot, "stat"))
+	if err != nil {
+		return 100
+	}
+	var idleTicks int64
+	for _, line := range strings.Split(string(stat), "\n") {
+		if !strings.HasPrefix(line, "cpu ") {
+			continue // aggregate "cpu " line; per-CPU lines start "cpu0 " etc.
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 5 {
+			return 100
+		}
+		idleTicks, err = strconv.ParseInt(fields[4], 10, 64) // idle is field 5
+		break
+	}
+	if err != nil || idleTicks <= 0 {
+		return 100
+	}
+	up, err := os.ReadFile(filepath.Join(procRoot, "uptime"))
+	if err != nil {
+		return 100
+	}
+	uf := strings.Fields(string(up))
+	if len(uf) < 2 {
+		return 100
+	}
+	idleSecs, err := strconv.ParseFloat(uf[1], 64)
+	if err != nil || idleSecs <= 0 {
+		return 100
+	}
+	hz := int64(float64(idleTicks)/idleSecs + 0.5)
+	if hz < 1 || hz > 10000 {
+		return 100
+	}
+	return hz
+}
+
+// bootTimeUnix reads the system boot time in unix seconds from /proc/stat's
+// btime field — exact, integer, and on the same wall clock as the session
+// timestamps the connector compares against.
+func bootTimeUnix() (int64, error) {
+	b, err := os.ReadFile(filepath.Join(procRoot, "stat"))
+	if err != nil {
+		return 0, err
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		if !strings.HasPrefix(line, "btime ") {
+			continue
+		}
+		return strconv.ParseInt(strings.TrimSpace(strings.TrimPrefix(line, "btime ")), 10, 64)
+	}
+	return 0, fmt.Errorf("no btime in /proc/stat")
+}
+
+// StartTimeUnix returns the wall-clock time the process started, in unix
+// seconds. /proc/<pid>/stat field 22 (starttime, 0-based index 19 after the
+// "pid (comm) " prefix) counts ticks since boot; adding the boot time from
+// /proc/stat's btime field converts it to a wall-clock timestamp. HZ comes
+// from the kernel's own counters (see clkTck) rather than a constant.
+func StartTimeUnix(pid int) (int64, error) {
+	startTicks, err := StatField(pid, 19)
+	if err != nil {
+		return 0, err
+	}
+	boot, err := bootTimeUnix()
+	if err != nil {
+		return 0, err
+	}
+	hz := clkTck()
+	if hz <= 0 {
+		hz = 100
+	}
+	return boot + startTicks/hz, nil
 }
 
 // ReadCPUTicks returns utime+stime+cutime+cstime (fields 11-14) for pid.

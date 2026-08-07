@@ -115,6 +115,18 @@ func ParentPID(pid int) (int, error) {
 	return int(k.Eproc.Ppid), nil
 }
 
+// StartTimeUnix returns the wall-clock time the process started, in unix
+// seconds. Darwin's kern.proc.pid exposes p_starttime as a wall-clock
+// timeval (the kernel adds boot time to the process's boot-relative start),
+// so no clock conversion is needed.
+func StartTimeUnix(pid int) (int64, error) {
+	k, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
+	if err != nil {
+		return 0, err
+	}
+	return k.Proc.P_starttime.Sec, nil
+}
+
 // ReadCPUTicks returns cumulative user+system+child CPU time as 100 Hz ticks
 // so the shared activity tracker (CLKTicks=100) works without changes.
 func ReadCPUTicks(pid int) (int64, error) {
