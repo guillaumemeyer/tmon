@@ -73,14 +73,14 @@ tmon watches the whole zoo out of the box — **11 agents**:
 How closely tmon can track each one depends on the agent's own state
 surface. Agents that publish live state files (Grok, Hermes, Codex CLI,
 Cline, CodeBuddy, Aider, OpenClaw) or accept lifecycle hooks (Claude Code,
-Cursor, Copilot, Windsurf, Hermes approvals) give tmon authoritative working
-/ blocked / idle signals; everyone else falls back to the CPU/IO and
+Cursor, Copilot, Windsurf, Grok, Hermes approvals) give tmon authoritative
+working / blocked / idle signals; everyone else falls back to the CPU/IO and
 pane-content heuristics. The matrix below shows which features each agent's
 connector provides:
 
 | Agent | Connector | Status | Blocked | Detail | Title | Tokens |
 |-------|-----------|--------|:---:|--------|:---:|:---:|
-| Grok Build | native (`~/.grok`) | exact | ✓ | phase · tool · permission · model | ✓ | ✓ + window % |
+| Grok Build | native (`~/.grok`) + hooks | exact | ✓ | phase · tool · permission · model | ✓ | ✓ + window % |
 | Claude Code | hooks | exact | ✓ | tool · permission | ✓ | ✓ + window % + quota |
 | Codex CLI | native (`~/.codex` rollouts) | exact | ✓ (hooks) | phase · tool · permission | — | ✓ + window % + quota |
 | Hermes Agent | native (`~/.hermes` + profiles) | CLI/TUI | ✓ (hooks) | model · approval | ✓ | ✓ + window % |
@@ -460,11 +460,11 @@ set -g @tmon-connector-freshness "60"   # keep connector state longer
 ### `@tmon-auto-hooks`
 
 > Auto-install lifecycle hooks at plugin load for agents that need them
-> (Claude Code, Codex, Cursor, Copilot, Windsurf). **Default is off** so a
-> status-bar plugin never rewrites other tools' configs without consent.
-> Install is idempotent and backs up each config once (`.tmon.bak`) before
-> the first change. Set `on` only if you want that install on every plugin
-> load.
+> (Claude Code, Codex, Cursor, Copilot, Windsurf, Grok). **Default is off**
+> so a status-bar plugin never rewrites other tools' configs without
+> consent. Install is idempotent and backs up each config once (`.tmon.bak`)
+> before the first change. Set `on` only if you want that install on every
+> plugin load.
 
 | | |
 |---|---|
@@ -484,11 +484,19 @@ Manual hook install (recommended):
 ~/.tmux/plugins/tmon/bin/tmon hooks install cursor
 ~/.tmux/plugins/tmon/bin/tmon hooks install copilot
 ~/.tmux/plugins/tmon/bin/tmon hooks install windsurf
+~/.tmux/plugins/tmon/bin/tmon hooks install grok      # ~/.grok/hooks/tmon-grok.json; reload hooks in-session (/hooks + r)
 ```
 
 `tmon hooks remove <agent>` undoes an install; `tmon hooks status` lists
 what's installed. Hooks are optional — without them, agents still appear via
 activity detection.
+
+Grok installs into its **global hooks directory** (`~/.grok/hooks/`) with
+two tmon-owned files, so it applies to every session including background
+ones that never appear in `active_sessions.json`. Running Grok sessions pick
+up the hooks after `/hooks` + `r` (or a restart). Codex trusts hooks by
+config hash — after `hooks install codex` (or any config change), accept
+them once in-session with `/hooks`.
 
 ### `@tmon-ascii-icons`
 
