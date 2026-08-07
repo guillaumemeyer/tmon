@@ -111,11 +111,12 @@ pane: a `📊 Usage:` header with one row per window, a divider, then a
 `💬 Session:` line with the token counts and the context-window bar on its
 own line below it. Each quota row renders **dollars when the provider
 reports them, percent otherwise** — a window with money data shows its
-amounts without a bar (`$18.56 used · $81.44 left · Extra usage (monthly)`,
-or a remaining balance like `$65.85 remaining · DeepSeek balance`), while a
-percent-only window shows its progress bar (`████ 38% · Current session
-(reset at 19:39 PDT)`). All bars share a four-space left margin so they
-line up. Only an agent with no quota at all shows `📊 Usage: ?`.
+amounts without a bar (`$18.56 used · $81.44 left · Extra usage (monthly)`),
+while a remaining account balance shares the `📊 Usage:` header line
+(`📊 Usage: $65.85 remaining · DeepSeek balance`) instead of taking its own
+row. A percent-only window shows its progress bar (`████ 38% · Current
+session (reset at 19:39 PDT)`). All bars share a four-space left margin so
+they line up. Only an agent with no quota at all shows `📊 Usage: ?`.
 
 **Hermes** lists only live **CLI/TUI** sessions (not the messaging gateway).
 The dashboard name is `Title (Hermes - <profile>)` when a profile is known
@@ -124,22 +125,25 @@ token stats come from each home's `state.db`. Dangerous-command waits become
 **blocked** when approval hooks are installed (`tmon hooks install hermes`);
 Hermes may prompt once to allowlist the shell hook. Its usage line shows the
 configured provider's balance (from `model.provider` / `model.base_url` in
-`~/.hermes/config.yaml` and the key in `~/.hermes/.env`) as a `📊 Usage:` row
-like `$66.09 remaining · DeepSeek balance`, so the account level is visible
-without a central Hermes account.
+`~/.hermes/config.yaml` and the key in `~/.hermes/.env`) on the `📊 Usage:`
+header line like `📊 Usage: $66.09 remaining · DeepSeek balance`, so the
+account level is visible without a central Hermes account.
 
 **Prime Agent** reads its daemon's own session list (`prime-agent list
 --json`, TTL-gated — the spawn costs ~380 ms) plus each session's JSONL for
 token usage, so working/idle, the model, and the context bar are exact
 without hooks. Prime is bring-your-own-key on DeepSeek, so its `📊 Usage:`
-row shows the DeepSeek account balance (`$65.85 remaining · DeepSeek
-balance`), probed by the worker via `DEEPSEEK_API_KEY` in the worker
-environment — the same account Hermes shows when Hermes is on DeepSeek
-too. The daemon's `activity` field is the working signal; its
+header carries the DeepSeek account balance (`📊 Usage: $65.85 remaining ·
+DeepSeek balance`), probed by the worker via `DEEPSEEK_API_KEY` in the
+worker environment — the same account Hermes shows when Hermes is on
+DeepSeek too. The daemon's `activity` field is the working signal; its
 `taskState` (`needs_input` / `completed`) is only defined for idle sessions
 and distinguishes a finished turn awaiting your next message
 (`needs:input`) from one marked completed (`turn-complete`) — tmon shows
-both as idle. One session is a client + supervisor + catalog + worker set
+both as idle. A session that has not sent its first message yet is a
+draft; tmon keeps it as a row, so a just-opened session already shows its
+model, context bar, and account quota instead of `💬 Session: ?`. One
+session is a client + supervisor + catalog + worker set
 of processes that all share the process title `prime-agent`; tmon keeps
 only the tty-owning client for pane teleport and falls back to the worker
 PID for detached sessions (pane "?"), which is prime-agent's headline

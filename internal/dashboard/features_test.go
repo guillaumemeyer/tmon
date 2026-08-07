@@ -1238,6 +1238,49 @@ func TestQuotaWindowsInPreview(t *testing.T) {
 	}
 }
 
+func TestBalanceSharesUsageHeader(t *testing.T) {
+	old := capturePane
+	capturePane = func(p string) string { return "x" }
+	t.Cleanup(func() { capturePane = old })
+
+	// Hermes carries a single account-balance window. The remaining
+	// balance shares the "📊 Usage:" header line instead of taking its own
+	// indented row under the header.
+	rows := testRows()
+	rows[1].Usage = agent.Usage{QuotaWindows: []agent.QuotaWindow{
+		{Balance: 66.09, Label: "DeepSeek balance", Currency: "$"},
+	}}
+	f := &fakeLoader{data: Data{Rows: rows}}
+	m := New(f.load, true)
+	m = applyMsg(t, m, initMsg{})
+	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyDown}) // select Claude
+	m.width, m.height = 120, 24
+
+	v := ansi.Strip(m.View())
+	lines := strings.Split(v, "\n")
+
+	// The balance text sits on the same line as the usage header.
+	var header string
+	for _, ln := range lines {
+		if strings.Contains(ln, "📊 Usage") {
+			header = ln
+			break
+		}
+	}
+	if header == "" {
+		t.Fatalf("preview missing the usage header:\n%s", v)
+	}
+	if !strings.Contains(header, "$66.09 remaining · DeepSeek balance") {
+		t.Fatalf("balance should share the usage header line, got %q:\n%s", header, v)
+	}
+	// The balance must not appear as its own indented row.
+	for _, ln := range lines {
+		if strings.HasPrefix(strings.TrimSpace(ln), "$66.09 remaining") {
+			t.Fatalf("balance should not have its own row: %q", ln)
+		}
+	}
+}
+
 func TestWorkingAgentShowsSpinner(t *testing.T) {
 	old := capturePane
 	capturePane = func(p string) string { return "x" }

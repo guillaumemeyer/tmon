@@ -492,9 +492,10 @@ const previewChromeLines = 2
 const minPreviewViewport = 2
 
 // previewLines renders the right-side preview panel in four sections: the
-// selected agent's stats block — a "📊 Usage:" header with one row per
-// account quota window (a dollar amount when the provider reports one,
-// e.g. "$18.56 used · $81.44 left" or a remaining balance, otherwise a
+// selected agent's stats block — a "📊 Usage:" header (a remaining account
+// balance shares the header line, e.g. "📊 Usage: $65.85 remaining ·
+// DeepSeek balance"; other windows get one row each — a dollar amount when
+// the provider reports one, e.g. "$18.56 used · $81.44 left", otherwise a
 // percent bar; "📊 Usage: ?" when nothing is known), a divider, then the
 // "💬 Session:" line with the token counts and the context-window bar on
 // its own line below it when a window is known — a separator, then the
@@ -518,10 +519,10 @@ func (m Model) previewLines(w, n int) []string {
 	out := make([]string, 0, n)
 
 	// Section 1: the stats block of the selected agent — the usage header
-	// and one quota row per window (a dollar amount when the provider
-	// reports one, e.g. "$18.56 used · $81.44 left" or a remaining
-	// balance, otherwise a percent bar; "📊 Usage: ?" when nothing is
-	// known), a divider, then the
+	// with one row per window (a remaining account balance shares the
+	// header line; other windows show a dollar amount when the provider
+	// reports one, e.g. "$18.56 used · $81.44 left", otherwise a percent
+	// bar; "📊 Usage: ?" when nothing is known), a divider, then the
 	// "💬 Session:" line with the token counts and the context-window bar
 	// on its own line when a window is known. All bars share a four-space
 	// left margin so the usage and context bars line up. The block is
@@ -541,10 +542,22 @@ func (m Model) previewLines(w, n int) []string {
 		if noPane || contentN >= statsN+1+minPreviewViewport {
 			switch {
 			case qn > 0:
-				out = append(out, fit(m.st.dim.Render(" 📊 Usage:"), w))
+				// A remaining account balance (Limit/Spend empty, Balance
+				// set) shares the header line — "📊 Usage: $65.85 remaining
+				// · DeepSeek balance" — while every other window (budget
+				// dollars or a percent bar) renders as its own row under
+				// the header.
+				header := m.st.dim.Render(" 📊 Usage:")
+				rows := make([]string, 0, qn)
 				for _, q := range r.Usage.QuotaWindows {
-					out = append(out, fit("    "+quotaDetail(m.st, m.contextWarn, q, w-4), w))
+					if q.Limit == 0 && q.Spend == 0 && q.Balance > 0 {
+						header += " " + quotaDetail(m.st, m.contextWarn, q, w)
+						continue
+					}
+					rows = append(rows, fit("    "+quotaDetail(m.st, m.contextWarn, q, w-4), w))
 				}
+				out = append(out, fit(header, w))
+				out = append(out, rows...)
 			default:
 				// No quota data for this agent: the usage section stays on
 				// top, marked "?".
@@ -813,12 +826,13 @@ func sessionBar(st styles, contextWarn int, u agent.Usage, maxWidth int) string 
 	return b.String()
 }
 
-// quotaDetail renders one account quota window as a prefix-free row under
-// the 📊 Usage: header. A window with dollar data renders as its amounts —
-// "$18.56 used · $81.44 left · Extra usage (monthly)" for a budget with a
-// spent amount, "$65.85 remaining · DeepSeek balance" for an account
-// balance — with no bar: dollars replace the percent. A window without
-// dollar data renders the percent bar: "███████████░░░░░░░░░░░░░░░░░░░ 38%
+// quotaDetail renders one account quota window as a prefix-free line in
+// the preview's usage section. A window with dollar data renders as its
+// amounts — "$18.56 used · $81.44 left · Extra usage (monthly)" for a
+// budget with a spent amount, "$65.85 remaining · DeepSeek balance" for an
+// account balance — with no bar: dollars replace the percent. A remaining
+// balance shares the "📊 Usage:" header line instead of taking its own row
+// under it. A window without dollar data renders the percent bar: "███████████░░░░░░░░░░░░░░░░░░░ 38%
 // · Current session (reset at 19:39 PDT)". The bar shows the used percent,
 // the label names the window (session, weekly all-models, or weekly
 // per-model), and the reset time is local with its zone abbreviation when
