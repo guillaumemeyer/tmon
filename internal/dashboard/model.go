@@ -60,6 +60,11 @@ type Model struct {
 	filtered  []int      // indices into rows after the query + status filter
 	agentList list.Model // flat, selectable agent list (bubbles)
 
+	// loading is true while a data load is in flight. Loads run off the
+	// event loop (see loadCmd) so a slow loader cannot freeze key handling;
+	// the guard keeps a tick from stacking a second load on top.
+	loading bool
+
 	filterStatus agent.Status // "" = no status filter
 
 	previewText         string            // pane capture of the selected pane (colors preserved)
@@ -217,12 +222,13 @@ func (m Model) WithVersion(v string) Model {
 	return m
 }
 
-// Init kicks off the initial full load, the auto-refresh ticker, and the
-// working-agent spinner animation.
+// Init kicks off the initial full load and the working-agent spinner
+// animation. The auto-refresh tick is not armed here: applyLoad re-arms it
+// after every completed load, so the refresh cadence is anchored to load
+// completion and never stacks a second load on an in-flight one.
 func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		func() tea.Msg { return initMsg{} },
-		tickCmd(),
 		func() tea.Msg { return m.spinner.Tick() },
 	)
 }

@@ -18,8 +18,29 @@ type initMsg struct{}
 // tickMsg fires every refreshInterval and triggers a full data reload.
 type tickMsg struct{}
 
+// loadedMsg carries the result of an async data load. The load itself runs
+// in a command's goroutine; this message applies it on the event loop.
+type loadedMsg struct {
+	data Data
+	err  error
+}
+
 func tickCmd() tea.Cmd {
 	return tea.Tick(refreshInterval, func(time.Time) tea.Msg { return tickMsg{} })
+}
+
+// loadCmd runs the data loader off the event loop. A slow or wedged loader
+// (e.g. a hung gh lookup) must never freeze the popup's key handling, so
+// the reload happens in a goroutine and only the small result message is
+// handled synchronously.
+func (m Model) loadCmd() tea.Cmd {
+	return func() tea.Msg {
+		if m.loader == nil {
+			return loadedMsg{}
+		}
+		data, err := m.loader()
+		return loadedMsg{data: data, err: err}
+	}
 }
 
 // Update handles window resizes, keys, and the auto-refresh cadence.
@@ -36,10 +57,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleMouse(msg)
 
 	case initMsg:
-		return m.doLoad()
+		if m.loading {
+			return m, nil
+		}
+		m.loading = true
+		return m, m.loadCmd()
 
 	case tickMsg:
-		return m.doLoad()
+		if m.loading {
+			return m, nil // a load is in flight; it re-arms the tick on completion
+		}
+		m.loading = true
+		return m, m.loadCmd()
+
+	case loadedMsg:
+		m.loading = false
+		return m.applyLoad(msg)
 
 	case spinner.TickMsg:
 		// Advance the working-agent spinner and re-schedule the next frame.
@@ -52,27 +85,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 }
 
-// doLoad runs a refresh and applies the result; on failure the previous data
-// is kept so the popup never blanks out.
-func (m Model) doLoad() (Model, tea.Cmd) {
-	if m.loader == nil {
-		return m, nil
+// applyLoad applies a completed reload and re-arms the refresh tick. On
+// failure the previous data is kept so the popup never blanks out; the
+// re-armed tick retries on the next interval.
+func (m Model) applyLoad(msg loadedMsg) (Model, tea.Cmd) {
+	if msg.err == nil {
+		m.rows = msg.data.Rows
+		// Full multi-pane capture is only needed while the user is searching
+		// (fuzzy match over pane text). Otherwise the selected-row preview
+		// alone is enough and avoids N capture-pane spawns per tick.
+		if m.searching {
+			m.refreshPaneCache()
+		}
+		m.rebuildFilter()
+		// Point the preview panel at the (possibly moved) selection.
+		m.refreshPreview(true)
 	}
-	data, err := m.loader()
-	if err != nil {
-		return m, nil
-	}
-	m.rows = data.Rows
-	// Full multi-pane capture is only needed while the user is searching
-	// (fuzzy match over pane text). Otherwise the selected-row preview
-	// alone is enough and avoids N capture-pane spawns per tick.
-	if m.searching {
-		m.refreshPaneCache()
-	}
-	m.rebuildFilter()
-	// Point the preview panel at the (possibly moved) selection.
-	m.refreshPreview(true)
-	return m, nil
+	return m, tickCmd()
 }
 
 // refreshPaneCache re-captures every agent pane into paneCache so search

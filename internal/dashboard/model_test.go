@@ -32,11 +32,35 @@ func testRows() []Row {
 }
 
 // applyMsg runs msg through Update and returns the resulting model. The
-// returned command is dropped — the tests drive the tick cadence manually.
+// returned command is dropped, except for the loader commands returned for
+// initMsg/tickMsg: those are executed so the async load applies
+// synchronously, matching the pre-async test flow. Other commands (spinner
+// ticks, focus, theme preview) are left to the program loop.
 func applyMsg(t *testing.T, m Model, msg tea.Msg) Model {
 	t.Helper()
-	nm, _ := m.Update(msg)
-	return nm.(Model)
+	nm, cmd := m.Update(msg)
+	m2 := nm.(Model)
+	switch msg.(type) {
+	case initMsg, tickMsg:
+		return pumpLoadCmd(t, m2, cmd)
+	}
+	return m2
+}
+
+// pumpLoadCmd runs the loader command returned for initMsg/tickMsg and
+// applies the resulting loadedMsg. A nil command (e.g. a tick skipped while
+// a load is in flight) leaves the model unchanged.
+func pumpLoadCmd(t *testing.T, m Model, cmd tea.Cmd) Model {
+	t.Helper()
+	if cmd == nil {
+		return m
+	}
+	msg := cmd()
+	if lm, ok := msg.(loadedMsg); ok {
+		nm, _ := m.Update(lm)
+		return nm.(Model)
+	}
+	return m
 }
 
 // key builds a KeyMsg for a printable rune the way the input reader would.
@@ -55,6 +79,35 @@ func TestInitialLoadIsFull(t *testing.T) {
 	m = applyMsg(t, m, initMsg{})
 	if len(m.rows) != 3 {
 		t.Fatalf("rows after initial load = %d, want 3", len(m.rows))
+	}
+}
+
+// TestLoadingMessageWhileLoadInFlight covers the async load's transient
+// state: before the first loadedMsg arrives the list must say it is loading,
+// not claim there are no agents — the freeze this regression fixes left the
+// popup stuck on "No agents detected.".
+func TestLoadingMessageWhileLoadInFlight(t *testing.T) {
+	f := &fakeLoader{data: Data{Rows: testRows()}}
+	m := New(f.load, true)
+	m.width, m.height = 80, 24
+
+	m.loading = true
+	v := m.View()
+	if !strings.Contains(v, "Loading agents") {
+		t.Fatalf("expected a loading message while the load is in flight:\n%s", v)
+	}
+	if strings.Contains(v, "No agents detected") {
+		t.Fatalf("must not say 'No agents detected' while loading:\n%s", v)
+	}
+
+	// After the load applies, the loading message is gone.
+	m.loading = false
+	m = applyMsg(t, m, initMsg{})
+	if len(m.rows) != 3 {
+		t.Fatalf("rows after load = %d, want 3", len(m.rows))
+	}
+	if v := m.View(); strings.Contains(v, "Loading agents") {
+		t.Fatalf("loading message must vanish after the load:\n%s", v)
 	}
 }
 

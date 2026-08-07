@@ -385,7 +385,13 @@ func (m Model) searchInputListLine(w int) string {
 func (m Model) listLines(w, bodyLines int) []string {
 	if len(m.filtered) == 0 {
 		msg := " No agents detected."
-		if m.query != "" {
+		switch {
+		case m.loading && m.query == "":
+			// The first load is async; a wedged provider lookup can take
+			// seconds, so say what is happening instead of claiming there
+			// are no agents.
+			msg = " Loading agents…"
+		case m.query != "":
 			msg = ` No agents match "` + m.query + `"`
 		}
 		out := []string{fit(m.st.dim.Render(msg), w)}
@@ -550,7 +556,11 @@ func (m Model) previewLines(w, n int) []string {
 	// Section 3: the pane preview (agent header, then the captured pane).
 	switch {
 	case len(m.filtered) == 0:
-		out = append(out, fit(m.st.dim.Render(" no agents"), w))
+		msg := " no agents"
+		if m.loading {
+			msg = " loading…"
+		}
+		out = append(out, fit(m.st.dim.Render(msg), w))
 	case m.previewPane == "" || m.previewPane == "?":
 		out = append(out, fit(m.st.dim.Render(" no pane (headless)"), w))
 	default:
