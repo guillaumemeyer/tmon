@@ -108,7 +108,7 @@ Claude, Grok, and Codex, plus the configured provider's balance for Hermes
 (it is bring-your-own-key, so there is no central account to bill), and
 shown in the dashboard popup at the top of the preview
 pane: a `📊 Usage:` header with one row per window, a divider, then a
-`💬 Session:` line with the token counts and the context-window bar on its
+`💬 Context window:` line with the token counts and the context-window bar on its
 own line below it. Each quota row renders **dollars when the provider
 reports them, percent otherwise** — a window with money data shows its
 amounts without a bar (`$18.56 used · $81.44 left · Extra usage (monthly)`),
@@ -142,7 +142,7 @@ and distinguishes a finished turn awaiting your next message
 (`needs:input`) from one marked completed (`turn-complete`) — tmon shows
 both as idle. A session that has not sent its first message yet is a
 draft; tmon keeps it as a row, so a just-opened session already shows its
-model, context bar, and account quota instead of `💬 Session: ?`. One
+model, context bar, and account quota instead of `💬 Context window: ?`. One
 session is a client + supervisor + catalog + worker set
 of processes that all share the process title `prime-agent`; tmon keeps
 only the tty-owning client for pane teleport and falls back to the worker
@@ -203,7 +203,7 @@ top of the preview pane — the dollar amounts when the window has them
 (`$18.56 used · $81.44 left · Extra usage (monthly)`), else the progress
 bar (`████ 38% · Current session (reset at 19:39 PDT)`); `📊 Usage: ?`
 only when nothing is known — with the
-context-window bar on its own line under the `💬 Session:` token counts
+context-window bar on its own line under the `💬 Context window:` token counts
 below a divider. The ledger fields (`today`,
 `recentDays`, `modelUsage`) are reserved for the next phase.
 

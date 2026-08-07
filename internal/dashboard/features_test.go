@@ -1137,7 +1137,7 @@ func TestContextLineMovesToPreview(t *testing.T) {
 			}
 		}
 		if strings.Contains(list, "context:") || strings.Contains(list, "usage:") ||
-			strings.Contains(list, "📊 Usage") || strings.Contains(list, "💬 Session") {
+			strings.Contains(list, "📊 Usage") || strings.Contains(list, "💬 Context window") {
 			t.Fatalf("list column still carries a usage line: %q", ln)
 		}
 	}
@@ -1145,14 +1145,14 @@ func TestContextLineMovesToPreview(t *testing.T) {
 	// The usage section stays on top. With no quota windows the header
 	// shows a bare "📊 Usage: ?": the percent bar and the dollar amounts
 	// only exist when a provider reports a quota window. The session line
-	// carries the token counts next to the "💬 Session:" label, and the
+	// carries the token counts next to the "💬 Context window:" label, and the
 	// context bar sits on its own line under it. The preview panel is 59
 	// cells here, so the progress bar takes the full 30-cell cap; 26% of
 	// 30 fills 8 cells (rounded).
 	if !strings.Contains(v, "📊 Usage: ?") {
 		t.Fatalf("preview missing the no-quota usage header:\n%s", v)
 	}
-	if !strings.Contains(v, "💬 Session: 52.4k/200k") {
+	if !strings.Contains(v, "💬 Context window: 52.4k/200k") {
 		t.Fatalf("preview missing the session line with token counts:\n%s", v)
 	}
 	if !strings.Contains(v, "████████░░░░░░░░░░░░░░░░░░░░░░ 26%") {
@@ -1160,14 +1160,14 @@ func TestContextLineMovesToPreview(t *testing.T) {
 	}
 
 	// An agent without token stats or quota still shows "📊 Usage: ?" and
-	// "💬 Session: ?" in the preview.
+	// "💬 Context window: ?" in the preview.
 	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyDown}) // select Claude
 	v = ansi.Strip(m.View())
 	if !strings.Contains(v, "📊 Usage: ?") {
 		t.Fatalf("preview should show 📊 Usage: ? for Claude:\n%s", v)
 	}
-	if !strings.Contains(v, "💬 Session: ?") {
-		t.Fatalf("preview should show 💬 Session: ? for Claude:\n%s", v)
+	if !strings.Contains(v, "💬 Context window: ?") {
+		t.Fatalf("preview should show 💬 Context window: ? for Claude:\n%s", v)
 	}
 }
 
@@ -1203,7 +1203,7 @@ func TestQuotaWindowsInPreview(t *testing.T) {
 			continue // top/bottom border
 		}
 		if strings.Contains(parts[1], "usage:") || strings.Contains(parts[1], "context:") ||
-			strings.Contains(parts[1], "📊 Usage") || strings.Contains(parts[1], "💬 Session") {
+			strings.Contains(parts[1], "📊 Usage") || strings.Contains(parts[1], "💬 Context window") {
 			t.Fatalf("list column still carries a usage line: %q", ln)
 		}
 	}
@@ -1211,8 +1211,8 @@ func TestQuotaWindowsInPreview(t *testing.T) {
 	// The preview pane leads with the "📊 Usage:" header and one row per
 	// quota window — the percent windows render bars, the monthly
 	// extra-usage window renders its dollar amounts — above the
-	// "💬 Session" line.
-	for _, want := range []string{"📊 Usage", "Current session", "Current week (all models)", "Current week (Fable)", "💬 Session"} {
+	// "💬 Context window" line.
+	for _, want := range []string{"📊 Usage", "Current session", "Current week (all models)", "Current week (Fable)", "💬 Context window"} {
 		if !strings.Contains(v, want) {
 			t.Errorf("preview missing %q:\n%s", want, v)
 		}
@@ -1229,7 +1229,7 @@ func TestQuotaWindowsInPreview(t *testing.T) {
 		if usageIdx < 0 && strings.Contains(ln, "📊 Usage") {
 			usageIdx = i
 		}
-		if sessIdx < 0 && strings.Contains(ln, "💬 Session") {
+		if sessIdx < 0 && strings.Contains(ln, "💬 Context window") {
 			sessIdx = i
 		}
 	}

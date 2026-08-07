@@ -497,7 +497,7 @@ const minPreviewViewport = 2
 // DeepSeek balance"; other windows get one row each — a dollar amount when
 // the provider reports one, e.g. "$18.56 used · $81.44 left", otherwise a
 // percent bar; "📊 Usage: ?" when nothing is known), a divider, then the
-// "💬 Session:" line with the token counts and the context-window bar on
+// "💬 Context window:" line with the token counts and the context-window bar on
 // its own line below it when a window is known — a separator, then the
 // pane preview — a header line naming the selected agent, the bubbles
 // viewport holding the pane capture (scrollable with ctrl+u/ctrl+d and the
@@ -523,7 +523,7 @@ func (m Model) previewLines(w, n int) []string {
 	// header line; other windows show a dollar amount when the provider
 	// reports one, e.g. "$18.56 used · $81.44 left", otherwise a percent
 	// bar; "📊 Usage: ?" when nothing is known), a divider, then the
-	// "💬 Session:" line with the token counts and the context-window bar
+	// "💬 Context window:" line with the token counts and the context-window bar
 	// on its own line when a window is known. All bars share a four-space
 	// left margin so the usage and context bars line up. The block is
 	// dropped on panes too short to keep minPreviewViewport capture rows
@@ -565,7 +565,7 @@ func (m Model) previewLines(w, n int) []string {
 			}
 			// The divider separates the usage section from the session line.
 			out = append(out, fit(m.st.dim.Render(strings.Repeat("─", w)), w))
-			out = append(out, fit(" "+m.st.dim.Render("💬 Session: ")+sessionPrefix(m.st, r.Usage), w))
+			out = append(out, fit(" "+m.st.dim.Render("💬 Context window: ")+sessionPrefix(m.st, r.Usage), w))
 			if sessBar {
 				// The context bar sits on its own line, aligned with the
 				// quota bars under the four-space margin.
@@ -799,7 +799,7 @@ const defaultContextWarn = 85
 
 // sessionPrefix renders the token portion of the context-window detail:
 // "52.4k/200k", "13k", or a dim "?" when no token stat is available. The
-// caller prefixes the "💬 Session: " label. When a window is known the bar
+// caller prefixes the "💬 Context window: " label. When a window is known the bar
 // moves to its own line, rendered by sessionBar.
 func sessionPrefix(st styles, u agent.Usage) string {
 	if u.TokensUsed == 0 && u.WindowTokens == 0 {
@@ -813,7 +813,7 @@ func sessionPrefix(st styles, u agent.Usage) string {
 }
 
 // sessionBar renders the context-window progress bar with its used
-// percentage for the own-line form under the "💬 Session:" line:
+// percentage for the own-line form under the "💬 Context window:" line:
 // "████████░░░░░░░░░░░░░░░░░░░░░░ 26%". The bar turns warn-colored at the
 // same threshold as the quota bars.
 func sessionBar(st styles, contextWarn int, u agent.Usage, maxWidth int) string {
