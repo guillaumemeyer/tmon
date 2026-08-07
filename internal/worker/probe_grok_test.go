@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 
 	"github.com/guillaumemeyer/tmon/internal/agent"
 	"github.com/guillaumemeyer/tmon/internal/config"
@@ -23,8 +24,12 @@ func TestGrokAccessTokenFromConfigDir(t *testing.T) {
 	t.Cleanup(func() { grokConfigDir = orig })
 	dir := t.TempDir()
 	grokConfigDir = func() string { return dir }
-	if err := os.WriteFile(filepath.Join(dir, "auth.json"),
-		[]byte(`{"https://auth.x.ai::client-id":{"key":"grok-oat01-test","expires_at":"2026-08-07T01:11:50Z"}}`), 0o644); err != nil {
+	// Anchor the expiry to the future: a fixed timestamp goes stale the
+	// moment the clock passes it, and grokAccessToken treats an expired
+	// token as missing.
+	expires := time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339)
+	auth := fmt.Sprintf(`{"https://auth.x.ai::client-id":{"key":"grok-oat01-test","expires_at":%q}}`, expires)
+	if err := os.WriteFile(filepath.Join(dir, "auth.json"), []byte(auth), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if got := grokAccessToken(); got != "grok-oat01-test" {
