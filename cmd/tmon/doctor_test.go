@@ -109,6 +109,23 @@ func TestCmdDoctorUsage(t *testing.T) {
 	}
 }
 
+func TestToDoctorChecks(t *testing.T) {
+	in := []check{
+		{Name: "tmux", Detail: "tmux 3.4 (>= 3.2)", OK: true},
+		{Name: "binary", Detail: "stale", OK: false},
+	}
+	out := toDoctorChecks(in)
+	if len(out) != len(in) {
+		t.Fatalf("toDoctorChecks = %d checks, want %d", len(out), len(in))
+	}
+	if out[0].Name != "tmux" || out[0].Detail != "tmux 3.4 (>= 3.2)" || !out[0].OK {
+		t.Errorf("check 0 = %+v, want the tmux pass", out[0])
+	}
+	if out[1].Name != "binary" || out[1].OK {
+		t.Errorf("check 1 = %+v, want the binary fail", out[1])
+	}
+}
+
 func TestDoctorJSONShape(t *testing.T) {
 	doctorEnv(t)
 	checks := runChecks(testDoctorCfg(t))

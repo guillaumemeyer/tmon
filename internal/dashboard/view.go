@@ -87,6 +87,9 @@ func (m Model) View() string {
 	if m.themeMode {
 		return m.themeView(w, h)
 	}
+	if m.doctorMode {
+		return m.doctorView(w, h)
+	}
 
 	innerW, innerH := w-2, h-2
 	listW, panelW := m.panelWidths(innerW)
@@ -94,7 +97,7 @@ func (m Model) View() string {
 	topChrome := m.mainTopChrome()
 
 	lines := make([]string, 0, innerH)
-	lines = append(lines, m.headerLines(innerW, [mainHeaderHeight]string{"[esc/q] quit ", ""})...)
+	lines = append(lines, m.headerLines(innerW, [mainHeaderHeight]string{"[esc/q] quit ", ""}, m.version)...)
 	lines = append(lines, fit(m.st.dim.Render(strings.Repeat("━", innerW)), innerW))
 
 	bodyLines := bodyLinesFor(innerH, topChrome)
@@ -710,18 +713,19 @@ func (m Model) mainTopChrome() int {
 	return mainHeaderHeight + 1
 }
 
-// headerLines renders the popup title chrome shared by the agent view and
-// the theme selector: the ascii wordmark on the left spanning both
-// mainHeaderHeight rows, with hints[i] right-aligned on row i (an empty
-// entry leaves that row's right side blank). The version sits on the
-// second logo line, one space after the wordmark.
-func (m Model) headerLines(w int, hints [mainHeaderHeight]string) []string {
+// headerLines renders the popup title chrome shared by the agent view, the
+// theme selector, and the doctor report: the ascii wordmark on the left
+// spanning both mainHeaderHeight rows, with hints[i] right-aligned on row i
+// (an empty entry leaves that row's right side blank). The tag (the version
+// in the agent view, "🎨 Themes" in the theme selector, "🩺 Doctor" in the
+// doctor report) sits on the second logo line, one space after the wordmark.
+func (m Model) headerLines(w int, hints [mainHeaderHeight]string, tag string) []string {
 	lines := make([]string, mainHeaderHeight)
 	for i, glyph := range asciiLogo {
 		left := m.st.cyan.Bold(true).Render(" " + glyph)
-		// Second logo line: one space margin, then the version in dim.
-		if i == 1 && m.version != "" {
-			left += m.st.dim.Render(" " + m.version)
+		// Second logo line: one space margin, then the tag in dim.
+		if i == 1 && tag != "" {
+			left += m.st.dim.Render(" " + tag)
 		}
 		right := m.st.dim.Render(hints[i])
 		pad := w - ansi.StringWidth(left) - ansi.StringWidth(right)
@@ -990,17 +994,18 @@ func (m Model) footerSearchHint() string {
 }
 
 // footerRight is the right-aligned footer segment: match count while
-// filtering, the theme and view-cycle hints, and the navigate tip.
-// Preview scroll/resize tips live at the bottom of the preview pane.
-// Tips that do not fit are dropped from the end.
+// filtering, the theme, view-cycle, navigate, and doctor hints. Preview
+// scroll/resize tips live at the bottom of the preview pane. Tips that do
+// not fit are dropped from the end.
 func (m Model) footerRight(w int) string {
-	parts := make([]string, 0, 4)
+	parts := make([]string, 0, 5)
 	if m.query != "" || m.searching {
 		parts = append(parts, fmt.Sprintf("%d/%d", len(m.filtered), len(m.rows)))
 	}
 	parts = append(parts, "[t] theme")
 	parts = append(parts, m.footerViewHint())
 	parts = append(parts, "[↑/↓ j/k] navigate")
+	parts = append(parts, "[d] doctor")
 	text := strings.Join(parts, "  ")
 	for ansi.StringWidth(text) > w && len(parts) > 1 {
 		parts = parts[:len(parts)-1]

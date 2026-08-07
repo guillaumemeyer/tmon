@@ -116,6 +116,22 @@ type Model struct {
 	// enter/space persist the browsed theme.
 	themeCommitted theme.Theme
 
+	// doctorMode is true while the doctor report popin is open (pressed d
+	// from the agent view). doctorChecks is the report content shown there;
+	// doctorRecheck re-runs the checks when the report opens and when the
+	// user presses r (nil disables re-running, for tests and direct
+	// construction); doctorScroll is the first visible report line;
+	// doctorRanAt is when the checks last ran (zero until the first run);
+	// doctorRuns counts completed runs; doctorBusy is true while a re-run
+	// is in flight (the body shows the spinner until it lands).
+	doctorMode    bool
+	doctorChecks  []DoctorCheck
+	doctorRecheck func() []DoctorCheck
+	doctorScroll  int
+	doctorRanAt   time.Time
+	doctorRuns    int
+	doctorBusy    bool
+
 	// version is the tmon release string shown next to the ascii logo on
 	// the second header line (e.g. "0.4.2"). Empty hides it (tests and
 	// direct construction).

@@ -185,12 +185,15 @@ func (m Model) applyThemePreview() Model {
 
 // themeView renders the theme selector: the preset list on the left and the
 // live palette preview for the highlighted theme on the right, framed by the
-// same rounded border as the agent view. It always emits exactly h lines so
-// the footer lands on the last row.
+// same rounded border as the agent view. Its title chrome matches the doctor
+// report's: the ascii wordmark with "🎨 Themes" where the agent view shows
+// the version, and the apply/revert hints right-aligned with one cell of
+// margin. It always emits exactly h lines so the footer lands on the last
+// row.
 func (m Model) themeView(w, h int) string {
 	innerW, innerH := w-2, h-2
 	lines := make([]string, 0, innerH)
-	lines = append(lines, m.headerLines(innerW, [mainHeaderHeight]string{"[enter/space] apply  [esc/q] revert ", ""})...)
+	lines = append(lines, m.headerLines(innerW, [mainHeaderHeight]string{"[enter/space] apply  [esc/q] revert ", ""}, "🎨 Themes")...)
 	lines = append(lines, fit(m.st.dim.Render(strings.Repeat("━", innerW)), innerW))
 
 	bodyLines := bodyLinesFor(innerH, mainHeaderHeight+1)

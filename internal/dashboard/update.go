@@ -74,6 +74,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loading = false
 		return m.applyLoad(msg)
 
+	case doctorRunMsg:
+		// A doctor re-run landed: show the fresh checks and clear the
+		// busy state. The run counter and last-run stamp confirm the
+		// re-run even when every result is unchanged.
+		m.doctorChecks = msg.checks
+		m.doctorRanAt = time.Now()
+		m.doctorRuns++
+		m.doctorBusy = false
+		return m, nil
+
 	case spinner.TickMsg:
 		// Advance the working-agent spinner and re-schedule the next frame.
 		var cmd tea.Cmd
@@ -169,6 +179,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		return m.handleThemeKey(msg)
 	}
 
+	if m.doctorMode {
+		return m.handleDoctorKey(msg)
+	}
+
 	switch msg.String() {
 	case "/":
 		m.searching = true
@@ -190,6 +204,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		// render re-wraps (or restores) the viewport content.
 		m.previewWrap = !m.previewWrap
 		m.saveSettings()
+	case "d":
+		// Open the doctor report popin and re-run the checks.
+		m.doctorMode = true
+		m.doctorScroll = 0
+		m.doctorBusy = true
+		return m, m.doctorRunCmd()
 	case "esc", "q", "ctrl+c":
 		return m, tea.Quit
 	case "left", "h":
@@ -270,6 +290,19 @@ func (m Model) handleThemeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 // inside the canvas.
 func (m Model) handleMouse(msg tea.MouseMsg) (Model, tea.Cmd) {
 	if m.themeMode {
+		return m, nil
+	}
+	if m.doctorMode {
+		// The report is a single column: the mouse wheel scrolls it and
+		// clicks are inert (there are no rows to focus).
+		if msg.Action == tea.MouseActionPress {
+			switch msg.Button {
+			case tea.MouseButtonWheelUp:
+				m.doctorScrollBy(-3)
+			case tea.MouseButtonWheelDown:
+				m.doctorScrollBy(3)
+			}
+		}
 		return m, nil
 	}
 	msg.X--

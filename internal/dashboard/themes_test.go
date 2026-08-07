@@ -43,8 +43,11 @@ func TestThemeSelectorOpensAndListsThemes(t *testing.T) {
 	if !strings.Contains(v, "colour235") {
 		t.Fatalf("preview should show the current theme's swatches:\n%s", v)
 	}
-	// Header and footer switch to theme-mode hints.
-	if !strings.Contains(v, asciiLogo[0]) ||
+	// Header and footer switch to theme-mode hints; the title chrome shows
+	// the "🎨 Themes" tag like the doctor report's "🩺 Doctor".
+	rows := strings.Split(v, "\n")
+	if !strings.Contains(rows[2], asciiLogo[1]+" 🎨 Themes") ||
+		!strings.Contains(v, asciiLogo[0]) ||
 		!strings.Contains(v, "[enter/space] apply") ||
 		!strings.Contains(v, "[esc/q] revert") {
 		t.Fatalf("theme-mode header/footer hints missing:\n%s", v)
