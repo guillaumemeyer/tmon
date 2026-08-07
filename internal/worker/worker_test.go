@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -29,10 +30,11 @@ func stubWorkerVars(t *testing.T) {
 	})
 }
 
-// testProbe returns a probe factory that records its call count.
-func countingProbe(count *int) Probe {
+// testProbe returns a probe factory that records its call count. The count
+// is atomic: runQuotaProbes runs the probes in parallel.
+func countingProbe(count *int64) Probe {
 	return Probe{Key: "claude", Label: "Claude", Run: func(config.Config) (Quota, error) {
-		*count++
+		atomic.AddInt64(count, 1)
 		return Quota{Pct: 12, Label: "Session (5-hour)"}, nil
 	}}
 }
@@ -42,7 +44,7 @@ func TestRunWritesUsageAndHeartbeat(t *testing.T) {
 	Cycle, minCycleSleep = 20*time.Millisecond, 5*time.Millisecond
 	IdleExitAfter = time.Hour
 	busy = func() bool { return true } // never idle-exit; stop via SIGTERM
-	probes = []Probe{countingProbe(new(int))}
+	probes = []Probe{countingProbe(new(int64))}
 
 	cfg := config.Defaults()
 	cfg.StateDir = t.TempDir()
@@ -95,7 +97,7 @@ func TestRunIdleExit(t *testing.T) {
 	Cycle, minCycleSleep = 20*time.Millisecond, 5*time.Millisecond
 	IdleExitAfter = 40 * time.Millisecond
 	busy = func() bool { return false } // no agents, no dashboard
-	probes = []Probe{countingProbe(new(int))}
+	probes = []Probe{countingProbe(new(int64))}
 
 	cfg := config.Defaults()
 	cfg.StateDir = t.TempDir()
@@ -117,7 +119,7 @@ func TestRunReusesQuotaUntilTTL(t *testing.T) {
 	Cycle, minCycleSleep = 20*time.Millisecond, 5*time.Millisecond
 	IdleExitAfter = 40 * time.Millisecond
 	busy = func() bool { return false }
-	calls := 0
+	calls := int64(0)
 	probes = []Probe{countingProbe(&calls)}
 
 	cfg := config.Defaults()
@@ -284,7 +286,7 @@ func TestRunQuotaProbesRecordsFailures(t *testing.T) {
 
 func TestLazyQuotaTTLCache(t *testing.T) {
 	stubWorkerVars(t)
-	calls := 0
+	calls := int64(0)
 	probes = []Probe{countingProbe(&calls)}
 	cfg := config.Defaults()
 	cfg.StateDir = t.TempDir()
@@ -305,7 +307,7 @@ func TestLazyQuotaTTLCache(t *testing.T) {
 
 func TestLazyQuotaReprobesAfterTTL(t *testing.T) {
 	stubWorkerVars(t)
-	calls := 0
+	calls := int64(0)
 	probes = []Probe{countingProbe(&calls)}
 	cfg := config.Defaults()
 	cfg.StateDir = t.TempDir()

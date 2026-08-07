@@ -2,8 +2,10 @@
 package detect
 
 import (
+	"sort"
 	"strings"
 
+	"github.com/guillaumemeyer/tmon/internal/parallel"
 	"github.com/guillaumemeyer/tmon/internal/proc"
 )
 
@@ -35,30 +37,34 @@ func MatchLabel(cmdline string) string {
 }
 
 // All returns every running process that matches the signature table.
+// The process table is scanned in parallel: cmdline reads dominate the scan
+// and are independent per PID. Each worker writes its own slot, so no
+// locking is needed; output is sorted by PID for a deterministic order.
 func All() ([]Agent, error) {
 	pids, err := proc.ListPIDs()
 	if err != nil {
 		return nil, err
 	}
 
-	agents := make([]Agent, 0)
-	for _, pid := range pids {
+	slots := make([]*Agent, len(pids))
+	parallel.ForEach(len(pids), parallel.DefaultWorkers, func(i int) {
+		pid := pids[i]
 		cmdline, err := proc.ReadCmdline(pid)
 		if err != nil || cmdline == "" {
-			continue
+			return
 		}
 		if !Matches(cmdline) {
-			continue
+			return
 		}
 		label := MatchLabel(cmdline)
 		if label == "" {
-			continue
+			return
 		}
 		// Hermes messaging gateway is not a local CLI/TUI session; the
 		// Hermes connector also ignores it. Skip so it never appears as an
 		// agent row in status/dashboard.
 		if label == "Hermes" && isHermesGatewayCmd(cmdline) {
-			continue
+			return
 		}
 		if len(cmdline) > CmdlineSnippetLimit {
 			cmdline = cmdline[:CmdlineSnippetLimit]
@@ -67,8 +73,16 @@ func All() ([]Agent, error) {
 		if c, err := proc.ReadCWD(pid); err == nil {
 			cwd = proc.CWDShort(c)
 		}
-		agents = append(agents, Agent{PID: pid, Label: label, Cmdline: cmdline, CWD: cwd})
+		slots[i] = &Agent{PID: pid, Label: label, Cmdline: cmdline, CWD: cwd}
+	})
+
+	agents := make([]Agent, 0, len(slots)/8)
+	for _, a := range slots {
+		if a != nil {
+			agents = append(agents, *a)
+		}
 	}
+	sort.Slice(agents, func(i, j int) bool { return agents[i].PID < agents[j].PID })
 	return agents, nil
 }
 

@@ -12,6 +12,7 @@ import (
 	"github.com/guillaumemeyer/tmon/internal/git"
 	"github.com/guillaumemeyer/tmon/internal/hide"
 	"github.com/guillaumemeyer/tmon/internal/pane"
+	"github.com/guillaumemeyer/tmon/internal/parallel"
 	"github.com/guillaumemeyer/tmon/internal/proc"
 	"github.com/guillaumemeyer/tmon/internal/tmux"
 )
@@ -91,7 +92,6 @@ func loadFull(cfg config.Config) (Data, error) {
 			}
 		}
 
-		applyBlockedCheck(&r)
 		rows = append(rows, r)
 	}
 
@@ -113,17 +113,21 @@ func loadFull(cfg config.Config) (Data, error) {
 				r.SessionID = id
 			}
 		}
-		applyBlockedCheck(&r)
 		rows = append(rows, r)
 	}
 
-	for i := range rows {
+	// Per-row enrichment is independent I/O: one tmux capture for the live
+	// blocked check and one /proc readlink for the full CWD per agent. Run
+	// it in parallel so refresh latency stays flat as the agent count grows.
+	// Each worker writes its own slot, so no locking is needed.
+	parallel.ForEach(len(rows), parallel.DefaultWorkers, func(i int) {
+		applyBlockedCheck(&rows[i])
 		resolveFullCWD(&rows[i])
-	}
+	})
 	rows = filterHidden(rows, cfg)
-	for i := range rows {
+	parallel.ForEach(len(rows), parallel.DefaultWorkers, func(i int) {
 		resolveGit(&rows[i], cfg)
-	}
+	})
 	sortRows(rows)
 	return Data{Rows: rows}, nil
 }

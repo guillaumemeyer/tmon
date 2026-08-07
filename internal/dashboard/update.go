@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/guillaumemeyer/tmon/internal/agent"
+	"github.com/guillaumemeyer/tmon/internal/parallel"
 )
 
 // initMsg requests the initial full load.
@@ -115,18 +116,33 @@ func (m Model) applyLoad(msg loadedMsg) (Model, tea.Cmd) {
 }
 
 // refreshPaneCache re-captures every agent pane into paneCache so search
-// can match against full pane text. Stale targets are pruned.
+// can match against full pane text. Captures run in parallel: each is a
+// tmux subprocess and the captures are independent. Stale targets are
+// pruned. A pane shared by several rows is captured once.
 func (m *Model) refreshPaneCache() {
 	if m.paneCache == nil {
 		m.paneCache = make(map[string]string)
 	}
+	panes := make([]string, 0, len(m.rows))
 	live := make(map[string]bool, len(m.rows))
 	for _, r := range m.rows {
-		if r.Pane == "" || r.Pane == "?" {
+		p := r.Pane
+		if p == "" || p == "?" {
 			continue
 		}
-		live[r.Pane] = true
-		m.paneCache[r.Pane] = capturePane(r.Pane)
+		if live[p] {
+			continue
+		}
+		live[p] = true
+		panes = append(panes, p)
+	}
+	// Each worker writes its own slot; the merge below is single-threaded.
+	texts := make([]string, len(panes))
+	parallel.ForEach(len(panes), parallel.DefaultWorkers, func(i int) {
+		texts[i] = capturePane(panes[i])
+	})
+	for i, p := range panes {
+		m.paneCache[p] = texts[i]
 	}
 	for k := range m.paneCache {
 		if !live[k] {

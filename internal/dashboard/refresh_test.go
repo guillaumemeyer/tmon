@@ -245,3 +245,67 @@ func TestLoadFullHidesBySession(t *testing.T) {
 		t.Fatalf("rows = %+v, want none (all agents in hidden session main)", data.Rows)
 	}
 }
+
+func TestLoadFullParallelEnrichmentManyRows(t *testing.T) {
+	// Several rows exercise the parallel enrichment passes: live blocked
+	// checks, full-CWD reads, and git resolution must all land on the right
+	// row regardless of goroutine scheduling. Run under -race.
+	cfg, _ := refreshFixture(t, []agent.AgentState{
+		{PID: 10, Label: "Grok", Status: agent.StatusWorking, CWD: "code/tmon", Pane: "main:0.0"},
+		{PID: 999, Label: "Hermes", Status: agent.StatusIdle, CWD: "/home/u/code/tmon", Pane: "main:0.2"},
+		{PID: 1000, Label: "Codex", Status: agent.StatusIdle, CWD: "/home/u/code/other", Pane: "main:0.3"},
+	}, map[string]string{"main:0.0": "[y/N]", "main:0.3": "Press any key"})
+
+	oldFind := gitFind
+	gitFind = func(dir string) (*git.Workspace, bool) {
+		switch dir {
+		case "/home/u/code/tmon":
+			return &git.Workspace{Root: "/home/u/code/tmon", Branch: "main"}, true
+		case "/home/u/code/other":
+			return &git.Workspace{Root: "/home/u/code/other", Branch: "feat"}, true
+		}
+		return nil, false
+	}
+	t.Cleanup(func() { gitFind = oldFind })
+	oldPR := gitPR
+	gitPR = func(root, branch string, ttl time.Duration) (git.PR, bool) {
+		if root == "/home/u/code/tmon" && branch == "main" {
+			return git.PR{Number: "42", Title: "Fix"}, true
+		}
+		return git.PR{}, false
+	}
+	t.Cleanup(func() { gitPR = oldPR })
+
+	data, err := loadFull(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(data.Rows) != 3 {
+		t.Fatalf("rows = %+v, want 3", data.Rows)
+	}
+	byPID := make(map[int]Row, len(data.Rows))
+	for _, r := range data.Rows {
+		byPID[r.PID] = r
+	}
+
+	// Detected agent: live blocked check overrides the stored working status.
+	grok := byPID[10]
+	if grok.Status != agent.StatusBlocked || grok.BlockedReason != "[y/N]" {
+		t.Errorf("Grok = %+v, want blocked with reason [y/N]", grok)
+	}
+	// Connector-only agents: git enrichment lands per row, not mixed up.
+	hermes := byPID[999]
+	if hermes.GitRoot != "/home/u/code/tmon" || hermes.Branch != "main" || hermes.PR != "42" {
+		t.Errorf("Hermes git = %q / %q / %q, want /home/u/code/tmon / main / 42", hermes.GitRoot, hermes.Branch, hermes.PR)
+	}
+	if hermes.Status != agent.StatusIdle || hermes.BlockedReason != "" {
+		t.Errorf("Hermes = %+v, want idle and not blocked (main:0.2 has no pattern)", hermes)
+	}
+	codex := byPID[1000]
+	if codex.Status != agent.StatusBlocked || codex.BlockedReason != "Press any key" {
+		t.Errorf("Codex = %+v, want blocked with reason 'Press any key'", codex)
+	}
+	if codex.GitRoot != "/home/u/code/other" || codex.Branch != "feat" || codex.PR != "" {
+		t.Errorf("Codex git = %q / %q / %q, want /home/u/code/other / feat / no PR", codex.GitRoot, codex.Branch, codex.PR)
+	}
+}

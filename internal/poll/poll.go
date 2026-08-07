@@ -14,6 +14,7 @@ import (
 	"github.com/guillaumemeyer/tmon/internal/detect"
 	"github.com/guillaumemeyer/tmon/internal/hide"
 	"github.com/guillaumemeyer/tmon/internal/pane"
+	"github.com/guillaumemeyer/tmon/internal/parallel"
 	"github.com/guillaumemeyer/tmon/internal/proc"
 	"github.com/guillaumemeyer/tmon/internal/theme"
 	"github.com/guillaumemeyer/tmon/internal/tmux"
@@ -72,9 +73,31 @@ func run(cfg config.Config, records []connector.Record) (Result, error) {
 	baseByPID := make(map[int]detect.Agent, len(agents))
 	statuses := make([]agent.Status, 0, len(agents)+len(records))
 
-	for _, a := range agents {
+	// Per-agent I/O (pane resolve, CPU/IO ticks, pane blocked check) is
+	// independent and runs in parallel; the tracker evaluation below stays
+	// sequential because the tracker is not goroutine-safe. Each worker
+	// writes its own slot, so no locking is needed.
+	type agentIO struct {
+		paneTarget string
+		cpu, io    int64
+		blocked    bool
+	}
+	ioSlots := make([]agentIO, len(agents))
+	parallel.ForEach(len(agents), parallel.DefaultWorkers, func(i int) {
+		a := agents[i]
+		s := &ioSlots[i]
+		s.paneTarget = resolvePane(paneMap, a.PID)
+		if _, ok := connByPID[a.PID]; ok {
+			return // authoritative path: no heuristics needed
+		}
+		s.cpu, _ = readCPU(a.PID)
+		s.io, _ = readIO(a.PID)
+		s.blocked = paneBlocked(s.paneTarget)
+	})
+
+	for i, a := range agents {
 		baseByPID[a.PID] = a
-		paneTarget := resolvePane(paneMap, a.PID)
+		s := ioSlots[i]
 
 		var st agent.Status
 		if rec, ok := connByPID[a.PID]; ok {
@@ -84,30 +107,43 @@ func run(cfg config.Config, records []connector.Record) (Result, error) {
 			if rec.CWD != "" {
 				cwd = rec.CWD
 			}
-			st = tracker.EvaluateAuthoritative(a.PID, a.Label, cwd, paneTarget, rec.Status, rec.Detail, rec.Title)
+			st = tracker.EvaluateAuthoritative(a.PID, a.Label, cwd, s.paneTarget, rec.Status, rec.Detail, rec.Title)
 		} else {
-			cpu, _ := readCPU(a.PID)
-			io, _ := readIO(a.PID)
-			st = tracker.Evaluate(a.PID, a.Label, a.CWD, paneTarget, cpu, io, paneBlocked(paneTarget))
+			st = tracker.Evaluate(a.PID, a.Label, a.CWD, s.paneTarget, s.cpu, s.io, s.blocked)
 		}
 		statuses = append(statuses, st)
 	}
 
 	// Connector records whose PID the /proc signature table missed (e.g.
 	// the Hermes gateway process) become new agents, resolved to a pane
-	// like any other.
+	// like any other. Pane and CWD resolution run in parallel; tracker
+	// evaluation stays sequential.
+	extra := make([]connector.Record, 0, len(records))
 	for _, rec := range records {
 		if _, seen := baseByPID[rec.PID]; seen {
 			continue
 		}
-		paneTarget := resolvePane(paneMap, rec.PID)
-		cwd := rec.CWD
-		if cwd == "" {
+		extra = append(extra, rec)
+	}
+	type extraIO struct {
+		paneTarget string
+		cwd        string
+	}
+	extraSlots := make([]extraIO, len(extra))
+	parallel.ForEach(len(extra), parallel.DefaultWorkers, func(i int) {
+		rec := extra[i]
+		s := &extraSlots[i]
+		s.paneTarget = resolvePane(paneMap, rec.PID)
+		s.cwd = rec.CWD
+		if s.cwd == "" {
 			if c, err := proc.ReadCWD(rec.PID); err == nil {
-				cwd = proc.CWDShort(c)
+				s.cwd = proc.CWDShort(c)
 			}
 		}
-		st := tracker.EvaluateAuthoritative(rec.PID, rec.Label, cwd, paneTarget, rec.Status, rec.Detail, rec.Title)
+	})
+	for i, rec := range extra {
+		s := extraSlots[i]
+		st := tracker.EvaluateAuthoritative(rec.PID, rec.Label, s.cwd, s.paneTarget, rec.Status, rec.Detail, rec.Title)
 		statuses = append(statuses, st)
 	}
 
@@ -271,20 +307,42 @@ func applyBorders(t theme.Theme, position string, hidePatterns []string, prev, s
 		snapByPane[a.Pane] = a.Status
 	}
 
+	// The border sync costs one tmux subprocess per pane. Run the clears
+	// and the writes in parallel so the poll does not pay N serial spawns.
+	// Each worker performs an independent tmux call; snapByPane is only
+	// read here. The clears complete before the writes (ForEach is
+	// synchronous), matching the previous sequential order.
+	clears := make([]string, 0, len(prevByPane))
 	for pane := range prevByPane {
 		if _, ok := snapByPane[pane]; !ok {
-			clearPaneBorder(pane)
+			clears = append(clears, pane)
 		}
 	}
+	parallel.ForEach(len(clears), parallel.DefaultWorkers, func(i int) {
+		clearPaneBorder(clears[i])
+	})
 
+	type borderOp struct {
+		pane  string
+		value string // "" = clear the strip
+	}
+	ops := make([]borderOp, 0, len(snapByPane))
 	for pane, st := range snapByPane {
 		switch st {
 		case agent.StatusBlocked, agent.StatusWorking:
-			setPaneBorder(pane, borderLine(t, st))
+			ops = append(ops, borderOp{pane, borderLine(t, st)})
 		default:
-			clearPaneBorder(pane)
+			ops = append(ops, borderOp{pane, ""})
 		}
 	}
+	parallel.ForEach(len(ops), parallel.DefaultWorkers, func(i int) {
+		op := ops[i]
+		if op.value == "" {
+			clearPaneBorder(op.pane)
+		} else {
+			setPaneBorder(op.pane, op.value)
+		}
+	})
 }
 
 // borderLine is the pane-border-format fragment for a status. Idle is not

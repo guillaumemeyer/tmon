@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -113,6 +114,43 @@ func TestPreviewRecapturesOnReload(t *testing.T) {
 	_ = applyMsg(t, m, tickMsg{})
 	if len(captures) != n+1 {
 		t.Fatalf("captures after reload = %d, want %d (selected pane re-captured)", len(captures), n+1)
+	}
+}
+
+func TestRefreshPaneCacheCapturesAllPanesOnce(t *testing.T) {
+	// Parallel capture must hit every live pane exactly once and prune
+	// stale targets. The fake is shared across workers, so it records
+	// under a mutex. Run under -race.
+	var mu sync.Mutex
+	captured := make(map[string]int)
+	old := capturePane
+	capturePane = func(p string) string {
+		mu.Lock()
+		captured[p]++
+		mu.Unlock()
+		return "content of " + p
+	}
+	t.Cleanup(func() { capturePane = old })
+
+	f := &fakeLoader{data: Data{Rows: testRows()}}
+	m := New(f.load, true)
+	m.rows = testRows()
+	m.paneCache = map[string]string{"old:9.9": "stale"}
+	m.refreshPaneCache()
+
+	if len(captured) != 3 {
+		t.Fatalf("captured = %v, want 3 distinct panes", captured)
+	}
+	for p, n := range captured {
+		if n != 1 {
+			t.Errorf("pane %q captured %d times, want 1", p, n)
+		}
+		if m.paneCache[p] != "content of "+p {
+			t.Errorf("paneCache[%q] = %q, want captured content", p, m.paneCache[p])
+		}
+	}
+	if _, ok := m.paneCache["old:9.9"]; ok {
+		t.Error("stale pane target was not pruned")
 	}
 }
 

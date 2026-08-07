@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/guillaumemeyer/tmon/internal/config"
+	"github.com/guillaumemeyer/tmon/internal/parallel"
 )
 
 // QuotaTTL is how often the quota probes may hit the network. The usage
@@ -34,15 +35,27 @@ var probes = []Probe{
 
 // runQuotaProbes probes every source and returns the quota map. A failing
 // probe yields a Quota with StatusText so the failure is visible in the
-// dashboard instead of silently absent.
+// dashboard instead of silently absent. Probes are network calls and run
+// in parallel, so the worker cycle waits for the slowest source rather
+// than the sum of all of them. Each worker writes its own slot; the map
+// build below is single-threaded.
 func runQuotaProbes(cfg config.Config) map[string]Quota {
-	out := make(map[string]Quota, len(probes))
-	for _, p := range probes {
+	type probeResult struct {
+		key string
+		q   Quota
+	}
+	results := make([]probeResult, len(probes))
+	parallel.ForEach(len(probes), parallel.DefaultWorkers, func(i int) {
+		p := probes[i]
 		q, err := p.Run(cfg)
 		if err != nil {
 			q.StatusText = err.Error()
 		}
-		out[p.Key] = q
+		results[i] = probeResult{key: p.Key, q: q}
+	})
+	out := make(map[string]Quota, len(results))
+	for _, r := range results {
+		out[r.key] = r.q
 	}
 	return out
 }

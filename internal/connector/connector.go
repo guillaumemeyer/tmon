@@ -21,6 +21,7 @@ import (
 
 	"github.com/guillaumemeyer/tmon/internal/agent"
 	"github.com/guillaumemeyer/tmon/internal/config"
+	"github.com/guillaumemeyer/tmon/internal/parallel"
 )
 
 // Record is one authoritative observation of an agent's state.
@@ -77,13 +78,26 @@ func Collect(cfg config.Config, now time.Time) []Record {
 func collect(cfg config.Config, now time.Time, conns []Connector) []Record {
 	enabled := selectConnectors(cfg, conns)
 
+	// Probe the enabled connectors in parallel: each probe reads the
+	// agent's state files (openclaw spawns a subprocess), so a slow
+	// connector no longer stalls the others. Each worker writes its own
+	// slot; the dedup merge below is single-threaded.
+	type probeResult struct {
+		recs []Record
+		err  error
+	}
+	results := make([]probeResult, len(enabled))
+	parallel.ForEach(len(enabled), parallel.DefaultWorkers, func(i int) {
+		recs, err := enabled[i].Probe(cfg)
+		results[i] = probeResult{recs: recs, err: err}
+	})
+
 	byPID := make(map[int]Record)
-	for _, c := range enabled {
-		recs, err := c.Probe(cfg)
-		if err != nil {
+	for _, res := range results {
+		if res.err != nil {
 			continue // a failing connector never fails the poll
 		}
-		for _, r := range recs {
+		for _, r := range res.recs {
 			if !procAlive(r.PID) {
 				continue // process exited: drop the record
 			}

@@ -2,6 +2,7 @@ package poll
 
 import (
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -121,6 +122,50 @@ func TestNoStateFirstPollIsIdle(t *testing.T) {
 	}
 	if res.Agents[0].Status != agent.StatusIdle {
 		t.Errorf("cold start = %q, want idle", res.Agents[0].Status)
+	}
+}
+
+func TestPollParallelIOManyAgents(t *testing.T) {
+	// Several agents exercise the parallel I/O precompute (pane, CPU, IO,
+	// blocked) and the sequential tracker pass. The connector-only record
+	// exercises the parallel pane/CWD precompute. Run under -race.
+	stubDetect(t, []detect.Agent{
+		{PID: 41, Label: "Grok", CWD: "code/tmon"},
+		{PID: 42, Label: "Claude", CWD: "code/tmon"},
+		{PID: 43, Label: "Codex", CWD: "code/tmon"},
+	})
+	oldB := paneBlocked
+	paneBlocked = func(string) bool { return true }
+	t.Cleanup(func() { paneBlocked = oldB })
+
+	cfg := testConfig(t)
+	records := []connector.Record{
+		{PID: 41, Label: "Grok", Status: agent.StatusWorking, Detail: "tool:Bash", At: time.Now()},
+		{PID: 7777, Label: "Hermes", Status: agent.StatusIdle, Detail: "model:m", At: time.Now()},
+	}
+	res, err := run(cfg, records)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Agents) != 4 {
+		t.Fatalf("agents = %+v, want 4 (3 detected + 1 connector-only)", res.Agents)
+	}
+	byPID := make(map[int]agent.AgentState, len(res.Agents))
+	for _, a := range res.Agents {
+		byPID[a.PID] = a
+	}
+	if got := byPID[41]; got.Status != agent.StatusWorking || got.Detail != "tool:Bash" {
+		t.Errorf("PID 41 = %+v, want working tool:Bash (authoritative wins)", got)
+	}
+	// The two heuristic agents see the blocked pane.
+	if got := byPID[42]; got.Status != agent.StatusBlocked {
+		t.Errorf("PID 42 status = %q, want blocked (pane fallback)", got.Status)
+	}
+	if got := byPID[43]; got.Status != agent.StatusBlocked {
+		t.Errorf("PID 43 status = %q, want blocked (pane fallback)", got.Status)
+	}
+	if got := byPID[7777]; got.Status != agent.StatusIdle || got.Detail != "model:m" {
+		t.Errorf("PID 7777 = %+v, want idle model:m (connector-only)", got)
 	}
 }
 
@@ -420,7 +465,10 @@ func TestStateFilePersistedWithConnectorDetail(t *testing.T) {
 // ─── Pane border strip ────────────────────────────────────────────────────
 
 // borderCalls records set/clear/chrome operations for applyBorders tests.
+// The recorder is mutex-protected: applyBorders runs the per-pane tmux
+// calls in parallel.
 type borderRecorder struct {
+	mu     sync.Mutex
 	sets   []string // "pane|value"
 	clears []string
 	chrome []string // positions
@@ -430,9 +478,21 @@ func borderCalls(t *testing.T) *borderRecorder {
 	t.Helper()
 	r := &borderRecorder{}
 	oldSet, oldClear, oldChrome := setPaneBorder, clearPaneBorder, ensureBorderChrome
-	setPaneBorder = func(pane, value string) { r.sets = append(r.sets, pane+"|"+value) }
-	clearPaneBorder = func(pane string) { r.clears = append(r.clears, pane) }
-	ensureBorderChrome = func(position string) { r.chrome = append(r.chrome, position) }
+	setPaneBorder = func(pane, value string) {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		r.sets = append(r.sets, pane+"|"+value)
+	}
+	clearPaneBorder = func(pane string) {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		r.clears = append(r.clears, pane)
+	}
+	ensureBorderChrome = func(position string) {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		r.chrome = append(r.chrome, position)
+	}
 	t.Cleanup(func() {
 		setPaneBorder, clearPaneBorder, ensureBorderChrome = oldSet, oldClear, oldChrome
 	})
