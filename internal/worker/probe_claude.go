@@ -138,23 +138,23 @@ func claudeRefreshOAuthToken(refreshToken string, scopes []string) (access, refr
 	client := &http.Client{Timeout: claudeProbeTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", "", 0, fmt.Errorf("Claude token refresh unreachable: %w", err)
+		return "", "", 0, fmt.Errorf("claude token refresh unreachable: %w", err)
 	}
 	defer resp.Body.Close()
 	switch {
 	case resp.StatusCode == http.StatusTooManyRequests:
-		return "", "", 0, fmt.Errorf("Claude token refresh rate limited")
+		return "", "", 0, fmt.Errorf("claude token refresh rate limited")
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusBadRequest:
-		return "", "", 0, fmt.Errorf("Claude OAuth refresh token invalid or expired")
+		return "", "", 0, fmt.Errorf("claude oauth refresh token invalid or expired")
 	case resp.StatusCode != http.StatusOK:
-		return "", "", 0, fmt.Errorf("Claude token refresh HTTP %d", resp.StatusCode)
+		return "", "", 0, fmt.Errorf("claude token refresh HTTP %d", resp.StatusCode)
 	}
 	var tr claudeTokenResp
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&tr); err != nil {
 		return "", "", 0, fmt.Errorf("unexpected Claude token refresh response: %w", err)
 	}
 	if strings.TrimSpace(tr.AccessToken) == "" {
-		return "", "", 0, fmt.Errorf("Claude token refresh returned no access token")
+		return "", "", 0, fmt.Errorf("claude token refresh returned no access token")
 	}
 	expiresAt = time.Now().UnixMilli()
 	if tr.ExpiresIn > 0 {

@@ -276,7 +276,7 @@ func hermesOpenAIBalance(body []byte) (float64, string, error) {
 		return 0, "", fmt.Errorf("unexpected Hermes provider balance response: %w", err)
 	}
 	if !resp.IsAvailable {
-		return 0, "", fmt.Errorf("Hermes provider account unavailable")
+		return 0, "", fmt.Errorf("hermes provider account unavailable")
 	}
 	if len(resp.BalanceInfos) == 0 {
 		return 0, "", fmt.Errorf("no balance info in Hermes provider response")
