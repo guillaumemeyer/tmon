@@ -15,6 +15,7 @@ func TestAgentIdentityColor(t *testing.T) {
 		"Windsurf":  "#38BDF8",
 		"Aider":     "#A3E635",
 		"OpenClaw":  "#FB7185",
+		"Prime":     "#8B5CF6",
 	}
 	for label, color := range want {
 		if got := agentIdentityColor(label); got != color {

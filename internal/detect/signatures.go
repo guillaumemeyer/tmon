@@ -51,6 +51,7 @@ var Signatures = []Signature{
 	{"OpenClaw", re(`^openclaw( |$)`)},
 	{"OpenClaw", re(`openclaw-gateway`)},
 	{"OpenClaw", re(`openclaw (agent|chat|run|gateway)`)},
+	{"Prime", re(`^prime-agent( |$)`)},
 }
 
 func re(p string) *regexp.Regexp { return regexp.MustCompile(p) }

@@ -18,7 +18,7 @@ dashboard — or just **click the status bar indicator**.
 [![CI](https://img.shields.io/github/actions/workflow/status/guillaumemeyer/tmon/ci.yml?style=flat-square&label=CI)](https://github.com/guillaumemeyer/tmon/actions/workflows/ci.yml)
 ![Go](https://img.shields.io/badge/Go-1.26-00ADD8?style=flat-square&logo=go&logoColor=white)
 ![tmux](https://img.shields.io/badge/tmux-%E2%89%A5%203.2-1B93DB?style=flat-square)
-![agents](https://img.shields.io/badge/supports-11%20agents-4FC08D?style=flat-square)
+![agents](https://img.shields.io/badge/supports-12%20agents-4FC08D?style=flat-square)
 
 ## Features
 
@@ -29,12 +29,12 @@ dashboard — or just **click the status bar indicator**.
 - 📊 **Three dashboard views** — flat list, grouped by project, or grouped by status. Press `v` to switch; the choice sticks.
 - 🔍 **Fuzzy search** — Telescope-style matching over names, directories, branches, PR numbers, and even pane content.
 - 📊 **Context gauges** — a live progress bar shows each agent's context window filling up, with a ⚠️ before it goes supernova.
-- ⏳ **Quota monitoring** — a background worker probes your Claude, Grok, and Codex account quota (plan tier, % used, next reset) once per 15 minutes and shows it in the dashboard's stats line. Auto-spawns from the first status poll; no setup.
+- ⏳ **Quota monitoring** — a background worker probes your Claude, Grok, Codex, and Hermes account quota (plan tier, % used, next reset; Hermes reports its configured provider's balance) once per 15 minutes and shows it in the dashboard's stats line. Auto-spawns from the first status poll; no setup.
 - 🎨 **Live themes** — preview Catppuccin, Nord, Dracula and friends right in the popup, apply with `Enter`.
 - 🕵️ **Hide the noise** — glob patterns drop agents you don't care about from the status bar and dashboard. The agent keeps running; you just stop seeing it.
 - 🩺 **`tmon doctor`** — one command that checks everything and explains itself in plain text (or JSON, for the CI crowd). Inside the dashboard, press `d` for the same report as a popin — scrollable, with `r` to re-run.
 - 📐 **Fit-to-width preview** — press `f` inside the dashboard to wrap long captured lines to the preview width instead of cutting them at the edge. The choice persists.
-- 🤖 **11 agents and counting** — Grok Build, Claude Code, Codex CLI, Cursor, Cline, Aider, Copilot, CodeBuddy, Windsurf, Hermes Agent, OpenClaw.
+- 🤖 **12 agents and counting** — Grok Build, Claude Code, Codex CLI, Cursor, Cline, Aider, Copilot, CodeBuddy, Windsurf, Hermes Agent, OpenClaw, Prime Agent.
 
 
 ## Install
@@ -67,14 +67,15 @@ tmon is a fleet manager, not a petting zoo.
 
 ## Supported agents
 
-tmon watches the whole zoo out of the box — **11 agents**:
+tmon watches the whole zoo out of the box — **12 agents**:
 
-🤖 Grok Build · ✳️ Claude Code · 🧩 Codex CLI · 🖱️ Cursor · 🧶 Cline · 🦆 Aider · ✨ GitHub Copilot · 🐾 CodeBuddy · 🌊 Windsurf · 👟 Hermes Agent · 🦀 OpenClaw
+🤖 Grok Build · ✳️ Claude Code · 🧩 Codex CLI · 🖱️ Cursor · 🧶 Cline · 🦆 Aider · ✨ GitHub Copilot · 🐾 CodeBuddy · 🌊 Windsurf · 👟 Hermes Agent · 🦀 OpenClaw · 🛰️ Prime Agent
 
 How closely tmon can track each one depends on the agent's own state
 surface. Agents that publish live state files (Grok, Hermes, Codex CLI,
-Cline, CodeBuddy, Aider, OpenClaw) or accept lifecycle hooks (Claude Code,
-Cursor, Copilot, Windsurf, Grok, Hermes approvals) give tmon authoritative
+Cline, CodeBuddy, Aider, OpenClaw, Prime Agent) or accept lifecycle hooks
+(Claude Code, Cursor, Copilot, Windsurf, Grok, Hermes approvals, Prime
+Agent's extension) give tmon authoritative
 working / blocked / idle signals; everyone else falls back to the CPU/IO and
 pane-content heuristics. The matrix below shows which features each agent's
 connector provides:
@@ -84,7 +85,7 @@ connector provides:
 | Grok Build | native (`~/.grok`) + hooks | exact | ✓ | phase · tool · permission · model | ✓ | ✓ + window % |
 | Claude Code | hooks | exact | ✓ | tool · permission | ✓ | ✓ + window % + quota |
 | Codex CLI | native (`~/.codex` rollouts) | exact | ✓ (hooks) | phase · tool · permission | — | ✓ + window % + quota |
-| Hermes Agent | native (`~/.hermes` + profiles) | CLI/TUI | ✓ (hooks) | model · approval | ✓ | ✓ + window % |
+| Hermes Agent | native (`~/.hermes` + profiles) | CLI/TUI | ✓ (hooks) | model · approval | ✓ | ✓ + window % + quota |
 | GitHub Copilot | hooks, else native fallback | exact | ✓ | tool · permission | — | — |
 | Cursor | hooks, else native fallback | exact | — | tool | — | — |
 | Windsurf | hooks | exact | — | tool | — | — |
@@ -92,6 +93,7 @@ connector provides:
 | CodeBuddy | native (`~/.codebuddy`) | idle | — | session id | — | — |
 | Aider | native (`.aider.chat.history.md`) | working | — | editing | — | — |
 | OpenClaw | native (`~/.openclaw` + gateway lock) | gateway | — | gateway · N active sessions | — | — |
+| Prime Agent | native (daemon list + session JSONL) + hooks (extension) | exact | ✓ (needs:input) | needs:input · tool · model | ✓ | ✓ + window % |
 
 **Status** is how precisely tmon knows the working / blocked / idle state:
 `exact` from the agent's own signals, a partial signal (`working`, `idle`,
@@ -102,7 +104,9 @@ the dashboard shows under the agent's name, **Title** the session name
 ("Title (Agent)"), and **Tokens** the stats line (tokens + context-window %
 when known). **Quota** is the account-level rate-limit windows — % used,
 next reset, plan tier — probed in the background by the usage worker for
-Claude, Grok, and Codex and shown in the dashboard popup at the top of the preview
+Claude, Grok, and Codex, plus the configured provider's balance for Hermes
+(it is bring-your-own-key, so there is no central account to bill), and
+shown in the dashboard popup at the top of the preview
 pane: a `📊 Usage:` header with one progress-bar row per window (`████ 38% ·
 Current session (reset at 19:39 PDT)`), a divider, then a `💬 Session:`
 line with the token counts and the context-window bar on its own line
@@ -114,13 +118,32 @@ The dashboard name is `Title (Hermes - <profile>)` when a profile is known
 (default home or `~/.hermes/profiles/<name>`). Session title, model, and
 token stats come from each home's `state.db`. Dangerous-command waits become
 **blocked** when approval hooks are installed (`tmon hooks install hermes`);
-Hermes may prompt once to allowlist the shell hook.
+Hermes may prompt once to allowlist the shell hook. Its usage line shows the
+configured provider's balance (from `model.provider` / `model.base_url` in
+`~/.hermes/config.yaml` and the key in `~/.hermes/.env`) as a `📊 Usage:` row
+like `DeepSeek balance $66.09`, so the account level is visible without a
+central Hermes account.
+
+**Prime Agent** reads its daemon's own session list (`prime-agent list
+--json`, TTL-gated — the spawn costs ~380 ms) plus each session's JSONL for
+token usage, so working/idle, the model, and the context bar are exact
+without hooks. `taskState: "needs_input"` is prime-agent's native "waiting
+for you" signal and maps to **blocked** (`needs:input`). One session is a
+client + supervisor + catalog + worker set of processes that all share the
+process title `prime-agent`; tmon keeps only the tty-owning client for pane
+teleport and falls back to the worker PID for detached sessions (pane "?"),
+which is prime-agent's headline feature. Installing the extension
+(`tmon hooks install prime`, then `/reload` in prime-agent) adds exact
+mid-turn tool names. Prime Agent has no permission event, so a permission
+wait still reads as working and falls back to the pane-pattern heuristic.
 
 Hooks are **off by default** (`@tmon-auto-hooks off`). Install them with
 `tmon hooks auto` or `tmon hooks install <agent>` when you want authoritative
 status. Codex is read natively from its session rollouts without hooks;
 installing them (and trusting them in-session via `/hooks`) adds tool and
-permission detail on top. Without hooks, the Cursor/Copilot native fallback
+permission detail on top. Prime Agent's hooks are a single hot-reloadable
+extension (`~/.prime/agent/extensions/tmon-status.ts`; apply with `/reload`)
+instead of shell hooks. Without hooks, the Cursor/Copilot native fallback
 only reports the agent as idle; other agents still use CPU/IO heuristics
 across status refreshes.
 

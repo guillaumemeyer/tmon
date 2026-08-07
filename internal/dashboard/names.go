@@ -26,6 +26,8 @@ func agentFullName(label string) string {
 		return "Hermes Agent"
 	case "OpenClaw":
 		return "OpenClaw"
+	case "Prime":
+		return "Prime Agent"
 	default:
 		return label
 	}
@@ -59,6 +61,8 @@ func agentIdentityColor(label string) string {
 		return "#A3E635"
 	case "OpenClaw":
 		return "#FB7185"
+	case "Prime":
+		return "#8B5CF6"
 	default:
 		return ""
 	}

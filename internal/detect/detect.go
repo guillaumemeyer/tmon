@@ -66,6 +66,16 @@ func All() ([]Agent, error) {
 		if label == "Hermes" && isHermesGatewayCmd(cmdline) {
 			return
 		}
+		// Prime-agent runs a daemon topology: TUI client (controlling tty),
+		// supervisor, catalog and resident worker processes (no tty). All of
+		// them set process.title, so their /proc cmdline reads just
+		// "prime-agent"; the controlling tty is the only discriminator.
+		// Keep only the client session; the headless processes are not
+		// user-facing sessions, and the connector pairs sessions to the
+		// client by cwd. Skip them so they never appear as agent rows.
+		if label == "Prime" && proc.TTYForPID(pid) == "" {
+			return
+		}
 		if len(cmdline) > CmdlineSnippetLimit {
 			cmdline = cmdline[:CmdlineSnippetLimit]
 		}

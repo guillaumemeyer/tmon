@@ -13,9 +13,9 @@ func TestMatchLabel(t *testing.T) {
 		"/home/me/.grok-build/bin/grok build": "Grok",
 		"grok-agent --task refactor":          "Grok",
 		// Claude
-		"claude":          "Claude",
-		"claude code":     "Claude",
-		"claude --resume": "Claude",
+		"claude":                     "Claude",
+		"claude code":                "Claude",
+		"claude --resume":            "Claude",
 		"/home/me/.local/bin/claude": "Claude", // path-invoked claude binary
 		"node /usr/lib/node_modules/@anthropic-ai/claude-code/cli.js": "Claude",
 		"/opt/claude-code/cli.js":                                     "Claude",
@@ -52,12 +52,16 @@ func TestMatchLabel(t *testing.T) {
 		"hermes agent --task plan":  "Hermes",
 		"/usr/local/bin/hermes run": "Hermes",
 		// OpenClaw
-		"openclaw":              "OpenClaw",
-		"openclaw chat":         "OpenClaw",
-		"openclaw agent":        "OpenClaw",
-		"openclaw gateway":      "OpenClaw",
-		"openclaw-gateway":      "OpenClaw",
+		"openclaw":                  "OpenClaw",
+		"openclaw chat":             "OpenClaw",
+		"openclaw agent":            "OpenClaw",
+		"openclaw gateway":          "OpenClaw",
+		"openclaw-gateway":          "OpenClaw",
 		"/usr/bin/openclaw-gateway": "OpenClaw",
+		// Prime
+		"prime-agent":               "Prime",
+		"prime-agent --interactive": "Prime",
+		"prime-agent --version":     "Prime",
 	}
 
 	for cmdline, want := range positives {
@@ -78,10 +82,12 @@ func TestMatchLabel(t *testing.T) {
 		"codebuddying",              // no space/end after "codebuddy"
 		"windsurfer",                // no space/end after "windsurf"
 		"hermes-agent",              // hyphenated form isn't in the table
+		"prime-agentx",              // no space/end after "prime-agent"
+		"notprime-agent",            // no start anchor before "prime-agent"
 		"claudecode",                // no hyphen, no anchors
 		"codex-cli",                 // bare word: /codex-cli/ needs slashes
 		"/usr/bin/grok run",         // "grok run" isn't a hyphenated form
-		"grep claude", // no start/slash anchor before "claude"
+		"grep claude",               // no start/slash anchor before "claude"
 		"node server.js",            // unrelated node process
 		"tmux",                      // obviously not an agent
 		"CLAUDE",                    // detection is case-sensitive, like bash

@@ -65,6 +65,7 @@ var Registry = []Connector{
 	Windsurf{},
 	OpenClaw{},
 	Aider{},
+	Prime{},
 }
 
 // Collect probes the enabled connectors and returns their fresh, alive

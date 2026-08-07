@@ -138,6 +138,84 @@ func TestHooksUnknownAgent(t *testing.T) {
 	}
 }
 
+// ─── Prime extension hook ───────────────────────────────────────────────────
+
+func TestPrimeExtensionTemplatePlaceholder(t *testing.T) {
+	if got := strings.Count(primeExtensionTemplate, "__TMON_HOOK_STATE_DIR__"); got != 1 {
+		t.Fatalf("template has %d placeholders, want exactly 1", got)
+	}
+}
+
+func TestPrimeHooksInstallRemoveEndToEnd(t *testing.T) {
+	home, plugin := testHooksEnv(t)
+	ext := filepath.Join(home, ".prime", "agent", "extensions", "tmon-status.ts")
+	state := filepath.Join(plugin, "state", "hooks", "prime")
+
+	if code := primeHooksInstall(); code != 0 {
+		t.Fatalf("primeHooksInstall = %d, want 0", code)
+	}
+	if _, err := os.Stat(ext); err != nil {
+		t.Fatalf("extension not written: %v", err)
+	}
+	data, err := os.ReadFile(ext)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "__TMON_HOOK_STATE_DIR__") {
+		t.Error("placeholder not replaced in installed extension")
+	}
+	// The state dir must be rendered as a valid TS string literal
+	// (quotes from the JSON marshal, not doubled template quotes).
+	if !strings.Contains(string(data), "const STATE_DIR = \""+state+"\";") {
+		t.Errorf("state dir not baked in as a string literal; want `const STATE_DIR = %q;`\n%s", state, data)
+	}
+	if !primeHooksInstalled() {
+		t.Error("primeHooksInstalled = false after install")
+	}
+
+	// Idempotent reinstall.
+	if code := primeHooksInstall(); code != 0 {
+		t.Fatalf("reinstall = %d, want 0", code)
+	}
+
+	// Remove deletes the extension and the tmon-owned state dir.
+	if code := primeHooksRemove(); code != 0 {
+		t.Fatalf("primeHooksRemove = %d, want 0", code)
+	}
+	if _, err := os.Stat(ext); !os.IsNotExist(err) {
+		t.Errorf("extension still present after remove: %v", err)
+	}
+	if primeHooksInstalled() {
+		t.Error("primeHooksInstalled = true after remove")
+	}
+	if _, err := os.Stat(state); !os.IsNotExist(err) {
+		t.Errorf("state dir still present after remove: %v", err)
+	}
+
+	// Remove again is a no-op success.
+	if code := primeHooksRemove(); code != 0 {
+		t.Fatalf("second remove = %d, want 0", code)
+	}
+}
+
+func TestPrimeHooksCustomAgentDir(t *testing.T) {
+	home, _ := testHooksEnv(t)
+	_ = home
+	agentDir := filepath.Join(t.TempDir(), "prime-agent-home")
+	t.Setenv("PRIME_AGENT_CODING_AGENT_DIR", agentDir)
+
+	if code := primeHooksInstall(); code != 0 {
+		t.Fatalf("primeHooksInstall = %d, want 0", code)
+	}
+	ext := filepath.Join(agentDir, "extensions", "tmon-status.ts")
+	if _, err := os.Stat(ext); err != nil {
+		t.Errorf("extension not written to PRIME_AGENT_CODING_AGENT_DIR: %v", err)
+	}
+	if code := primeHooksRemove(); code != 0 {
+		t.Fatalf("primeHooksRemove = %d, want 0", code)
+	}
+}
+
 func TestStripJSONCPreservesURLs(t *testing.T) {
 	in := `{
   // copilot settings
@@ -213,6 +291,7 @@ func TestHooksAutoInstallsPresentAgents(t *testing.T) {
 	fakeBinary(t, bin, "claude")
 	fakeBinary(t, bin, "cursor-agent")
 	fakeBinary(t, bin, "grok")
+	fakeBinary(t, bin, "prime-agent")
 	t.Setenv("PATH", bin)
 
 	// copilot has no binary here but its config file exists.
@@ -229,6 +308,9 @@ func TestHooksAutoInstallsPresentAgents(t *testing.T) {
 	}
 	if ok, _ := hooksInstalled(&grokTarget); !ok {
 		t.Error("grok hooks not installed by auto (grok on PATH)")
+	}
+	if !primeHooksInstalled() {
+		t.Error("prime hooks not installed by auto (prime-agent on PATH)")
 	}
 	if ok, _ := hooksInstalled(&copilotTarget); !ok {
 		t.Error("copilot hooks not installed by auto (config file present)")
@@ -254,6 +336,9 @@ func TestHooksAutoNothingFound(t *testing.T) {
 		if ok, _ := hooksInstalled(target); ok {
 			t.Errorf("%s hooks installed despite no agent present", name)
 		}
+	}
+	if primeHooksInstalled() {
+		t.Error("prime hooks installed despite no agent present")
 	}
 }
 

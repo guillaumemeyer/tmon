@@ -20,6 +20,9 @@ var agentHookScript string
 //go:embed hooks/hermes-approval.sh
 var hermesApprovalScript string
 
+//go:embed hooks/tmon-prime.ts
+var primeExtensionTemplate string
+
 // cmdHooks manages opt-in hook installation for HOOKS-tier agents. Hooks
 // give tmon authoritative state for agents that do not expose a readable
 // state file (Claude Code, Codex, Cursor, Copilot, Windsurf, Hermes
@@ -41,6 +44,9 @@ func cmdHooks(args []string) int {
 		if args[1] == "hermes" {
 			return hermesHooksInstall()
 		}
+		if args[1] == "prime" {
+			return primeHooksInstall()
+		}
 		return hooksInstall(args[1])
 	case "auto":
 		return hooksAuto()
@@ -51,6 +57,9 @@ func cmdHooks(args []string) int {
 		}
 		if args[1] == "hermes" {
 			return hermesHooksRemove()
+		}
+		if args[1] == "prime" {
+			return primeHooksRemove()
 		}
 		return hooksRemove(args[1])
 	case "status":
@@ -76,7 +85,7 @@ Usage:
                                @tmon-auto-hooks is on; default is off)
   tmon hooks status            Show which agents have hooks installed
 
-Supported agents: claude codex cursor copilot windsurf grok hermes
+Supported agents: claude codex cursor copilot windsurf grok hermes prime
 `
 
 // hookTarget describes one installable agent's hook wiring.
@@ -494,15 +503,23 @@ func hooksRemoveDir(target *hookTarget) int {
 
 // hooksStatus reports which agents have tmon hooks installed.
 func hooksStatus() int {
-	names := make([]string, 0, len(hookTargets)+1)
+	names := make([]string, 0, len(hookTargets)+2)
 	for n := range hookTargets {
 		names = append(names, n)
 	}
-	names = append(names, "hermes")
+	names = append(names, "hermes", "prime")
 	sort.Strings(names)
 	for _, name := range names {
 		if name == "hermes" {
 			if hermesHooksInstalled() {
+				fmt.Printf("%-8s installed\n", name)
+			} else {
+				fmt.Printf("%-8s not installed\n", name)
+			}
+			continue
+		}
+		if name == "prime" {
+			if primeHooksInstalled() {
 				fmt.Printf("%-8s installed\n", name)
 			} else {
 				fmt.Printf("%-8s not installed\n", name)
@@ -530,11 +547,11 @@ func hooksStatus() int {
 // agents already configured are skipped silently, so a steady-state tmux
 // reload prints nothing.
 func hooksAuto() int {
-	names := make([]string, 0, len(hookTargets)+1)
+	names := make([]string, 0, len(hookTargets)+2)
 	for n := range hookTargets {
 		names = append(names, n)
 	}
-	names = append(names, "hermes")
+	names = append(names, "hermes", "prime")
 	sort.Strings(names)
 
 	var installed, skipped []string
@@ -549,6 +566,21 @@ func hooksAuto() int {
 			}
 			if hermesHooksInstall() != 0 {
 				skipped = append(skipped, name)
+				continue
+			}
+			installed = append(installed, name)
+			continue
+		}
+		if name == "prime" {
+			if primeHooksInstalled() {
+				continue
+			}
+			if !primeAgentPresent() {
+				skipped = append(skipped, name)
+				continue
+			}
+			if primeHooksInstall() != 0 {
+				skipped = append(skipped, name) // primeHooksInstall already printed the error
 				continue
 			}
 			installed = append(installed, name)
@@ -874,6 +906,106 @@ func yamlMapDelete(m *yaml.Node, key string) {
 		out = append(out, m.Content[i], m.Content[i+1])
 	}
 	m.Content = out
+}
+
+// ─── Prime Agent extension hook (hot-reloadable .ts) ────────────────────────
+
+// primeAgentHome returns the Prime Agent config directory (PRIME_AGENT_
+// CODING_AGENT_DIR overrides the default ~/.prime/agent).
+func primeAgentHome() string {
+	if d := os.Getenv("PRIME_AGENT_CODING_AGENT_DIR"); d != "" {
+		return d
+	}
+	h, err := userHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(h, ".prime", "agent")
+}
+
+// primeExtensionPath is the single auto-discovered extension file tmon
+// owns. Prime Agent loads every *.ts in the extensions dir and hot-reloads
+// with /reload, so no config merge or backup is needed — install and
+// remove are plain write/delete of this one file.
+func primeExtensionPath() string {
+	return filepath.Join(primeAgentHome(), "extensions", "tmon-status.ts")
+}
+
+func primeHooksInstalled() bool {
+	_, err := os.Stat(primeExtensionPath())
+	return err == nil
+}
+
+func primeAgentPresent() bool {
+	if p, err := exec.LookPath("prime-agent"); err == nil && p != "" {
+		return true
+	}
+	if home := primeAgentHome(); home != "" {
+		if fi, err := os.Stat(home); err == nil && fi.IsDir() {
+			return true
+		}
+	}
+	return false
+}
+
+func primeHooksInstall() int {
+	cfg := config.FromEnv()
+	extPath := primeExtensionPath()
+	stateDir := filepath.Join(cfg.HookStateDir, "prime")
+
+	if err := os.MkdirAll(filepath.Dir(extPath), 0o755); err != nil {
+		fmt.Fprintln(os.Stderr, "tmon: hooks install prime:", err)
+		return 1
+	}
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		fmt.Fprintln(os.Stderr, "tmon: hooks install prime:", err)
+		return 1
+	}
+	// JSON-marshal the state dir so the TS string literal is escaped
+	// correctly for any path (spaces, quotes, backslashes).
+	literal, err := json.Marshal(stateDir)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "tmon: hooks install prime:", err)
+		return 1
+	}
+	content := strings.ReplaceAll(primeExtensionTemplate, "__TMON_HOOK_STATE_DIR__", string(literal))
+	if err := os.WriteFile(extPath, []byte(content), 0o644); err != nil {
+		fmt.Fprintln(os.Stderr, "tmon: hooks install prime:", err)
+		return 1
+	}
+	fmt.Printf("tmon: installed prime hooks\n  extension: %s\n  state:     %s\n", extPath, stateDir)
+	fmt.Println("Reload prime-agent with /reload (or start a new session) for the extension to load.")
+	return 0
+}
+
+func primeHooksRemove() int {
+	cfg := config.FromEnv()
+	removed := false
+
+	extPath := primeExtensionPath()
+	if _, err := os.Stat(extPath); err == nil {
+		if err := os.Remove(extPath); err != nil {
+			fmt.Fprintln(os.Stderr, "tmon: hooks remove prime:", err)
+			return 1
+		}
+		removed = true
+	}
+	// Drop the tmon-owned hook state (stale files are useless without the
+	// extension). The path is tmon's own under HookStateDir.
+	stateDir := filepath.Join(cfg.HookStateDir, "prime")
+	if fi, err := os.Stat(stateDir); err == nil && fi.IsDir() {
+		if err := os.RemoveAll(stateDir); err != nil {
+			fmt.Fprintln(os.Stderr, "tmon: hooks remove prime:", err)
+			return 1
+		}
+		removed = true
+	}
+	if removed {
+		fmt.Printf("tmon: removed prime hooks from %s\n", extPath)
+	} else {
+		fmt.Println("tmon: no prime hooks were installed")
+	}
+	return 0
 }
 
 // agentPresent reports whether the agent is installed on this machine: any of
