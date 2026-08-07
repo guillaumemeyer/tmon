@@ -81,7 +81,7 @@ type Model struct {
 	// Empty disables load/save (tests and ad-hoc construction).
 	settingsPath string
 
-	// viewMode is the agent list layout (list / projects / status). Persisted
+	// viewMode is the agent list layout (list / projects / status / agents). Persisted
 	// with the other UI prefs. listScroll is the first visible content line
 	// of the list column (custom scroll so section headers can be 1 line).
 	viewMode   ViewMode

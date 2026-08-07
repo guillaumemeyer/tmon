@@ -17,7 +17,7 @@ const (
 // dashSettings is the on-disk dashboard UI preferences.
 type dashSettings struct {
 	PreviewPct  int    `json:"preview_pct"`
-	View        string `json:"view,omitempty"` // list | projects | status
+	View        string `json:"view,omitempty"` // list | projects | status | agents
 	PreviewWrap bool   `json:"preview_wrap,omitempty"`
 }
 

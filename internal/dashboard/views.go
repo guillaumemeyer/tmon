@@ -14,10 +14,11 @@ const (
 	viewList ViewMode = iota
 	viewProjects
 	viewStatus
+	viewAgents
 )
 
 // viewCycle is the order of views when the user presses v.
-var viewCycle = []ViewMode{viewList, viewProjects, viewStatus}
+var viewCycle = []ViewMode{viewList, viewProjects, viewStatus, viewAgents}
 
 // String is the persisted settings key for a view (stable across renames).
 func (v ViewMode) String() string {
@@ -26,6 +27,8 @@ func (v ViewMode) String() string {
 		return "projects"
 	case viewStatus:
 		return "status"
+	case viewAgents:
+		return "agents"
 	default:
 		return "list"
 	}
@@ -38,6 +41,8 @@ func (v ViewMode) Label() string {
 		return "By project"
 	case viewStatus:
 		return "By status"
+	case viewAgents:
+		return "By agent"
 	default:
 		return "List"
 	}
@@ -50,6 +55,8 @@ func parseViewMode(s string) ViewMode {
 		return viewProjects
 	case "status":
 		return viewStatus
+	case "agents":
+		return viewAgents
 	default:
 		return viewList
 	}
@@ -102,8 +109,9 @@ func (e listEntry) isAgent() bool {
 
 // buildListEntries lays out the filtered agents for the current view mode.
 // List is flat. Projects groups by CWD (headers sorted alphabetically).
-// Status groups by blocked, working, idle (fixed order). Empty groups are
-// omitted. Inside a group, agents keep the order of m.filtered.
+// Status groups by blocked, working, idle (fixed order). Agents groups by
+// agent type (headers sorted alphabetically). Empty groups are omitted.
+// Inside a group, agents keep the order of m.filtered.
 //
 // Callers that need j/k to follow the screen must first put m.filtered in
 // visual order via orderFilteredForView (see rebuildItems).
@@ -112,8 +120,8 @@ func (m Model) buildListEntries() []listEntry {
 }
 
 // orderFilteredForView reorders row indices into the visual agent order for
-// the current view (list order unchanged; projects/status follow section
-// layout). Selection keys then match what the user sees.
+// the current view (list order unchanged; projects/status/agents follow
+// section layout). Selection keys then match what the user sees.
 func (m Model) orderFilteredForView(filtered []int) []int {
 	if len(filtered) == 0 {
 		return filtered
@@ -143,6 +151,8 @@ func (m Model) entriesFor(filtered []int) []listEntry {
 		return projectEntries(m.rows, filtered)
 	case viewStatus:
 		return statusEntries(m.rows, filtered)
+	case viewAgents:
+		return agentEntries(m.rows, filtered)
 	default:
 		out := make([]listEntry, n)
 		for i := range filtered {
@@ -242,6 +252,54 @@ func statusEntries(rows []Row, filtered []int) []listEntry {
 		appendStatusGroup(string(st), buckets[st])
 	}
 	appendStatusGroup("other", other)
+	return out
+}
+
+// agentEntries groups agents by their detected type (the signature label,
+// e.g. "Grok", "Claude", "Hermes"). Section headers show the display name
+// ("Grok Build", "Hermes Agent", ...) and sort alphabetically. Unknown or
+// empty labels land in a "?" section. Agents inside a group keep filtered
+// order.
+func agentEntries(rows []Row, filtered []int) []listEntry {
+	type group struct {
+		key   string
+		label string
+		idxs  []int
+	}
+	byKey := make(map[string]*group)
+	var order []string
+	for i, fi := range filtered {
+		r := rows[fi]
+		key := r.Label
+		label := agentFullName(r.Label)
+		if key == "" {
+			key = "?"
+		}
+		if label == "" {
+			label = "?"
+		}
+		g, ok := byKey[key]
+		if !ok {
+			g = &group{key: key, label: label}
+			byKey[key] = g
+			order = append(order, key)
+		}
+		g.idxs = append(g.idxs, i)
+	}
+	sort.SliceStable(order, func(i, j int) bool {
+		return byKey[order[i]].label < byKey[order[j]].label
+	})
+	out := make([]listEntry, 0, len(filtered)+2*len(order))
+	for i, key := range order {
+		if i > 0 {
+			out = append(out, listEntry{blank: true})
+		}
+		g := byKey[key]
+		out = append(out, listEntry{section: g.label})
+		for _, ai := range g.idxs {
+			out = append(out, listEntry{agent: ai})
+		}
+	}
 	return out
 }
 

@@ -28,8 +28,12 @@ func TestViewKeyCyclesModes(t *testing.T) {
 		t.Fatalf("after vv = %v, want status", m.viewMode)
 	}
 	m = applyMsg(t, m, key('v'))
+	if m.viewMode != viewAgents {
+		t.Fatalf("after vvv = %v, want agents", m.viewMode)
+	}
+	m = applyMsg(t, m, key('v'))
 	if m.viewMode != viewList {
-		t.Fatalf("after vvv = %v, want list", m.viewMode)
+		t.Fatalf("after vvvv = %v, want list", m.viewMode)
 	}
 }
 
@@ -305,6 +309,130 @@ func TestStatusEntriesOrder(t *testing.T) {
 	}
 }
 
+func TestAgentEntriesGroupByLabel(t *testing.T) {
+	rows := []Row{
+		{PID: 1, Label: "Grok", Status: agent.StatusWorking, CWD: "a"},
+		{PID: 2, Label: "Hermes", Status: agent.StatusIdle, CWD: "b"},
+		{PID: 3, Label: "Grok", Status: agent.StatusBlocked, CWD: "c"},
+		{PID: 4, Label: "Claude", Status: agent.StatusIdle, CWD: "d"},
+	}
+	f := &fakeLoader{data: Data{Rows: rows}}
+	m := New(f.load, true)
+	m = applyMsg(t, m, initMsg{})
+	m.viewMode = viewAgents
+
+	entries := m.buildListEntries()
+	var sections []string
+	var labels []string
+	for _, e := range entries {
+		if e.blank {
+			continue
+		}
+		if e.section != "" {
+			sections = append(sections, e.section)
+			continue
+		}
+		labels = append(labels, m.rows[m.filtered[e.agent]].Label)
+	}
+	// Sections sort alphabetically by display name: Claude Code, Grok Build,
+	// Hermes Agent.
+	wantSec := []string{"Claude Code", "Grok Build", "Hermes Agent"}
+	if strings.Join(sections, ",") != strings.Join(wantSec, ",") {
+		t.Fatalf("sections = %v, want %v", sections, wantSec)
+	}
+	// Both Grok agents stay together, in list order.
+	if strings.Join(labels, ",") != "Claude,Grok,Grok,Hermes" {
+		t.Fatalf("labels = %v, want Claude,Grok,Grok,Hermes", labels)
+	}
+}
+
+func TestAgentEntriesUnknownLabel(t *testing.T) {
+	rows := []Row{
+		{PID: 1, Label: "", Status: agent.StatusIdle, CWD: "a"},
+		{PID: 2, Label: "Grok", Status: agent.StatusIdle, CWD: "b"},
+	}
+	f := &fakeLoader{data: Data{Rows: rows}}
+	m := New(f.load, true)
+	m = applyMsg(t, m, initMsg{})
+	m.viewMode = viewAgents
+
+	entries := m.buildListEntries()
+	var sections []string
+	for _, e := range entries {
+		if e.section != "" {
+			sections = append(sections, e.section)
+		}
+	}
+	if len(sections) != 2 {
+		t.Fatalf("sections = %v, want 2 (unknown + Grok Build)", sections)
+	}
+	if !strings.Contains(sections[0], "Grok Build") && !strings.Contains(sections[1], "Grok Build") {
+		t.Fatalf("no Grok Build section in %v", sections)
+	}
+	// The unknown label gets a "?" section rather than an empty header.
+	if !strings.Contains(sections[0], "?") && !strings.Contains(sections[1], "?") {
+		t.Fatalf("no unknown-label section in %v", sections)
+	}
+}
+
+func TestAgentEntriesBlankBetweenGroups(t *testing.T) {
+	f := &fakeLoader{data: Data{Rows: testRows()}}
+	m := New(f.load, true)
+	m = applyMsg(t, m, initMsg{})
+	m.viewMode = viewAgents
+
+	entries := m.buildListEntries()
+	sections, blanks := 0, 0
+	for _, e := range entries {
+		if e.blank {
+			blanks++
+		}
+		if e.section != "" {
+			sections++
+		}
+	}
+	// testRows has three distinct agent types (Grok, Claude, Codex).
+	if sections != 3 {
+		t.Fatalf("sections = %d, want 3", sections)
+	}
+	if blanks != sections-1 {
+		t.Fatalf("blanks = %d, want %d (one between each group)", blanks, sections-1)
+	}
+}
+
+func TestAgentViewNavigationOrder(t *testing.T) {
+	f := &fakeLoader{data: Data{Rows: testRows()}}
+	m := New(f.load, true)
+	m = applyMsg(t, m, initMsg{})
+	m = applyMsg(t, m, key('v')) // projects
+	m = applyMsg(t, m, key('v')) // status
+	m = applyMsg(t, m, key('v')) // agents
+
+	// Visual order follows section layout: by display name (Claude Code,
+	// Codex CLI, Grok Build) with agents inside a group keeping list order.
+	want := []string{"Claude", "Codex", "Grok"}
+	items := m.agentList.Items()
+	if len(items) != 3 {
+		t.Fatalf("items = %d, want 3", len(items))
+	}
+	for i, item := range items {
+		ai := item.(agentItem)
+		if ai.row.Label != want[i] {
+			t.Fatalf("item %d = %q, want %q (agent visual order)", i, ai.row.Label, want[i])
+		}
+	}
+
+	// Back to list restores load order (Grok, Claude, Codex).
+	m = applyMsg(t, m, key('v'))
+	wantList := []string{"Grok", "Claude", "Codex"}
+	for i, item := range m.agentList.Items() {
+		ai := item.(agentItem)
+		if ai.row.Label != wantList[i] {
+			t.Fatalf("list item %d = %q, want %q", i, ai.row.Label, wantList[i])
+		}
+	}
+}
+
 func TestProjectEntriesBlankBetweenGroups(t *testing.T) {
 	f := &fakeLoader{data: Data{Rows: testRows()}}
 	m := New(f.load, true)
@@ -363,6 +491,12 @@ func TestFooterShowsViewHint(t *testing.T) {
 	if !strings.Contains(footer, "[v] view (By status)") {
 		t.Fatalf("footer should show [v] view (By status), got %q", footer)
 	}
+
+	m = applyMsg(t, m, key('v'))
+	footer = ansi.Strip(strings.Split(m.View(), "\n")[m.height-2])
+	if !strings.Contains(footer, "[v] view (By agent)") {
+		t.Fatalf("footer should show [v] view (By agent), got %q", footer)
+	}
 }
 
 func TestProjectsViewRendersSectionHeaders(t *testing.T) {
@@ -406,7 +540,8 @@ func TestStatusViewNavigationOrder(t *testing.T) {
 	}
 
 	// Back to list restores load order (Grok, Claude, Codex).
-	m = applyMsg(t, m, key('v'))
+	m = applyMsg(t, m, key('v')) // agents
+	m = applyMsg(t, m, key('v')) // list
 	wantList := []string{"Grok", "Claude", "Codex"}
 	for i, item := range m.agentList.Items() {
 		ai := item.(agentItem)
@@ -421,6 +556,7 @@ func TestParseViewMode(t *testing.T) {
 		"list":     viewList,
 		"projects": viewProjects,
 		"status":   viewStatus,
+		"agents":   viewAgents,
 		"LIST":     viewList,
 		"":         viewList,
 		"nope":     viewList,
