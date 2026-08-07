@@ -1280,19 +1280,22 @@ func TestQuotaDetailFormat(t *testing.T) {
 	m := Model{st: defaultStyles, theme: theme.Default, contextWarn: defaultContextWarn}
 	// A wide row caps the bar at its 30-cell maximum; the fill is
 	// deterministic: round(width * pct / 100). The reset text is built from
-	// a fixed local instant so the date/time decision is stable, with the
-	// zone abbreviation taken from that instant.
-	sameDay := time.Date(2026, 8, 6, 19, 40, 0, 0, time.Local)
-	otherDay := time.Date(2026, 8, 9, 0, 59, 0, 0, time.Local)
+	// instants anchored to the current calendar day, so the same-day and
+	// cross-day decisions stay stable on any date and in any time zone:
+	// sameDay is always today, otherDay is always three days out.
+	now := time.Now()
+	year, month, day := now.Date()
+	sameDay := time.Date(year, month, day, 19, 40, 0, 0, time.Local)
+	otherDay := time.Date(year, month, day, 0, 59, 0, 0, time.Local).AddDate(0, 0, 3)
 	cases := []struct {
 		name string
 		w    agent.QuotaWindow
 		want string
 	}{
 		{"session 0%", agent.QuotaWindow{Pct: 0, Label: "Current session", ResetAt: sameDay.Format(time.RFC3339)},
-			"░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 0% · Current session (reset at 19:40 " + sameDay.Format("MST") + ")"},
+			"░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 0% · Current session (reset at " + sameDay.Format("15:04 MST") + ")"},
 		{"weekly 40%", agent.QuotaWindow{Pct: 40, Label: "Current week (all models)", ResetAt: otherDay.Format(time.RFC3339)},
-			"████████████░░░░░░░░░░░░░░░░░░ 40% · Current week (all models) (reset at Aug 9, 00:59 " + otherDay.Format("MST") + ")"},
+			"████████████░░░░░░░░░░░░░░░░░░ 40% · Current week (all models) (reset at " + otherDay.Format("Jan 2, 15:04 MST") + ")"},
 		{"scoped no reset", agent.QuotaWindow{Pct: 38, Label: "Current week (Fable)"},
 			"███████████░░░░░░░░░░░░░░░░░░░ 38% · Current week (Fable)"},
 		{"over 100 clamps", agent.QuotaWindow{Pct: 120, Label: "Current session"},
