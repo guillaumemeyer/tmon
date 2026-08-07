@@ -162,6 +162,23 @@ func TestPrimeListSessionsFailureGated(t *testing.T) {
 	}
 }
 
+func TestPrimeRows(t *testing.T) {
+	live := fixturePrimeSession("")
+	draft := fixturePrimeSession("")
+	draft.Lifecycle = "draft" // message-less session: prime-agent keeps it resident with a worker
+	archived := fixturePrimeSession("")
+	archived.Lifecycle = "archived"
+	inactive := fixturePrimeSession("")
+	inactive.WorkerPID = 0 // on-disk session with no live worker
+	subagent := fixturePrimeSession("")
+	subagent.RuntimeKind = "rlm"
+
+	rows := primeRows(primeList{Sessions: []primeSession{live, draft, archived, inactive, subagent}})
+	if len(rows) != 2 || rows[0].ID != live.ID || rows[1].ID != draft.ID {
+		t.Fatalf("primeRows kept %d rows (%+v), want live + draft only", len(rows), rows)
+	}
+}
+
 func TestPrimeRecord(t *testing.T) {
 	now := time.Now()
 
@@ -224,6 +241,27 @@ func TestPrimeRecord(t *testing.T) {
 		}
 		if rec.Detail != "turn-complete · model:deepseek/deepseek-v4-pro" {
 			t.Errorf("Detail = %q", rec.Detail)
+		}
+	})
+
+	t.Run("draft session reads as idle", func(t *testing.T) {
+		// A message-less session: prime-agent keeps it resident with a
+		// worker and reports activity "working" only as a no-verdict
+		// placeholder, so tmon shows it idle (and a stale idle signal is
+		// kept + refreshed, unlike a stale "working").
+		s := fixturePrimeSession("")
+		s.Lifecycle = "draft"
+		s.Activity = "working"
+		s.TaskState = ""
+		rec := primeRecord(s, 0, primeHookState{}, now)
+		if rec.Status != agent.StatusIdle {
+			t.Errorf("Status = %q, want idle", rec.Status)
+		}
+		if rec.Detail != "draft · model:deepseek/deepseek-v4-pro" {
+			t.Errorf("Detail = %q", rec.Detail)
+		}
+		if rec.Usage.WindowTokens != 1000000 {
+			t.Errorf("WindowTokens = %d, want 1000000 (window from the daemon list)", rec.Usage.WindowTokens)
 		}
 	})
 

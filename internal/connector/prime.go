@@ -89,14 +89,27 @@ var primeListJSON = func() ([]primeSession, error) {
 	if err := json.Unmarshal(out, &pl); err != nil {
 		return nil, err
 	}
-	var sessions []primeSession
+	return primeRows(pl), nil
+}
+
+// primeRows filters daemon-list rows down to the sessions tmon tracks:
+// top-level sessions with a live worker. prime-agent marks a session
+// "draft" until its first message is sent, so a just-opened (message-less)
+// session would otherwise vanish from the connector and degrade to a
+// heuristic row with "?" for usage and session; drafts stay rows and show
+// the model, context window, and account quota instead. "Archived"
+// (archived/crashed on-disk sessions) and RLM subagents are excluded;
+// inactive on-disk sessions carry no workerPid and are dropped by the
+// worker check.
+func primeRows(pl primeList) []primeSession {
+	var out []primeSession
 	for _, s := range pl.Sessions {
-		if s.Lifecycle != "live" || s.RuntimeKind != "top-level" || s.WorkerPID <= 0 {
-			continue // drafts/archived sessions and RLM subagents are not rows
+		if s.Lifecycle == "archived" || s.RuntimeKind != "top-level" || s.WorkerPID <= 0 {
+			continue
 		}
-		sessions = append(sessions, s)
+		out = append(out, s)
 	}
-	return sessions, nil
+	return out
 }
 
 // Prime reads Prime Agent's live session state.
@@ -300,11 +313,18 @@ func primeRecord(s primeSession, clientPID int, hook primeHookState, now time.Ti
 // machine. The daemon's activity field is the working signal; taskState is
 // only computed for idle sessions and distinguishes "needs_input" (turn
 // finished, awaiting the next user message) from "completed" — both are
-// idle. prime-agent exposes no native blocked signal.
+// idle. prime-agent exposes no native blocked signal. A draft — a
+// message-less session prime-agent keeps resident with a worker before its
+// first message — reads as idle: the daemon reports activity "working" for
+// it, but that is only the no-verdict placeholder until an idle verdict
+// lands, and nothing has actually happened in the session.
 func primeNativeStatus(s primeSession, now time.Time) (agent.Status, string, time.Time) {
 	at := now
 	if t, err := time.Parse(time.RFC3339Nano, s.LastActivityAt); err == nil {
 		at = t
+	}
+	if s.Lifecycle == "draft" {
+		return agent.StatusIdle, "draft", at
 	}
 	var detail string
 	switch {
