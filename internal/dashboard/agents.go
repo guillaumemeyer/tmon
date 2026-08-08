@@ -4,6 +4,7 @@ import (
 	"io"
 	"strings"
 
+	bkey "charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/list"
 	tea "charm.land/bubbletea/v2"
 	"github.com/guillaumemeyer/tmon/internal/agent"
@@ -54,6 +55,10 @@ func newAgentList() list.Model {
 	km.ForceQuit.SetEnabled(false) // ctrl+c is ours
 	km.ShowFullHelp.SetEnabled(false)
 	km.CloseFullHelp.SetEnabled(false)
+	// g and G are the preview's jump keys (gg = top, G = tail), so the list
+	// keeps only home/end for go-to-start/end.
+	km.GoToStart = bkey.NewBinding(bkey.WithKeys("home"), bkey.WithHelp("home", "go to start"))
+	km.GoToEnd = bkey.NewBinding(bkey.WithKeys("end"), bkey.WithHelp("end", "go to end"))
 	l.KeyMap = km
 	return l
 }

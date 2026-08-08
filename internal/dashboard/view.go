@@ -497,7 +497,7 @@ func (m Model) panelWidths(w int) (listW, panelW int) {
 }
 
 // previewChromeLines is the reserved bottom of the preview pane: one
-// separator row plus one tips row (scroll / resize).
+// separator row plus one tips row (scroll / jump / resize).
 const previewChromeLines = 2
 
 // composeChromeLines is the reserved bottom of the preview pane while the
@@ -727,11 +727,13 @@ func (m Model) composeHintLine(w int) string {
 // do not fit the panel width are dropped from the end so the more useful
 // scroll tip stays when the pane is narrow.
 func (m Model) previewTipsLine(w int) string {
-	parts := make([]string, 0, 3)
+	parts := make([]string, 0, 4)
 	if m.previewNavTipVisible() {
-		parts = append(parts, "[C-u/C-d] scroll preview")
+		parts = append(parts, "[C-u/C-d] scroll")
+		parts = append(parts, "[gg] top")
+		parts = append(parts, "[G] tail")
 	}
-	parts = append(parts, "[←/→ h/l · drag │] resize preview")
+	parts = append(parts, "[←/→ h/l · drag │] resize")
 	if m.previewWrap {
 		parts = append(parts, "[f] fit (on)")
 	} else {

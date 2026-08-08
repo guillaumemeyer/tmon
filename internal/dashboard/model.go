@@ -75,6 +75,7 @@ type Model struct {
 	draggingSplit       bool              // true while the user is dragging the │ separator
 	preview             viewport.Model    // right-side pane preview (scrollable, bottom-pinned)
 	previewFollowBottom bool              // keep the viewport on the latest lines (default true)
+	ggArmed             bool              // first g of the gg double-press: jump the preview to the top
 	previewWrap         bool              // fit-to-width: wrap captured lines to the preview width
 	previewWrapWidth    int               // preview width the viewport content is wrapped at (0 = raw)
 

@@ -734,6 +734,8 @@ state path with `TMON_STATE_DIR` if you need a custom location.
 | Click status bar indicator | Open the agent navigation popup |
 | `d` (in dashboard) | Open the doctor report popin (`r` re-runs the checks) |
 | `f` (in dashboard) | Toggle fit-to-width: wrap long preview lines to the panel width instead of cutting them at the edge (the choice persists) |
+| `G` (in dashboard) | Jump the preview to the newest lines (the tail) and keep following new output. `C-e` is an alias |
+| `gg` (in dashboard) | Jump the preview to the oldest captured lines (the top) |
 
 ## Troubleshooting
 

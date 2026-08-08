@@ -202,6 +202,12 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		return m.handleDoctorKey(msg)
 	}
 
+	// The gg double-press is a two-key gesture: any key other than g cancels
+	// the pending first press (vim-style), so a stray g never jumps by itself.
+	if msg.String() != "g" {
+		m.ggArmed = false
+	}
+
 	switch msg.String() {
 	case "/":
 		m.searching = true
@@ -256,6 +262,27 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	case "ctrl+d":
 		m.preview.HalfPageDown()
 		m.previewFollowBottom = m.preview.AtBottom()
+	case "ctrl+e":
+		// Jump the preview straight back to the tail in one key, no matter
+		// how far up the user scrolled, and resume following new output.
+		m.preview.GotoBottom()
+		m.previewFollowBottom = true
+	case "g":
+		// Vim-style double tap: the first g arms the gesture, the second g
+		// jumps the preview to the top of the captured output. Any other
+		// key between the two presses cancels the arm (handled above).
+		if m.ggArmed {
+			m.preview.GotoTop()
+			m.previewFollowBottom = false
+			m.ggArmed = false
+		} else {
+			m.ggArmed = true
+		}
+	case "G":
+		// Jump the preview to the newest lines (the tail) and keep
+		// following new output, same as ctrl+e.
+		m.preview.GotoBottom()
+		m.previewFollowBottom = true
 	case "enter", "space":
 		return m.focusSelected()
 	case "v":
@@ -269,7 +296,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	case "b", "w", "i":
 		m.toggleStatusFilter(statusKey(msg.String()))
 	default:
-		// Everything else is list navigation: j/k/up/down/g/G/home/end.
+		// Everything else is list navigation: j/k/up/down/home/end.
 		var cmd tea.Cmd
 		m.agentList, cmd = m.agentList.Update(msg)
 		if cmd != nil {

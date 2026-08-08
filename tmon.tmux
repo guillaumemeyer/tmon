@@ -327,12 +327,12 @@ main() {
   # border inside, tinted with the current theme.
   tmux bind-key "$DASHBOARD_KEY" switch-client -T a-table
   tmux bind-key -T a-table "$DASHBOARD_KEY" \
-    display-popup -B -w 80% -h 80% -E "$BINARY dashboard"
+    display-popup -B -w 90% -h 90% -E "$BINARY dashboard"
 
   # Mouse click on the status-bar indicator opens the popup too.
   tmux bind-key -T root MouseDown1Status \
     if -F "#{==:#{mouse_status_range},tmon}" \
-    "display-popup -B -w 80% -h 80% -E '$BINARY dashboard'" \
+    "display-popup -B -w 90% -h 90% -E '$BINARY dashboard'" \
     "select-window -t ="
 }
 

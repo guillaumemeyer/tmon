@@ -501,6 +501,132 @@ func TestPreviewScrollCtrlUD(t *testing.T) {
 	}
 }
 
+// TestPreviewJumpToTail covers the dedicated jump key: after scrolling the
+// preview up, ctrl+e returns it straight to the tail in one press and
+// resumes following new output.
+func TestPreviewJumpToTail(t *testing.T) {
+	var lines []string
+	for i := 1; i <= 40; i++ {
+		lines = append(lines, fmt.Sprintf("LINE-%02d", i))
+	}
+	old := capturePane
+	capturePane = func(p string) string { return strings.Join(lines, "\n") }
+	t.Cleanup(func() { capturePane = old })
+
+	f := &fakeLoader{data: Data{Rows: testRows()}}
+	m := New(f.load, true)
+	m = applyMsg(t, m, initMsg{})
+	m.width, m.height = 80, 12 // preview content rows ≈ 8; half-page step = 4
+
+	// Scroll well away from the tail.
+	for i := 0; i < 10; i++ {
+		m = applyMsg(t, m, tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
+	}
+	if m.preview.AtBottom() {
+		t.Fatal("expected a scrolled-up preview before the jump")
+	}
+	if m.previewFollowBottom {
+		t.Fatal("expected follow-bottom off after scrolling up")
+	}
+	v := ansi.Strip(m.View().Content)
+	if strings.Contains(v, "LINE-40") {
+		t.Fatalf("scrolled-up preview should not show the tail:\n%s", v)
+	}
+
+	// One ctrl+e returns to the tail and resumes following.
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: 'e', Mod: tea.ModCtrl})
+	if !m.previewFollowBottom {
+		t.Fatal("ctrl+e must resume follow-bottom")
+	}
+	if !m.preview.AtBottom() {
+		t.Fatal("ctrl+e must pin the preview to the bottom")
+	}
+	v = ansi.Strip(m.View().Content)
+	if !strings.Contains(v, "LINE-40") {
+		t.Fatalf("after ctrl+e, missing tail LINE-40:\n%s", v)
+	}
+	if strings.Contains(v, "LINE-01") {
+		t.Fatalf("after ctrl+e, showing top of capture:\n%s", v)
+	}
+}
+
+// TestPreviewGGExtremes covers the vim-style jumps: gg (double tap) shows
+// the top of the captured output, G shows the tail again and resumes
+// following new output. A key between the two g presses cancels the arm.
+func TestPreviewGGExtremes(t *testing.T) {
+	var lines []string
+	for i := 1; i <= 40; i++ {
+		lines = append(lines, fmt.Sprintf("LINE-%02d", i))
+	}
+	old := capturePane
+	capturePane = func(p string) string { return strings.Join(lines, "\n") }
+	t.Cleanup(func() { capturePane = old })
+
+	f := &fakeLoader{data: Data{Rows: testRows()}}
+	m := New(f.load, true)
+	m = applyMsg(t, m, initMsg{})
+	m.width, m.height = 80, 12 // preview content rows ≈ 8
+
+	// First g only arms the gesture; the preview does not move.
+	m = applyMsg(t, m, key('g'))
+	if !m.ggArmed {
+		t.Fatal("first g should arm the gg gesture")
+	}
+	if m.preview.AtTop() {
+		t.Fatal("a single g must not jump the preview")
+	}
+
+	// Second g jumps to the top and stops following the tail.
+	m = applyMsg(t, m, key('g'))
+	if m.ggArmed {
+		t.Fatal("gg should consume the arm")
+	}
+	if !m.preview.AtTop() {
+		t.Fatal("gg should pin the preview to the top")
+	}
+	if m.previewFollowBottom {
+		t.Fatal("gg must stop following the tail")
+	}
+	v := ansi.Strip(m.View().Content)
+	if !strings.Contains(v, "LINE-01") {
+		t.Fatalf("after gg, missing top LINE-01:\n%s", v)
+	}
+	if strings.Contains(v, "LINE-40") {
+		t.Fatalf("after gg, still showing tail LINE-40:\n%s", v)
+	}
+
+	// G jumps back to the tail and resumes following.
+	m = applyMsg(t, m, key('G'))
+	if !m.preview.AtBottom() {
+		t.Fatal("G should pin the preview to the bottom")
+	}
+	if !m.previewFollowBottom {
+		t.Fatal("G must resume following the tail")
+	}
+	v = ansi.Strip(m.View().Content)
+	if !strings.Contains(v, "LINE-40") {
+		t.Fatalf("after G, missing tail LINE-40:\n%s", v)
+	}
+	if strings.Contains(v, "LINE-01") {
+		t.Fatalf("after G, showing top of capture:\n%s", v)
+	}
+
+	// A key between the two g presses cancels the arm: g, then j, then g
+	// must not jump to the top.
+	m = applyMsg(t, m, key('g')) // arm
+	m = applyMsg(t, m, key('j')) // any other key cancels the arm
+	if m.ggArmed {
+		t.Fatal("a non-g key should cancel the pending gg arm")
+	}
+	m = applyMsg(t, m, key('g'))
+	if !m.ggArmed {
+		t.Fatal("the second g should re-arm, not jump")
+	}
+	if m.preview.AtTop() {
+		t.Fatal("g after a canceled arm must not jump to the top")
+	}
+}
+
 func TestPreviewScrollResetsOnSelectionChange(t *testing.T) {
 	old := capturePane
 	capturePane = func(p string) string {
@@ -717,8 +843,9 @@ func TestFooterOmitsStatusCountsShowsPreviewTip(t *testing.T) {
 			t.Fatalf("footer missing %q in:\n%s", want, v)
 		}
 	}
-	// Scroll / resize tips sit at the bottom of the preview pane, not the footer.
-	for _, want := range []string{"[C-u/C-d] scroll preview", "[←/→ h/l · drag │] resize preview"} {
+	// Scroll / jump / resize tips sit at the bottom of the preview pane,
+	// not the footer.
+	for _, want := range []string{"[C-u/C-d] scroll", "[gg] top", "[G] tail", "[←/→ h/l · drag │] resize"} {
 		if !strings.Contains(v, want) {
 			t.Fatalf("preview pane missing %q in:\n%s", want, v)
 		}
