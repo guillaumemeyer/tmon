@@ -5,15 +5,16 @@ import (
 	"os"
 	"path/filepath"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/guillaumemeyer/tmon/internal/config"
 	"github.com/guillaumemeyer/tmon/internal/dashboard"
 )
 
 // cmdDashboard opens the interactive agent popup. tmux launches it via
 // display-popup; run standalone it still works, just without pane mapping.
-// The alt screen gives the popup its own full-surface canvas; if a tmux
-// popup ever misbehaves, tea.WithAltScreen(false) is the fallback.
+// The alt screen gives the popup its own full-surface canvas (the view
+// requests it); if a tmux popup ever misbehaves, drop AltScreen in
+// dashboard.View.
 func cmdDashboard(args []string) int {
 	if len(args) > 0 {
 		fmt.Fprintf(os.Stderr, "tmon: dashboard takes no arguments\n")
@@ -30,7 +31,7 @@ func cmdDashboard(args []string) int {
 		WithDoctor(func() []dashboard.DoctorCheck {
 			return toDoctorChecks(runChecks(config.FromEnv()))
 		})
-	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	p := tea.NewProgram(m)
 	if _, err := p.Run(); err != nil {
 		fmt.Fprintln(os.Stderr, "tmon: dashboard:", err)
 		return 1

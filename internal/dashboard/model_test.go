@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/guillaumemeyer/tmon/internal/agent"
 )
 
@@ -63,9 +63,10 @@ func pumpLoadCmd(t *testing.T, m Model, cmd tea.Cmd) Model {
 	return m
 }
 
-// key builds a KeyMsg for a printable rune the way the input reader would.
-func key(r rune) tea.KeyMsg {
-	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}}
+// key builds a KeyPressMsg for a printable rune the way the input reader
+// would: the code is the rune, the text is its string form.
+func key(r rune) tea.KeyPressMsg {
+	return tea.KeyPressMsg{Code: r, Text: string(r)}
 }
 
 func TestInitialLoadIsFull(t *testing.T) {
@@ -92,7 +93,7 @@ func TestLoadingMessageWhileLoadInFlight(t *testing.T) {
 	m.width, m.height = 80, 24
 
 	m.loading = true
-	v := m.View()
+	v := m.View().Content
 	if !strings.Contains(v, "Loading agents") {
 		t.Fatalf("expected a loading message while the load is in flight:\n%s", v)
 	}
@@ -106,7 +107,7 @@ func TestLoadingMessageWhileLoadInFlight(t *testing.T) {
 	if len(m.rows) != 3 {
 		t.Fatalf("rows after load = %d, want 3", len(m.rows))
 	}
-	if v := m.View(); strings.Contains(v, "Loading agents") {
+	if v := m.View().Content; strings.Contains(v, "Loading agents") {
 		t.Fatalf("loading message must vanish after the load:\n%s", v)
 	}
 }
@@ -211,9 +212,9 @@ func TestFilterFuzzyNameAndCWD(t *testing.T) {
 		}
 		// Clear the query and leave search mode for the next case.
 		for range c.query {
-			m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyBackspace})
+			m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyBackspace})
 		}
-		m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+		m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEsc})
 	}
 }
 
@@ -248,7 +249,7 @@ func TestFilterPreviewContentSubstring(t *testing.T) {
 
 	// Contiguous substring of "approval", not a fuzzy subsequence.
 	for range "middleware" {
-		m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyBackspace})
+		m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyBackspace})
 	}
 	for _, r := range "approval" {
 		m = applyMsg(t, m, key(r))
@@ -258,7 +259,7 @@ func TestFilterPreviewContentSubstring(t *testing.T) {
 	}
 	// Loose fuzzy subsequence must not match.
 	for range "approval" {
-		m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyBackspace})
+		m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyBackspace})
 	}
 	for _, r := range "aprvl" {
 		m = applyMsg(t, m, key(r))
@@ -310,13 +311,13 @@ func TestSearchModeKeys(t *testing.T) {
 	}
 
 	// Non-printable keys (e.g. function keys) are ignored in search mode.
-	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyF1})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyF1})
 	if m.query != "codex" {
 		t.Fatalf("query changed by F1: %q", m.query)
 	}
 
 	// Esc leaves search mode and resets the query, restoring the full list.
-	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEsc})
 	if m.searching {
 		t.Fatal("expected search mode to end on Esc")
 	}
@@ -338,7 +339,7 @@ func TestSearchFilterKeepsSelection(t *testing.T) {
 	m = applyMsg(t, m, initMsg{})
 
 	// Select Claude (index 1), then search for a term that still matches it.
-	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if m.rows[m.filtered[m.agentList.Index()]].Label != "Claude" {
 		t.Fatalf("precondition: want Claude selected, got %v", labelsOf(m))
 	}
@@ -377,21 +378,21 @@ func TestSearchModeArrowsAndEnter(t *testing.T) {
 	if m.agentList.Index() != 0 {
 		t.Fatalf("selection = %d, want 0", m.agentList.Index())
 	}
-	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if m.agentList.Index() != 1 {
 		t.Fatalf("down in search: selection = %d, want 1", m.agentList.Index())
 	}
 	if m.query != "" || m.searchInput.Value() != "" {
 		t.Fatalf("arrows must not edit the query, got %q", m.query)
 	}
-	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyUp})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyUp})
 	if m.agentList.Index() != 0 {
 		t.Fatalf("up in search: selection = %d, want 0", m.agentList.Index())
 	}
 
 	// Enter focuses the selected agent while still in search mode.
-	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyDown}) // Claude
-	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyDown}) // Claude
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if focused != "main:0.1" {
 		t.Fatalf("enter in search focused %q, want main:0.1", focused)
 	}
@@ -413,10 +414,10 @@ func TestNavigationWraps(t *testing.T) {
 		msg  tea.Msg
 		want int
 	}{
-		{tea.KeyMsg{Type: tea.KeyDown}, 1},
+		{tea.KeyPressMsg{Code: tea.KeyDown}, 1},
 		{key('j'), 2},
 		{key('j'), 0}, // wraps forward
-		{tea.KeyMsg{Type: tea.KeyUp}, 2},
+		{tea.KeyPressMsg{Code: tea.KeyUp}, 2},
 		{key('k'), 1}, // wraps backward
 		{key('k'), 0},
 		{key('k'), 2},
@@ -434,8 +435,8 @@ func TestSelectionClampsOnFilter(t *testing.T) {
 	m := New(f.load, true)
 	m = applyMsg(t, m, initMsg{})
 
-	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyDown})
-	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if m.agentList.Index() != 2 {
 		t.Fatalf("selection = %d, want 2", m.agentList.Index())
 	}
@@ -465,13 +466,13 @@ func TestFocusSwitchesToSelectedPane(t *testing.T) {
 	}
 
 	// First agent is Grok at main:0.0; Enter focuses it.
-	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyEnter})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
 	if focused != "main:0.0" {
 		t.Fatalf("focused %q, want main:0.0", focused)
 	}
 
 	// Space also focuses; move the selection first.
-	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
 	m = applyMsg(t, m, key(' '))
 	if focused != "main:0.1" {
 		t.Fatalf("focused %q, want main:0.1", focused)
@@ -486,7 +487,7 @@ func TestFocusSwitchesToSelectedPane(t *testing.T) {
 
 	// Right arrow resizes the preview — it must not focus.
 	focused = ""
-	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyRight})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyRight})
 	if focused != "" {
 		t.Fatalf("right arrow focused %q; want resize only", focused)
 	}
@@ -504,13 +505,13 @@ func TestPreviewResizeKeys(t *testing.T) {
 	}
 
 	// Left (and h) grow the preview; right (and l) shrink it.
-	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyLeft})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyLeft})
 	if m.previewPct != defaultPreviewPct+previewResizeStep {
 		t.Fatalf("after left: previewPct = %d, want %d", m.previewPct, defaultPreviewPct+previewResizeStep)
 	}
 
-	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyRight})
-	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyRight})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyRight})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyRight})
 	if m.previewPct != defaultPreviewPct-previewResizeStep {
 		t.Fatalf("after right×2: previewPct = %d, want %d", m.previewPct, defaultPreviewPct-previewResizeStep)
 	}
@@ -527,7 +528,7 @@ func TestPreviewResizeKeys(t *testing.T) {
 
 	// Clamp at max (reached by pressing left repeatedly).
 	for i := 0; i < 30; i++ {
-		m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyLeft})
+		m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyLeft})
 	}
 	if m.previewPct != maxPreviewPct {
 		t.Fatalf("previewPct at max = %d, want %d", m.previewPct, maxPreviewPct)
@@ -535,7 +536,7 @@ func TestPreviewResizeKeys(t *testing.T) {
 
 	// Clamp at min (reached by pressing right repeatedly).
 	for i := 0; i < 30; i++ {
-		m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyRight})
+		m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyRight})
 	}
 	if m.previewPct != minPreviewPct {
 		t.Fatalf("previewPct at min = %d, want %d", m.previewPct, minPreviewPct)
@@ -549,8 +550,8 @@ func TestPreviewPctPersists(t *testing.T) {
 	f := &fakeLoader{data: Data{Rows: testRows()}}
 	m := New(f.load, true).WithSettingsPath(path)
 	m = applyMsg(t, m, initMsg{})
-	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyLeft})
-	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyLeft})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyLeft})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyLeft})
 	want := defaultPreviewPct + 2*previewResizeStep
 	if m.previewPct != want {
 		t.Fatalf("previewPct = %d, want %d", m.previewPct, want)
@@ -585,9 +586,7 @@ func TestDragSeparatorResizesPreview(t *testing.T) {
 	}
 
 	// Press on the separator starts a drag; no agent focus.
-	m = applyMsg(t, m, tea.MouseMsg{
-		Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: listW + 1, Y: 4,
-	})
+	m = applyMsg(t, m, tea.MouseClickMsg{X: listW + 1, Y: 4, Button: tea.MouseLeft})
 	if !m.draggingSplit {
 		t.Fatal("expected draggingSplit after press on separator")
 	}
@@ -596,9 +595,7 @@ func TestDragSeparatorResizesPreview(t *testing.T) {
 	}
 
 	// Motion while dragging moves the split (drag left → larger preview).
-	m = applyMsg(t, m, tea.MouseMsg{
-		Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft, X: 30, Y: 4,
-	})
+	m = applyMsg(t, m, tea.MouseMotionMsg{X: 30, Y: 4})
 	if m.previewPct == defaultPreviewPct {
 		t.Fatalf("previewPct after drag motion = %d, want a change", m.previewPct)
 	}
@@ -609,9 +606,7 @@ func TestDragSeparatorResizesPreview(t *testing.T) {
 	}
 
 	want := m.previewPct
-	m = applyMsg(t, m, tea.MouseMsg{
-		Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft, X: 30, Y: 4,
-	})
+	m = applyMsg(t, m, tea.MouseReleaseMsg{X: 30, Y: 4})
 	if m.draggingSplit {
 		t.Fatal("draggingSplit should clear on release")
 	}
@@ -639,12 +634,8 @@ func TestDragSeparatorPressWithoutMotionDoesNotFocus(t *testing.T) {
 		return nil
 	}
 
-	m = applyMsg(t, m, tea.MouseMsg{
-		Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: listW + 1, Y: 4,
-	})
-	m = applyMsg(t, m, tea.MouseMsg{
-		Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft, X: listW + 1, Y: 4,
-	})
+	m = applyMsg(t, m, tea.MouseClickMsg{X: listW + 1, Y: 4, Button: tea.MouseLeft})
+	m = applyMsg(t, m, tea.MouseReleaseMsg{X: listW + 1, Y: 4})
 	if focused != "" {
 		t.Fatalf("separator click focused %q", focused)
 	}
@@ -657,7 +648,7 @@ func TestFocusWithNothingSelectable(t *testing.T) {
 	m := New(func() (Data, error) { return Data{}, nil }, true)
 	m = applyMsg(t, m, initMsg{})
 
-	nm, cmd := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	nm, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd != nil {
 		t.Fatalf("expected no command with an empty list, got %v", cmd)
 	}
@@ -667,8 +658,8 @@ func TestFocusWithNothingSelectable(t *testing.T) {
 }
 
 // click builds a left-button press at cell (x, y) in the popup viewport.
-func click(x, y int) tea.MouseMsg {
-	return tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: x, Y: y}
+func click(x, y int) tea.MouseClickMsg {
+	return tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft}
 }
 
 func TestMouseClickFocusesAgent(t *testing.T) {
@@ -775,7 +766,7 @@ func TestMouseClickIgnoresHeadersAndChrome(t *testing.T) {
 		t.Fatalf("click on preview panel focused %q", focused)
 	}
 	// A release event is never an action.
-	m = applyMsg(t, m, tea.MouseMsg{Action: tea.MouseActionRelease, Button: tea.MouseButtonLeft, X: 2, Y: 4})
+	m = applyMsg(t, m, tea.MouseReleaseMsg{X: 2, Y: 4})
 	if focused != "" {
 		t.Fatalf("mouse release focused %q", focused)
 	}
@@ -814,7 +805,7 @@ func TestQuitKeys(t *testing.T) {
 	m := New(f.load, true)
 	m = applyMsg(t, m, initMsg{})
 
-	for _, k := range []tea.KeyMsg{{Type: tea.KeyEsc}, key('q')} {
+	for _, k := range []tea.KeyPressMsg{{Code: tea.KeyEsc}, key('q')} {
 		_, cmd := m.Update(k)
 		if cmd == nil {
 			t.Fatalf("key %s: expected a quit command", k)
@@ -885,7 +876,7 @@ func TestViewEmptyState(t *testing.T) {
 	m = applyMsg(t, m, initMsg{})
 	m.width, m.height = 80, 24
 
-	v := m.View()
+	v := m.View().Content
 	for _, want := range []string{asciiLogo[0], "No agents detected."} {
 		if !strings.Contains(v, want) {
 			t.Fatalf("view missing %q:\n%s", want, v)
@@ -900,7 +891,7 @@ func TestViewEmptyStateWithFilter(t *testing.T) {
 
 	m = applyMsg(t, m, key('/'))
 	m = applyMsg(t, m, key('x'))
-	v := m.View()
+	v := m.View().Content
 	if !strings.Contains(v, `No agents match "x"`) {
 		t.Fatalf("view missing the no-match message:\n%s", v)
 	}
@@ -916,7 +907,7 @@ func TestViewRendersFlatList(t *testing.T) {
 	// Wide enough that the long session title does not truncate the cwd.
 	m.width, m.height = 140, 24
 
-	v := m.View()
+	v := m.View().Content
 	for _, want := range []string{
 		asciiLogo[0],
 		"Popup preview scroll (Grok Build)", // session title + name

@@ -4,8 +4,8 @@ import (
 	"io"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/list"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/list"
+	tea "charm.land/bubbletea/v2"
 	"github.com/guillaumemeyer/tmon/internal/agent"
 	"github.com/guillaumemeyer/tmon/internal/theme"
 )

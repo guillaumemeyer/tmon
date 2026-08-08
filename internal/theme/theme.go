@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/spinner"
+	"charm.land/lipgloss/v2"
 	"github.com/guillaumemeyer/tmon/internal/agent"
 )
 
@@ -293,9 +293,15 @@ func SampleLine(t Theme, ic Icons) string {
 }
 
 // Lipgloss converts a tmux-style color string to the form lipgloss expects:
-// "colourNNN" becomes the bare NNN; everything else (names, hex) passes
-// through unchanged.
+// "colourNNN" becomes the bare NNN, and basic color names ("cyan",
+// "brightred", …) become their ANSI index 0-15, because lipgloss v2 only
+// resolves colors from numbers and "#rrggbb" hex. Everything else (hex,
+// "default", "") passes through unchanged. The status bar emits the raw
+// palette strings to tmux and does not use this conversion.
 func Lipgloss(c string) string {
+	if n, ok := basicColorIndex[c]; ok {
+		return n
+	}
 	rest, ok := strings.CutPrefix(c, "colour")
 	if ok && rest != "" {
 		digits := true
@@ -310,5 +316,15 @@ func Lipgloss(c string) string {
 		}
 	}
 	return c
+}
+
+// basicColorIndex maps the basic color names to their ANSI index (0-15) so
+// theme palettes written as names render through lipgloss v2, which only
+// accepts numbers and hex.
+var basicColorIndex = map[string]string{
+	"black": "0", "red": "1", "green": "2", "yellow": "3",
+	"blue": "4", "magenta": "5", "cyan": "6", "white": "7",
+	"brightblack": "8", "brightred": "9", "brightgreen": "10", "brightyellow": "11",
+	"brightblue": "12", "brightmagenta": "13", "brightcyan": "14", "brightwhite": "15",
 }
 

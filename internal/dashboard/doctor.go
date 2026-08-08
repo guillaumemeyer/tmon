@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -210,7 +210,7 @@ func (m *Model) doctorScrollBy(d int) {
 // (j/k/up/down, ctrl+u/ctrl+d, g/G, mouse wheel), re-running the checks
 // (r), returning to the agent view (esc/q), and quitting the popup
 // (ctrl+c).
-func (m Model) handleDoctorKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+func (m Model) handleDoctorKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc", "q":
 		m.doctorMode = false

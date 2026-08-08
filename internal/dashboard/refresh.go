@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"errors"
 	"sort"
 	"strconv"
 	"strings"
@@ -272,6 +273,27 @@ var capturePane = func(paneTarget string) string {
 		return ""
 	}
 	return out
+}
+
+// sendToPane types text into the agent's pane (send-keys -l, so the
+// message is literal, not interpreted as keys) and presses Enter to
+// deliver it. Multi-line drafts are wrapped in bracketed-paste delimiters
+// so the pane receives them as one paste, preserving the newlines. A seam
+// so tests can capture sends without a tmux session.
+var sendToPane = func(paneTarget, text string) error {
+	if paneTarget == "" || paneTarget == "?" || !tmux.Available() {
+		return errors.New("no pane to send to")
+	}
+	if strings.Contains(text, "\n") {
+		text = "\x1b[200~" + text + "\x1b[201~"
+	}
+	if _, err := tmux.Run("send-keys", "-t", paneTarget, "-l", text); err != nil {
+		return err
+	}
+	if _, err := tmux.Run("send-keys", "-t", paneTarget, "Enter"); err != nil {
+		return err
+	}
+	return nil
 }
 
 // Test seams: the full reload touches live system state (process table,

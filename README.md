@@ -34,6 +34,7 @@ dashboard — or just **click the status bar indicator**.
 - 🕵️ **Hide the noise** — glob patterns drop agents you don't care about from the status bar and dashboard. The agent keeps running; you just stop seeing it.
 - 🩺 **`tmon doctor`** — one command that checks everything and explains itself in plain text (or JSON, for the CI crowd). Inside the dashboard, press `d` for the same report as a popin — scrollable, with `r` to re-run.
 - 📐 **Fit-to-width preview** — press `f` inside the dashboard to wrap long captured lines to the preview width instead of cutting them at the edge. The choice persists.
+- 💬 **Message agents** — select an agent and press `s` to type it a message in the dashboard: `Enter` sends it to the agent's pane, `alt+enter` starts a new line, `esc` discards the draft. On Kitty-capable terminals with extended keys enabled, `shift+enter` also starts a new line.
 - 🤖 **12 agents and counting** — Grok Build, Claude Code, Codex CLI, Cursor, Cline, Aider, Copilot, CodeBuddy, Windsurf, Hermes Agent, OpenClaw, Prime Agent.
 
 
@@ -60,7 +61,7 @@ See "Alternative installation modes" if necessary.
 
 - Won't feed your agents
 - Won't pair your socks or approve `rm -rf /` for you
-- Won't start agents, stop agents, or "just send a quick prompt"
+- Won't start agents or stop agents
 - Won't auto-merge PRs written by three agents at once (we have *some* standards)
 
 tmon is a fleet manager, not a petting zoo.

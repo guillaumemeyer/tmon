@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/guillaumemeyer/tmon/internal/theme"
 )
@@ -29,7 +29,7 @@ func TestThemeSelectorOpensAndListsThemes(t *testing.T) {
 	if got := m.themeNames(); len(got) != len(theme.Names()) {
 		t.Fatalf("theme list = %d names, want %d", len(got), len(theme.Names()))
 	}
-	v := ansi.Strip(m.View())
+	v := ansi.Strip(m.View().Content)
 	for _, n := range theme.Names() {
 		if !strings.Contains(v, n) {
 			t.Fatalf("selector view missing theme %q", n)
@@ -59,7 +59,7 @@ func TestThemeFooterRightAlignedNoName(t *testing.T) {
 	m.width, m.height = 100, 24
 
 	m = applyMsg(t, m, key('t'))
-	rows := strings.Split(ansi.Strip(m.View()), "\n")
+	rows := strings.Split(ansi.Strip(m.View().Content), "\n")
 	footer := rows[m.height-2]
 	// The hints sit at the right edge with one cell of margin.
 	if !strings.HasSuffix(footer, "[esc/q] revert │") {
@@ -97,7 +97,7 @@ func TestThemeSelectorMoveUpdatesPreview(t *testing.T) {
 	// Move down once: default → dracula. The dracula app swatch (#bd93f9)
 	// appears only once the cursor lands on dracula.
 	m = applyMsg(t, m, key('j'))
-	v := ansi.Strip(m.View())
+	v := ansi.Strip(m.View().Content)
 	if !strings.Contains(v, "#bd93f9") {
 		t.Fatalf("preview should show dracula's swatches after moving:\n%s", v)
 	}
@@ -149,7 +149,7 @@ func TestThemeSelectorApplyPersists(t *testing.T) {
 		t.Fatalf("persisted = %v, want [dracula]", persisted)
 	}
 	// The agent list is still there after the selector closes.
-	v := ansi.Strip(m.View())
+	v := ansi.Strip(m.View().Content)
 	if !strings.Contains(v, "Grok Build") {
 		t.Fatalf("agent list missing after applying a theme:\n%s", v)
 	}
@@ -201,9 +201,9 @@ func TestThemeSelectorEscKeepsTheme(t *testing.T) {
 
 	for _, tc := range []struct {
 		name string
-		key  tea.KeyMsg
+		key  tea.KeyPressMsg
 	}{
-		{"esc", tea.KeyMsg{Type: tea.KeyEsc}},
+		{"esc", tea.KeyPressMsg{Code: tea.KeyEsc}},
 		{"q", key('q')},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -259,7 +259,7 @@ func TestThemeSelectorHonorsOverrides(t *testing.T) {
 	if m.themeNames()[m.themes.Index()] != "default" {
 		t.Fatalf("selected = %q, want default", m.themeNames()[m.themes.Index()])
 	}
-	v := ansi.Strip(m.View())
+	v := ansi.Strip(m.View().Content)
 	if !strings.Contains(v, "#ff00ff") {
 		t.Fatalf("preview should apply the stored app override:\n%s", v)
 	}
@@ -298,7 +298,7 @@ func TestThemeSelectorOpensOnCurrentTheme(t *testing.T) {
 	if sel != "nord" {
 		t.Fatalf("selected theme = %q, want nord", sel)
 	}
-	v := ansi.Strip(m.View())
+	v := ansi.Strip(m.View().Content)
 	// Nord app swatch.
 	if !strings.Contains(v, "#88c0d0") {
 		t.Fatalf("preview should show nord swatches:\n%s", v)

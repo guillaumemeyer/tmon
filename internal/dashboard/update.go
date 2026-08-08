@@ -4,10 +4,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/list"
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/list"
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/guillaumemeyer/tmon/internal/agent"
 	"github.com/guillaumemeyer/tmon/internal/parallel"
@@ -51,7 +50,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width, m.height = msg.Width, msg.Height
 		return m, nil
 
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 
 	case tea.MouseMsg:
@@ -155,10 +154,14 @@ func (m *Model) refreshPaneCache() {
 // consumes printable keys and Backspace for the query, Esc to leave
 // search, up/down to move the agent selection, and Enter to focus the
 // selected pane. Theme mode routes to the theme selector; navigation mode
-// handles movement, focus, filter entry and quitting. tmon-owned keys are
-// intercepted here; everything else (j/k/up/down/g/G/…) is forwarded to
-// the bubbles list.
-func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+// handles movement, focus, filter entry and quitting. While the message
+// composer is open every key goes to it (handleComposeKey). tmon-owned
+// keys are intercepted here; everything else (j/k/up/down/g/G/…) is
+// forwarded to the bubbles list.
+func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+	if m.composing {
+		return m.handleComposeKey(msg)
+	}
 	if m.searching {
 		switch msg.String() {
 		case "esc":
@@ -206,8 +209,19 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		m.refreshPaneCache()
 		m.query = ""
 		m.searchInput.Reset()
-		m.searchInput.Focus()
-		return m, textinput.Blink
+		return m, m.searchInput.Focus()
+	case "s":
+		// Message composer: only when a pane is selected to send to.
+		r := m.selectedRow()
+		if r == nil || r.Pane == "" || r.Pane == "?" {
+			return m, nil
+		}
+		m.composing = true
+		m.composeTarget = r.Pane
+		m.composeErr = ""
+		m.compose.Reset()
+		m.compose.Focus()
+		return m, nil
 	case "t":
 		m.themeCommitted = m.theme
 		m.themeMode = true
@@ -233,16 +247,16 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 	case "right", "l":
 		m.resizePreview(-previewResizeStep)
 	case "ctrl+u":
-		before := m.preview.YOffset
+		before := m.preview.YOffset()
 		m.preview.HalfPageUp()
 		// Leave the tail only when the offset actually moved up.
-		if m.preview.YOffset < before {
+		if m.preview.YOffset() < before {
 			m.previewFollowBottom = false
 		}
 	case "ctrl+d":
 		m.preview.HalfPageDown()
 		m.previewFollowBottom = m.preview.AtBottom()
-	case "enter", " ":
+	case "enter", "space":
 		return m.focusSelected()
 	case "v":
 		m.viewMode = nextView(m.viewMode)
@@ -271,7 +285,7 @@ func (m Model) handleKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 // popup; enter/space commit the highlighted theme (persist it and close
 // the selector); esc/q revert to the theme that was in effect when the
 // selector opened (nothing persists); ctrl+c quits the popup.
-func (m Model) handleThemeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
+func (m Model) handleThemeKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc", "q":
 		m.themeMode = false
@@ -281,7 +295,7 @@ func (m Model) handleThemeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 		return m, func() tea.Msg { return m.spinner.Tick() }
 	case "ctrl+c":
 		return m, tea.Quit
-	case "enter", " ":
+	case "enter", "space":
 		m = m.applyThemeSelection()
 		m.themeMode = false
 		// Applying replaces the spinner (new theme color); re-arm its tick
@@ -301,82 +315,89 @@ func (m Model) handleThemeKey(msg tea.KeyMsg) (Model, tea.Cmd) {
 // handleMouse maps mouse events: drag the │ separator to resize the preview,
 // or left-click an agent row to focus its pane (same as Enter). Clicks on
 // chrome rows, the preview panel body, and blank padding are ignored. The
-// theme selector is keyboard-only. Screen coordinates are shifted one cell
-// in from each edge first, because the popup's rounded border is drawn
-// inside the canvas.
+// theme selector is keyboard-only, and while the message composer is open
+// the mouse is inert (the textarea is typed at, not clicked). Screen
+// coordinates are shifted one cell in from each edge first, because the
+// popup's rounded border is drawn inside the canvas.
 func (m Model) handleMouse(msg tea.MouseMsg) (Model, tea.Cmd) {
-	if m.themeMode {
+	if m.themeMode || m.composing {
 		return m, nil
 	}
 	if m.doctorMode {
 		// The report is a single column: the mouse wheel scrolls it and
 		// clicks are inert (there are no rows to focus).
-		if msg.Action == tea.MouseActionPress {
-			switch msg.Button {
-			case tea.MouseButtonWheelUp:
+		if w, ok := msg.(tea.MouseWheelMsg); ok {
+			mse := w.Mouse()
+			switch mse.Button {
+			case tea.MouseWheelUp:
 				m.doctorScrollBy(-3)
-			case tea.MouseButtonWheelDown:
+			case tea.MouseWheelDown:
 				m.doctorScrollBy(3)
 			}
 		}
 		return m, nil
 	}
-	msg.X--
-	msg.Y--
-	switch msg.Action {
-	case tea.MouseActionRelease:
+
+	switch msg := msg.(type) {
+	case tea.MouseReleaseMsg:
 		if m.draggingSplit {
 			m.draggingSplit = false
 			m.saveSettings()
 		}
 		return m, nil
 
-	case tea.MouseActionMotion:
+	case tea.MouseMotionMsg:
 		if m.draggingSplit {
-			m.setPreviewPctFromX(msg.X)
+			m.setPreviewPctFromX(msg.Mouse().X - 1)
 		}
 		return m, nil
 
-	case tea.MouseActionPress:
+	case tea.MouseWheelMsg:
+		mse := msg.Mouse()
+		mse.X--
+		mse.Y--
 		// The mouse wheel scrolls the preview panel; the viewport moves
 		// itself (up = older content, down = toward the bottom).
-		if msg.Button == tea.MouseButtonWheelUp || msg.Button == tea.MouseButtonWheelDown {
-			if m.width > 2 {
-				if listW, _ := m.panelWidths(m.width - 2); msg.X >= listW {
-					before := m.preview.YOffset
-					m.preview.Update(msg)
-					if msg.Button == tea.MouseButtonWheelUp && m.preview.YOffset < before {
-						m.previewFollowBottom = false
-					} else if msg.Button == tea.MouseButtonWheelDown {
-						m.previewFollowBottom = m.preview.AtBottom()
-					}
+		if m.width > 2 {
+			if listW, _ := m.panelWidths(m.width - 2); mse.X >= listW {
+				before := m.preview.YOffset()
+				m.preview.Update(msg)
+				if mse.Button == tea.MouseWheelUp && m.preview.YOffset() < before {
+					m.previewFollowBottom = false
+				} else if mse.Button == tea.MouseWheelDown {
+					m.previewFollowBottom = m.preview.AtBottom()
 				}
 			}
-			return m, nil
 		}
-		if msg.Button != tea.MouseButtonLeft {
+		return m, nil
+
+	case tea.MouseClickMsg:
+		mse := msg.Mouse()
+		mse.X--
+		mse.Y--
+		if mse.Button != tea.MouseLeft {
 			return m, nil
 		}
 		// Drag the list|preview separator (hit target ±1 cell).
 		if m.width > 2 {
 			listW, _ := m.panelWidths(m.width - 2)
-			if msg.X >= listW-1 && msg.X <= listW+1 {
+			if mse.X >= listW-1 && mse.X <= listW+1 {
 				m.draggingSplit = true
-				m.setPreviewPctFromX(msg.X)
+				m.setPreviewPctFromX(mse.X)
 				return m, nil
 			}
 		}
 		// Only clicks on the list column act; the preview panel is a no-op.
 		if m.width > 2 {
 			_, panelW := m.panelWidths(m.width - 2)
-			if listW := m.width - 2 - panelW - 1; msg.X >= listW {
+			if listW := m.width - 2 - panelW - 1; mse.X >= listW {
 				return m, nil
 			}
 		}
 		// The wordmark rows and divider are chrome; body rows start right after.
 		// While searching, the last body row of the list is the query input.
 		topChrome := m.mainTopChrome()
-		bodyRow := msg.Y - topChrome
+		bodyRow := mse.Y - topChrome
 		if bodyRow < 0 || bodyRow >= bodyLinesFor(m.height-2, topChrome) {
 			return m, nil
 		}
@@ -385,6 +406,58 @@ func (m Model) handleMouse(msg tea.MouseMsg) (Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	return m, nil
+}
+
+// handleComposeKey dispatches keys while the message composer is open:
+// enter sends the draft to the selected pane; alt+enter (and shift+enter
+// on Kitty-capable terminals with extended keys) insert a newline; esc
+// clears the draft and closes the composer; ctrl+c quits the popup; every
+// other key edits the textarea.
+func (m Model) handleComposeKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
+	switch msg.String() {
+	case "enter":
+		return m.sendCompose()
+	case "alt+enter", "shift+enter":
+		var cmd tea.Cmd
+		m.compose, cmd = m.compose.Update(msg)
+		return m, cmd
+	case "esc":
+		m.composing = false
+		m.composeErr = ""
+		m.compose.Reset()
+		m.compose.Blur()
+		return m, nil
+	case "ctrl+c":
+		return m, tea.Quit
+	default:
+		var cmd tea.Cmd
+		m.compose, cmd = m.compose.Update(msg)
+		return m, cmd
+	}
+}
+
+// sendCompose sends the composer's draft to the selected agent's pane and
+// closes the composer. An empty draft is discarded without sending. A send
+// failure keeps the composer open with the error on its hint line, so the
+// draft stays editable until the user fixes it or presses esc.
+func (m Model) sendCompose() (Model, tea.Cmd) {
+	text := m.compose.Value()
+	if text == "" {
+		m.composing = false
+		m.composeErr = ""
+		m.compose.Reset()
+		m.compose.Blur()
+		return m, nil
+	}
+	if err := sendToPane(m.composeTarget, text); err != nil {
+		m.composeErr = err.Error()
+		return m, nil
+	}
+	m.composing = false
+	m.composeErr = ""
+	m.compose.Reset()
+	m.compose.Blur()
 	return m, nil
 }
 

@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -63,7 +63,7 @@ func TestDoctorFooterHint(t *testing.T) {
 	m = applyMsg(t, m, initMsg{})
 	m.width, m.height = 140, 24
 
-	v := ansi.Strip(m.View())
+	v := ansi.Strip(m.View().Content)
 	footer := strings.Split(v, "\n")[m.height-2]
 	if !strings.Contains(footer, "[d] doctor") {
 		t.Fatalf("footer missing the doctor hint, got %q", footer)
@@ -104,7 +104,7 @@ func TestDoctorOpensOnD(t *testing.T) {
 		t.Fatal("the re-running state should clear once the report lands")
 	}
 
-	v := ansi.Strip(m.View())
+	v := ansi.Strip(m.View().Content)
 	for _, want := range []string{
 		asciiLogo[0],
 		asciiLogo[1] + " 🩺 Doctor",
@@ -136,7 +136,7 @@ func TestDoctorAllPassSummary(t *testing.T) {
 	m.width, m.height = 100, 24
 
 	m = openDoctor(t, m)
-	v := ansi.Strip(m.View())
+	v := ansi.Strip(m.View().Content)
 	if !strings.Contains(v, "All checks passed — tmon is ready to go.") {
 		t.Fatalf("all-pass report should show the green summary:\n%s", v)
 	}
@@ -149,9 +149,9 @@ func TestDoctorEscQReturnToAgents(t *testing.T) {
 
 	for _, tc := range []struct {
 		name string
-		key  tea.KeyMsg
+		key  tea.KeyPressMsg
 	}{
-		{"esc", tea.KeyMsg{Type: tea.KeyEsc}},
+		{"esc", tea.KeyPressMsg{Code: tea.KeyEsc}},
 		{"q", key('q')},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -169,7 +169,7 @@ func TestDoctorEscQReturnToAgents(t *testing.T) {
 			if m.doctorMode {
 				t.Fatal(tc.name + " should close the doctor report")
 			}
-			v := ansi.Strip(m.View())
+			v := ansi.Strip(m.View().Content)
 			if !strings.Contains(v, "Grok Build") {
 				t.Fatalf("agent list should be back after %s:\n%s", tc.name, v)
 			}
@@ -218,7 +218,7 @@ func TestDoctorRerunShowsBusyState(t *testing.T) {
 	if !m.doctorBusy {
 		t.Fatal("d should put the report into the re-running state")
 	}
-	v := ansi.Strip(m.View())
+	v := ansi.Strip(m.View().Content)
 	if !strings.Contains(v, "re-running checks") {
 		t.Fatalf("busy view should show the re-running state:\n%s", v)
 	}
@@ -232,7 +232,7 @@ func TestDoctorRerunShowsBusyState(t *testing.T) {
 	if m.doctorRuns != 1 {
 		t.Fatalf("runs = %d, want 1", m.doctorRuns)
 	}
-	v = ansi.Strip(m.View())
+	v = ansi.Strip(m.View().Content)
 	if !strings.Contains(v, "run 1") || !strings.Contains(v, "✓ tmux") {
 		t.Fatalf("report should show the run counter and checks after the run:\n%s", v)
 	}
@@ -243,7 +243,7 @@ func TestDoctorCtrlCQuits(t *testing.T) {
 	m.width, m.height = 100, 24
 
 	m = openDoctor(t, m)
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	_, cmd := m.Update(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
 	if cmd == nil {
 		t.Fatal("ctrl+c in the doctor report should quit the popup")
 	}
@@ -254,7 +254,7 @@ func TestDoctorTitleBar(t *testing.T) {
 	m.width, m.height = 100, 24
 
 	m = openDoctor(t, m)
-	rows := strings.Split(ansi.Strip(m.View()), "\n")
+	rows := strings.Split(ansi.Strip(m.View().Content), "\n")
 	// Row 1: the wordmark on the left, the quit hint right-aligned with one
 	// cell of margin before the border.
 	if got := rows[1]; !strings.HasPrefix(got, "│ "+asciiLogo[0]) || !strings.HasSuffix(got, "[esc/q] quit │") {
@@ -303,7 +303,7 @@ func TestDoctorScrollKeys(t *testing.T) {
 	}
 
 	// The view honors the scroll: the last report line is visible.
-	v := ansi.Strip(m.View())
+	v := ansi.Strip(m.View().Content)
 	if !strings.Contains(v, "check29") {
 		t.Fatalf("view should show the report tail after G:\n%s", v)
 	}
@@ -314,12 +314,12 @@ func TestDoctorWheelScrolls(t *testing.T) {
 	m.width, m.height = 100, 12
 
 	m = openDoctor(t, m)
-	m = applyMsg(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown, X: 5, Y: 5})
+	m = applyMsg(t, m, tea.MouseWheelMsg{X: 5, Y: 5, Button: tea.MouseWheelDown})
 	if m.doctorScroll == 0 {
 		t.Fatal("wheel down should scroll the report")
 	}
 	before := m.doctorScroll
-	m = applyMsg(t, m, tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelUp, X: 5, Y: 5})
+	m = applyMsg(t, m, tea.MouseWheelMsg{X: 5, Y: 5, Button: tea.MouseWheelUp})
 	if m.doctorScroll >= before {
 		t.Fatalf("wheel up should scroll back, got %d before %d", m.doctorScroll, before)
 	}

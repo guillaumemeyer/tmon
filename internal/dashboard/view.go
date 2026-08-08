@@ -2,13 +2,15 @@ package dashboard
 
 import (
 	"fmt"
+	"image/color"
 	"math"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/guillaumemeyer/tmon/internal/agent"
 	"github.com/guillaumemeyer/tmon/internal/theme"
@@ -19,18 +21,19 @@ import (
 type styles struct {
 	dim, green, orange, blue, cyan, white, warn lipgloss.Style
 	bg                                          lipgloss.Style // popup background fill (theme background)
-	bgColor                                     lipgloss.Color
+	bgColor                                     color.Color
 	selBg                                       lipgloss.Style // background-only, for padding + wraps
-	selBgColor                                  lipgloss.Color
+	selBgColor                                  color.Color
 	// The per-line styles below are the selection variants for the agent rows.
 	selText lipgloss.Style // selected name row: accent bold on selBg
 	selDim  lipgloss.Style // selected cwd/stats rows: dim on selBg
 }
 
 // buildStyles converts a theme palette into lipgloss styles. tmux-style
-// "colourNNN" values are translated for lipgloss; names and hex pass through.
+// "colourNNN" values and color names are translated for lipgloss; hex
+// passes through.
 func buildStyles(pal theme.Palette) styles {
-	col := func(c string) lipgloss.Color { return lipgloss.Color(theme.Lipgloss(c)) }
+	col := func(c string) color.Color { return lipgloss.Color(theme.Lipgloss(c)) }
 	bg := col(pal.Background)
 	sbg := col(pal.SelBg)
 	return styles{
@@ -69,8 +72,19 @@ var (
 // tmux popup itself opens borderless), then header, divider, agent list
 // with an always-on right-side pane preview, and footer. It always emits
 // exactly height lines of width cells so the popup fills its pane. In
-// theme mode it shows the theme selector instead.
-func (m Model) View() string {
+// theme mode it shows the theme selector instead. The popup owns the alt
+// screen and cell-motion mouse reporting, so the program runs without
+// WithAltScreen/WithMouseCellMotion options.
+func (m Model) View() tea.View {
+	v := tea.NewView(m.viewContent())
+	v.AltScreen = true
+	v.MouseMode = tea.MouseModeCellMotion
+	return v
+}
+
+// viewContent renders the popup's content rows as one newline-joined
+// string; View wraps it in a tea.View.
+func (m Model) viewContent() string {
 	w, h := m.width, m.height
 	if w < 1 {
 		w = 80
@@ -372,12 +386,14 @@ func backgroundSeq(bg lipgloss.Style) string {
 // current theme on this copy, matching the list delegate pattern.
 func (m Model) searchInputListLine(w int) string {
 	ti := m.searchInput
-	ti.PromptStyle = m.st.cyan.Bold(true)
-	ti.TextStyle = m.st.white
-	ti.Width = w - ansi.StringWidth(ti.Prompt) - 2
-	if ti.Width < 1 {
-		ti.Width = 1
+	ti.SetWidth(w - ansi.StringWidth(ti.Prompt) - 2)
+	if ti.Width() < 1 {
+		ti.SetWidth(1)
 	}
+	sty := ti.Styles()
+	sty.Focused.Prompt = m.st.cyan.Bold(true)
+	sty.Focused.Text = m.st.white
+	ti.SetStyles(sty)
 	return fit(" "+ti.View(), w)
 }
 
@@ -484,6 +500,11 @@ func (m Model) panelWidths(w int) (listW, panelW int) {
 // separator row plus one tips row (scroll / resize).
 const previewChromeLines = 2
 
+// composeChromeLines is the reserved bottom of the preview pane while the
+// message composer is open: one separator row, the three-line input area,
+// and its own hint row.
+const composeChromeLines = 5
+
 // minPreviewViewport is the smallest capture viewport the preview pane
 // keeps under the stats block. When the pane cannot fit the stats block,
 // the separator and the pane header above at least this many viewport rows,
@@ -506,10 +527,14 @@ const minPreviewViewport = 2
 // column shows no usage, so the stats move with the selection.
 func (m Model) previewLines(w, n int) []string {
 	// Reserve the bottom chrome when there is room; otherwise the pane is
-	// content-only so the popup still fills the canvas.
+	// content-only so the popup still fills the canvas. The composer swaps
+	// the tips row for its input area and hint row.
 	chrome := 0
 	if n >= previewChromeLines+1 {
 		chrome = previewChromeLines
+	}
+	if m.composing && n >= composeChromeLines+1 {
+		chrome = composeChromeLines
 	}
 	contentN := n - chrome
 	if contentN < 1 {
@@ -614,8 +639,8 @@ func (m Model) previewLines(w, n int) []string {
 	// being cut at the pane edge. Re-wrap only when the width or the content
 	// changed since the last render; truncation mode restores the raw lines.
 	m.applyPreviewWrap(w)
-	m.preview.Width = w
-	m.preview.Height = bodyH
+	m.preview.SetWidth(w)
+	m.preview.SetHeight(bodyH)
 	if m.previewFollowBottom {
 		m.preview.GotoBottom()
 	}
@@ -652,9 +677,49 @@ func (m Model) previewLines(w, n int) []string {
 	}
 	if chrome > 0 {
 		out = append(out, fit(m.st.dim.Render(strings.Repeat("─", w)), w))
-		out = append(out, fit(m.previewTipsLine(w), w))
+		if m.composing {
+			out = append(out, m.composeInputLines(w)...)
+			out = append(out, fit(m.composeHintLine(w), w))
+		} else {
+			out = append(out, fit(m.previewTipsLine(w), w))
+		}
 	}
 	return out
+}
+
+// composeInputLines renders the message composer's textarea as exactly
+// three lines of w cells each. Styles are refreshed from the current theme
+// on this copy, matching the search input pattern. The textarea's own
+// width/height are pinned here (the New defaults are placeholders).
+func (m Model) composeInputLines(w int) []string {
+	ta := m.compose
+	ta.SetWidth(w)
+	ta.SetHeight(3)
+	sty := ta.Styles()
+	sty.Focused.Prompt = m.st.cyan.Bold(true)
+	sty.Focused.Text = m.st.white
+	sty.Focused.Placeholder = m.st.dim
+	ta.SetStyles(sty)
+	lines := strings.Split(ta.View(), "\n")
+	out := make([]string, 0, 3)
+	for _, l := range lines {
+		out = append(out, fit(l, w))
+	}
+	for len(out) < 3 {
+		out = append(out, fit("", w))
+	}
+	return out[:3]
+}
+
+// composeHintLine is the hint row under the message composer: the send,
+// newline and cancel gestures in dim, or the last send error in the warn
+// color (the draft stays editable until esc discards it).
+func (m Model) composeHintLine(w int) string {
+	if m.composeErr != "" {
+		text := " ⚠ " + m.composeErr + " (esc to discard)"
+		return m.st.warn.Render(fit(text, w))
+	}
+	return m.st.dim.Render(fit("[enter] send  [alt+enter] newline  [esc] cancel", w))
 }
 
 // previewTipsLine is the bottom tips row of the preview pane: scroll and
@@ -979,13 +1044,21 @@ func usageBarColor(pct, contextWarn int, green, warn lipgloss.Style) string {
 	return styleHex(green)
 }
 
-// styleHex extracts the raw color string from a style's foreground, or ""
-// when the style has none (NoColor).
+// styleHex extracts the hex form of a style's foreground color, or ""
+// when the style has none (NoColor). Indexed and named colors are resolved
+// to their RGB values so the string can be fed back to lipgloss.Color.
 func styleHex(s lipgloss.Style) string {
-	if c, ok := s.GetForeground().(lipgloss.Color); ok {
-		return string(c)
+	return colorHex(s.GetForeground())
+}
+
+// colorHex renders any color as "#rrggbb", or "" for NoColor (the absence
+// of color). Indexed and named colors are resolved to their RGB values.
+func colorHex(c color.Color) string {
+	if _, ok := c.(lipgloss.NoColor); ok {
+		return ""
 	}
-	return ""
+	r, g, b, _ := c.RGBA()
+	return fmt.Sprintf("#%02x%02x%02x", r>>8, g>>8, b>>8)
 }
 
 // humanTokens formats a token count compactly: "2.5M", "262k", "51.7k",
@@ -1065,13 +1138,17 @@ func (m Model) footerSearchHint() string {
 }
 
 // footerRight is the right-aligned footer segment: match count while
-// filtering, the theme, view-cycle, navigate, and doctor hints. Preview
-// scroll/resize tips live at the bottom of the preview pane. Tips that do
-// not fit are dropped from the end.
+// filtering, the message-send hint when a panned agent is selected, the
+// theme, view-cycle, navigate, and doctor hints. Preview scroll/resize tips
+// live at the bottom of the preview pane. Tips that do not fit are dropped
+// from the end.
 func (m Model) footerRight(w int) string {
-	parts := make([]string, 0, 5)
+	parts := make([]string, 0, 6)
 	if m.query != "" || m.searching {
 		parts = append(parts, fmt.Sprintf("%d/%d", len(m.filtered), len(m.rows)))
+	}
+	if r := m.selectedRow(); r != nil && r.Pane != "" && r.Pane != "?" {
+		parts = append(parts, "[s] send")
 	}
 	parts = append(parts, "[t] theme")
 	parts = append(parts, m.footerViewHint())

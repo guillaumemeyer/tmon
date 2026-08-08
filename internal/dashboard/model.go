@@ -5,12 +5,13 @@ package dashboard
 import (
 	"time"
 
-	"github.com/charmbracelet/bubbles/list"
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textinput"
-	"github.com/charmbracelet/bubbles/viewport"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/list"
+	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/textarea"
+	"charm.land/bubbles/v2/textinput"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/guillaumemeyer/tmon/internal/agent"
 	"github.com/guillaumemeyer/tmon/internal/theme"
 	"github.com/guillaumemeyer/tmon/internal/tmux"
@@ -76,6 +77,16 @@ type Model struct {
 	previewFollowBottom bool              // keep the viewport on the latest lines (default true)
 	previewWrap         bool              // fit-to-width: wrap captured lines to the preview width
 	previewWrapWidth    int               // preview width the viewport content is wrapped at (0 = raw)
+
+	// composing is true while the message composer is open (pressed s with
+	// a panned agent selected). compose is the bubbles textarea holding the
+	// draft; composeTarget is the tmux pane the message will be sent to;
+	// composeErr carries a send failure (shown on the composer's hint line)
+	// so the draft stays editable after a failed send.
+	composing    bool
+	compose      textarea.Model
+	composeTarget string
+	composeErr    string
 
 	// settingsPath is where UI prefs (e.g. preview width) are persisted.
 	// Empty disables load/save (tests and ad-hoc construction).
@@ -162,8 +173,9 @@ func New(loader Loader, ascii bool) Model {
 	m.agentList = newAgentList()
 	m.themes = newThemesList()
 	m.spinner = newSpinner(m.theme.Palette)
-	m.preview = viewport.New(40, 20) // sized per render in View
+	m.preview = viewport.New(viewport.WithWidth(40), viewport.WithHeight(20)) // sized per render in View
 	m.searchInput = newSearchInput()
+	m.compose = newComposeInput()
 	return m
 }
 
@@ -175,6 +187,23 @@ func newSearchInput() textinput.Model {
 	ti.Prompt = "/ "
 	ti.CharLimit = 200
 	return ti
+}
+
+// newComposeInput builds the message composer's textarea: three visible
+// lines, no line numbers, a placeholder naming the target. Enter sends the
+// draft (handled by the dashboard, never forwarded to the textarea), so
+// the textarea's InsertNewline binding is remapped to the two newline
+// gestures the composer accepts — alt+enter (universal, works in every
+// terminal) and shift+enter (only reaches the app on Kitty-capable
+// terminals with extended keys enabled).
+func newComposeInput() textarea.Model {
+	ta := textarea.New()
+	ta.Placeholder = "Message the agent…"
+	ta.CharLimit = 4096
+	ta.ShowLineNumbers = false
+	ta.SetHeight(3)
+	ta.KeyMap.InsertNewline.SetKeys("enter", "shift+enter", "alt+enter")
+	return ta
 }
 
 // newSpinner builds the working-agent spinner, colored with the theme's

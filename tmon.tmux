@@ -273,6 +273,12 @@ main() {
   fi
   tmux set -g status-interval "$STATUS_INTERVAL_SEC"
 
+  # Extended keys: let the terminal report modified keys such as shift+enter
+  # to the dashboard. The message composer (press s) accepts shift+enter as
+  # a newline on Kitty-capable terminals; alt+enter works everywhere without
+  # this. Older tmux servers reject the option, so the failure is ignored.
+  tmux set -s extended-keys on 2>/dev/null || true
+
   # Make `git pull` a complete update. TPM's `prefix U` runs exactly `git pull`
   # in the plugin dir and then does nothing else — so without help the new
   # VERSION file lands on disk but bootstrap never runs and the binary stays

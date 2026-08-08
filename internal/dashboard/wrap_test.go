@@ -166,7 +166,7 @@ func TestPreviewFitWidthToggleAndRender(t *testing.T) {
 	m.width, m.height = 100, 24
 
 	// Default (truncation): the long capture is cut to one row at the pane edge.
-	if n := markerRows(t, m.View(), "x"); n != 1 {
+	if n := markerRows(t, m.View().Content, "x"); n != 1 {
 		t.Fatalf("truncation mode shows %d x-rows, want 1 (cut line)", n)
 	}
 
@@ -175,7 +175,7 @@ func TestPreviewFitWidthToggleAndRender(t *testing.T) {
 	if !m.previewWrap {
 		t.Fatal("f should enable fit-to-width")
 	}
-	if n := markerRows(t, m.View(), "x"); n <= 1 {
+	if n := markerRows(t, m.View().Content, "x"); n <= 1 {
 		t.Fatalf("fit mode shows %d x-rows, want a wrapped multi-row capture", n)
 	}
 
@@ -184,7 +184,7 @@ func TestPreviewFitWidthToggleAndRender(t *testing.T) {
 	if m.previewWrap {
 		t.Fatal("f should disable fit-to-width")
 	}
-	if n := markerRows(t, m.View(), "x"); n != 1 {
+	if n := markerRows(t, m.View().Content, "x"); n != 1 {
 		t.Fatalf("after toggle off shows %d x-rows, want 1", n)
 	}
 }
@@ -201,7 +201,7 @@ func TestPreviewFitWidthRewrapsOnResize(t *testing.T) {
 	m = applyMsg(t, m, key('f'))
 
 	// Fit mode wraps the capture across several rows of the preview.
-	rows0 := markerRows(t, m.View(), "y")
+	rows0 := markerRows(t, m.View().Content, "y")
 	if rows0 <= 1 {
 		t.Fatalf("fit mode should wrap the capture across rows, got %d y-rows", rows0)
 	}
@@ -209,7 +209,7 @@ func TestPreviewFitWidthRewrapsOnResize(t *testing.T) {
 	// Widen the preview (h moves the divider left); the next render
 	// re-wraps at the wider panel, so fewer rows are needed.
 	m = applyMsg(t, m, key('h'))
-	if rows1 := markerRows(t, m.View(), "y"); rows1 >= rows0 {
+	if rows1 := markerRows(t, m.View().Content, "y"); rows1 >= rows0 {
 		t.Fatalf("wider preview wrapped into %d rows, want < %d", rows1, rows0)
 	}
 }
@@ -245,11 +245,11 @@ func TestPreviewFitWidthTip(t *testing.T) {
 	// resize, fit) on the tips row.
 	m.width, m.height = 160, 24
 
-	if v := ansi.Strip(m.View()); !strings.Contains(v, "[f] fit") {
+	if v := ansi.Strip(m.View().Content); !strings.Contains(v, "[f] fit") {
 		t.Fatalf("expected the fit hint in the preview tips:\n%s", v)
 	}
 	m = applyMsg(t, m, key('f'))
-	if v := ansi.Strip(m.View()); !strings.Contains(v, "[f] fit (on)") {
+	if v := ansi.Strip(m.View().Content); !strings.Contains(v, "[f] fit (on)") {
 		t.Fatalf("expected the fit-on hint in the preview tips:\n%s", v)
 	}
 }

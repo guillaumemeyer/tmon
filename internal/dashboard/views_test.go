@@ -467,7 +467,7 @@ func TestFooterShowsViewHint(t *testing.T) {
 	m = applyMsg(t, m, initMsg{})
 	m.width, m.height = 100, 24
 
-	rows := strings.Split(ansi.Strip(m.View()), "\n")
+	rows := strings.Split(ansi.Strip(m.View().Content), "\n")
 	logoLine2 := rows[2]
 	if !strings.Contains(logoLine2, asciiLogo[1]+" v0.5.0") {
 		t.Fatalf("second logo line should show version next to logo, got %q", logoLine2)
@@ -481,19 +481,19 @@ func TestFooterShowsViewHint(t *testing.T) {
 	}
 
 	m = applyMsg(t, m, key('v'))
-	footer = ansi.Strip(strings.Split(m.View(), "\n")[m.height-2])
+	footer = ansi.Strip(strings.Split(m.View().Content, "\n")[m.height-2])
 	if !strings.Contains(footer, "[v] view (By project)") {
 		t.Fatalf("footer should show [v] view (By project), got %q", footer)
 	}
 
 	m = applyMsg(t, m, key('v'))
-	footer = ansi.Strip(strings.Split(m.View(), "\n")[m.height-2])
+	footer = ansi.Strip(strings.Split(m.View().Content, "\n")[m.height-2])
 	if !strings.Contains(footer, "[v] view (By status)") {
 		t.Fatalf("footer should show [v] view (By status), got %q", footer)
 	}
 
 	m = applyMsg(t, m, key('v'))
-	footer = ansi.Strip(strings.Split(m.View(), "\n")[m.height-2])
+	footer = ansi.Strip(strings.Split(m.View().Content, "\n")[m.height-2])
 	if !strings.Contains(footer, "[v] view (By agent)") {
 		t.Fatalf("footer should show [v] view (By agent), got %q", footer)
 	}
@@ -510,7 +510,7 @@ func TestProjectsViewRendersSectionHeaders(t *testing.T) {
 	m = applyMsg(t, m, key('v')) // projects
 	m.width, m.height = 140, 30
 
-	v := ansi.Strip(m.View())
+	v := ansi.Strip(m.View().Content)
 	// Each distinct CWD from testRows becomes a section header.
 	for _, want := range []string{"code/tmon", "site", "blog"} {
 		if !strings.Contains(v, want) {

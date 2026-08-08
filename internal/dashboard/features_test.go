@@ -8,14 +8,20 @@ import (
 	"testing"
 	"time"
 
-	"github.com/charmbracelet/bubbles/spinner"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/spinner"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/guillaumemeyer/tmon/internal/agent"
 	"github.com/guillaumemeyer/tmon/internal/theme"
-	"github.com/muesli/termenv"
 )
+
+// stripThemeBg removes the theme-background re-assertions paintRows injects
+// after every SGR reset, so rendered segments compare against the strings
+// the styles produce on their own.
+func stripThemeBg(st styles, s string) string {
+	return strings.ReplaceAll(s, backgroundSeq(st.bg), "")
+}
 
 func TestStatusFilters(t *testing.T) {
 	f := &fakeLoader{data: Data{Rows: testRows()}}
@@ -88,7 +94,7 @@ func TestPreviewAlwaysCapturesSelection(t *testing.T) {
 
 	// Selection change re-captures the new selection (no full-cache).
 	n := len(captured)
-	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if len(captured) != n+1 {
 		t.Fatalf("captured after selection change = %v, want one extra capture", captured)
 	}
@@ -164,7 +170,7 @@ func TestPreviewViewShowsSeparatorAndContent(t *testing.T) {
 	m = applyMsg(t, m, initMsg{})
 	m.width, m.height = 120, 24
 
-	v := m.View()
+	v := m.View().Content
 	for _, want := range []string{"│", "pane-content-line", "Grok Build"} {
 		if !strings.Contains(v, want) {
 			t.Fatalf("view missing %q:\n%s", want, v)
@@ -190,7 +196,7 @@ func TestPreviewLayoutAlignment(t *testing.T) {
 	const w, h = 100, 20
 	m.width, m.height = w, h
 
-	v := ansi.Strip(m.View())
+	v := ansi.Strip(m.View().Content)
 	rows := strings.Split(v, "\n")
 	if len(rows) != h {
 		t.Fatalf("rows = %d, want %d", len(rows), h)
@@ -230,7 +236,7 @@ func TestPreviewPreservesColors(t *testing.T) {
 	m = applyMsg(t, m, initMsg{})
 	m.width, m.height = 80, 16
 
-	v := m.View()
+	v := m.View().Content
 	if !strings.Contains(v, "\x1b[32m") || !strings.Contains(v, "green text") {
 		t.Fatalf("view lost green SGR / text:\n%q", v)
 	}
@@ -244,12 +250,6 @@ func TestPreviewPreservesColors(t *testing.T) {
 }
 
 func TestPopupPaintedWithThemeBackground(t *testing.T) {
-	// The test runner's terminal is colorless (lipgloss's Ascii profile);
-	// force truecolor so the background sequences are actually emitted.
-	orig := lipgloss.ColorProfile()
-	lipgloss.SetColorProfile(termenv.TrueColor)
-	t.Cleanup(func() { lipgloss.SetColorProfile(orig) })
-
 	old := capturePane
 	capturePane = func(p string) string {
 		return "\x1b[32mgreen text\x1b[0m\n\x1b[49mstriped\x1b[0m\n\x1b[48;5;0mblackbg\x1b[0m"
@@ -268,7 +268,7 @@ func TestPopupPaintedWithThemeBackground(t *testing.T) {
 
 	// Every row of the popup starts with the theme background so the panel
 	// is solid, not transparent.
-	lines := strings.Split(m.View(), "\n")
+	lines := strings.Split(m.View().Content, "\n")
 	if len(lines) != m.height {
 		t.Fatalf("View = %d lines, want %d", len(lines), m.height)
 	}
@@ -301,7 +301,7 @@ func TestPopupPaintedWithThemeBackground(t *testing.T) {
 	if seq2 == seq {
 		t.Fatal("nord background should differ from the default theme's")
 	}
-	if v2 := m2.View(); !strings.HasPrefix(v2, seq2) {
+	if v2 := m2.View().Content; !strings.HasPrefix(v2, seq2) {
 		t.Fatal("nord popup not painted with its own background")
 	}
 }
@@ -402,7 +402,7 @@ func TestPreviewIsHalfWidth(t *testing.T) {
 	const w = 80
 	m.width, m.height = w, 12
 
-	v := ansi.Strip(m.View())
+	v := ansi.Strip(m.View().Content)
 	body := strings.Split(v, "\n")[1+mainHeaderHeight+1] // first body row, below border+header+divider
 	listW, _ := m.panelWidths(w - 2)
 	sepCol := listW + 1
@@ -412,8 +412,8 @@ func TestPreviewIsHalfWidth(t *testing.T) {
 	}
 
 	// After growing the preview (left arrow), the separator moves left.
-	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyLeft})
-	v = ansi.Strip(m.View())
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyLeft})
+	v = ansi.Strip(m.View().Content)
 	body = strings.Split(v, "\n")[1+mainHeaderHeight+1]
 	listW2, _ := m.panelWidths(w - 2)
 	if listW2 >= listW {
@@ -441,7 +441,7 @@ func TestPreviewPinsToBottom(t *testing.T) {
 	// Tall enough for header + a few content rows + preview bottom chrome.
 	m.width, m.height = 80, 16
 
-	v := ansi.Strip(m.View())
+	v := ansi.Strip(m.View().Content)
 	if strings.Contains(v, "LINE-01") {
 		t.Fatalf("preview showed top of pane; want bottom-pinned:\n%s", v)
 	}
@@ -468,19 +468,19 @@ func TestPreviewScrollCtrlUD(t *testing.T) {
 	if !m.preview.AtBottom() {
 		t.Fatal("default should pin the preview to the bottom")
 	}
-	v := ansi.Strip(m.View())
+	v := ansi.Strip(m.View().Content)
 	if !strings.Contains(v, "LINE-40") || strings.Contains(v, "LINE-01") {
 		t.Fatalf("default should pin to bottom:\n%s", v)
 	}
 
 	// ctrl+u scrolls up: older content appears, the bottom leaves the view.
 	for i := 0; i < 20; i++ {
-		m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyCtrlU})
+		m = applyMsg(t, m, tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
 	}
 	if m.preview.AtBottom() {
 		t.Fatal("after many ctrl+u the preview should not be at the bottom")
 	}
-	v = ansi.Strip(m.View())
+	v = ansi.Strip(m.View().Content)
 	if strings.Contains(v, "LINE-40") {
 		t.Fatalf("after many ctrl+u, still showing LINE-40:\n%s", v)
 	}
@@ -490,12 +490,12 @@ func TestPreviewScrollCtrlUD(t *testing.T) {
 
 	// ctrl+d scrolls back toward the bottom.
 	for i := 0; i < 20; i++ {
-		m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyCtrlD})
+		m = applyMsg(t, m, tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl})
 	}
 	if !m.preview.AtBottom() {
 		t.Fatal("after ctrl+d to bottom, the preview should be at the bottom")
 	}
-	v = ansi.Strip(m.View())
+	v = ansi.Strip(m.View().Content)
 	if !strings.Contains(v, "LINE-40") {
 		t.Fatalf("after ctrl+d to bottom, missing LINE-40:\n%s", v)
 	}
@@ -517,14 +517,14 @@ func TestPreviewScrollResetsOnSelectionChange(t *testing.T) {
 	m = applyMsg(t, m, initMsg{})
 	m.width, m.height = 80, 12
 
-	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyCtrlU})
-	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyCtrlU})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl})
 	if m.preview.AtBottom() {
 		t.Fatal("expected non-bottom preview before selection change")
 	}
 
 	// Moving to another agent re-captures and pins the new pane to the bottom.
-	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyDown})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
 	if !m.preview.AtBottom() {
 		t.Fatal("preview should pin to bottom after selection change")
 	}
@@ -588,7 +588,7 @@ func TestPreviewFollowsBottomOnRefresh(t *testing.T) {
 	if !m.previewFollowBottom {
 		t.Fatal("force refresh must keep follow-bottom")
 	}
-	v := ansi.Strip(m.View())
+	v := ansi.Strip(m.View().Content)
 	if !strings.Contains(v, "LINE-40") {
 		t.Fatalf("after refresh, want tail LINE-40:\n%s", v)
 	}
@@ -613,7 +613,7 @@ func TestPreviewShortContentBottomAligned(t *testing.T) {
 	const w, h = 80, 24
 	m.width, m.height = w, h
 
-	v := ansi.Strip(m.View())
+	v := ansi.Strip(m.View().Content)
 	rows := strings.Split(v, "\n")
 	listW, _ := m.panelWidths(w - 2)
 	sepCol := listW + 1 // 0-based │ index, one cell in from the left border
@@ -685,7 +685,7 @@ func TestPreviewHeightMismatchStillPins(t *testing.T) {
 	// under the default viewport height of 20.
 	m.width, m.height = 80, 16
 
-	v := ansi.Strip(m.View())
+	v := ansi.Strip(m.View().Content)
 	if !strings.Contains(v, "LINE-50") {
 		t.Fatalf("want bottom line with short panel height:\n%s", v)
 	}
@@ -705,7 +705,7 @@ func TestFooterOmitsStatusCountsShowsPreviewTip(t *testing.T) {
 	// Wide enough that footer and preview tips fit.
 	m.width, m.height = 140, 24
 
-	v := ansi.Strip(m.View())
+	v := ansi.Strip(m.View().Content)
 	// Status counts are no longer in the footer.
 	for _, bad := range []string{"B 1", "W 1", "I 1"} {
 		if strings.Contains(v, bad) {
@@ -753,7 +753,7 @@ func TestHeaderShowsVersionNextToLogo(t *testing.T) {
 	m = applyMsg(t, m, initMsg{})
 	m.width, m.height = 100, 24
 
-	v := ansi.Strip(m.View())
+	v := ansi.Strip(m.View().Content)
 	rows := strings.Split(v, "\n")
 	// Header row 2 is below the top border and the first logo line.
 	if len(rows) < 3 {
@@ -775,7 +775,7 @@ func TestHeaderShowsVersionNextToLogo(t *testing.T) {
 	m2 := New(f.load, true)
 	m2 = applyMsg(t, m2, initMsg{})
 	m2.width, m2.height = 100, 24
-	v2 := ansi.Strip(m2.View())
+	v2 := ansi.Strip(m2.View().Content)
 	logo2 := strings.Split(v2, "\n")[2]
 	if strings.Contains(logo2, "v0.4.2") {
 		t.Fatalf("logo line without version should not contain v0.4.2, got %q", logo2)
@@ -792,7 +792,7 @@ func TestFooterTipsHaveRightMargin(t *testing.T) {
 	m = applyMsg(t, m, initMsg{})
 	m.width, m.height = 100, 24
 
-	footer := ansi.Strip(strings.Split(m.View(), "\n")[m.height-2]) // above the bottom border
+	footer := ansi.Strip(strings.Split(m.View().Content, "\n")[m.height-2]) // above the bottom border
 	// The tips leave exactly one blank cell before the right border.
 	content := strings.TrimSuffix(footer, "│")
 	if strings.TrimRight(content, " ")+" " != content {
@@ -811,7 +811,7 @@ func TestIdentityColorsInListAndPreview(t *testing.T) {
 	m.width, m.height = 120, 24
 	listW, _ := m.panelWidths(120 - 2)
 
-	raw := m.View()
+	raw := m.View().Content
 	// Selected Grok name: status icon (the working spinner frame) + identity
 	// color on selBg.
 	bg := m.st.selBgColor
@@ -821,7 +821,7 @@ func TestIdentityColorsInListAndPreview(t *testing.T) {
 			identityStyle(m.st, "Grok").Bold(true).Background(bg).Render("Popup preview scroll (Grok Build)"),
 		listW,
 	)
-	if !strings.Contains(raw, grokLine) {
+	if !strings.Contains(stripThemeBg(m.st, raw), grokLine) {
 		t.Fatalf("selected Grok missing identity+selBg highlight:\n%q", raw)
 	}
 	// Preview header uses Grok identity color.
@@ -832,13 +832,13 @@ func TestIdentityColorsInListAndPreview(t *testing.T) {
 	claudeLine := " " +
 		statusStyle(m.st, agent.StatusBlocked).Render("B ") +
 		identityStyle(m.st, "Claude").Bold(true).Render("Claude Code")
-	if !strings.Contains(raw, claudeLine) {
+	if !strings.Contains(stripThemeBg(m.st, raw), claudeLine) {
 		t.Fatalf("Claude list row missing identity color:\n%q", raw)
 	}
 
 	// Select Claude: preview header uses Claude identity color.
-	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyDown})
-	raw = m.View()
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyDown})
+	raw = m.View().Content
 	if !strings.Contains(raw, identityStyle(m.st, "Claude").Bold(true).Render("Claude Code")) {
 		t.Fatalf("preview header should use Claude identity color:\n%q", raw)
 	}
@@ -855,7 +855,7 @@ func TestSelectedAgentHighlight(t *testing.T) {
 	m.width, m.height = 120, 24
 
 	listW, _ := m.panelWidths(120 - 2)
-	raw := m.View()
+	raw := m.View().Content
 
 	// The selected name row uses status icon (the working spinner frame) +
 	// agent identity color on the selection background, padded to the list
@@ -867,7 +867,7 @@ func TestSelectedAgentHighlight(t *testing.T) {
 			identityStyle(m.st, "Grok").Bold(true).Background(bg).Render("Popup preview scroll (Grok Build)"),
 		listW,
 	)
-	if !strings.Contains(raw, nameLine) {
+	if !strings.Contains(stripThemeBg(m.st, raw), nameLine) {
 		t.Fatalf("selected name row missing the identity+selBg highlight:\n%q", raw)
 	}
 	// The project row gets the dim selection background too.
@@ -885,7 +885,7 @@ func TestSelectedAgentHighlight(t *testing.T) {
 	claudeLine := " " +
 		statusStyle(m.st, agent.StatusBlocked).Render("B ") +
 		identityStyle(m.st, "Claude").Bold(true).Render("Claude Code")
-	if !strings.Contains(raw, claudeLine) {
+	if !strings.Contains(stripThemeBg(m.st, raw), claudeLine) {
 		t.Fatalf("unselected name row should use the identity color:\n%q", raw)
 	}
 	for _, ln := range strings.Split(ansi.Strip(raw), "\n") {
@@ -930,7 +930,7 @@ func TestGitTagRendersOnProjectLine(t *testing.T) {
 	m = applyMsg(t, m, initMsg{})
 	m.width, m.height = 120, 24
 
-	v := ansi.Strip(m.View())
+	v := ansi.Strip(m.View().Content)
 	lines := strings.Split(v, "\n")
 	found := false
 	for i, ln := range lines {
@@ -961,7 +961,7 @@ func TestGitTagRendersOnProjectLine(t *testing.T) {
 	m2 := New(f2.load, true)
 	m2 = applyMsg(t, m2, initMsg{})
 	m2.width, m2.height = 120, 24
-	v2Lines := strings.Split(ansi.Strip(m2.View()), "\n")
+	v2Lines := strings.Split(ansi.Strip(m2.View().Content), "\n")
 	for i, ln := range v2Lines {
 		parts := strings.SplitN(ln, "│", 3)
 		if len(parts) < 3 {
@@ -998,7 +998,7 @@ func TestSearchMatchesBranchAndPR(t *testing.T) {
 	}
 
 	// Reset and search the PR number.
-	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyEsc})
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyEsc})
 	m = applyMsg(t, m, key('/'))
 	for _, r := range []rune{'4', '2'} {
 		m = applyMsg(t, m, key(r))
@@ -1019,7 +1019,7 @@ func TestAgentRowsAreTwoLines(t *testing.T) {
 	// Wide enough that status icon + session title fit in the list column.
 	m.width, m.height = 120, 24
 
-	v := ansi.Strip(m.View())
+	v := ansi.Strip(m.View().Content)
 	lines := strings.Split(v, "\n")
 
 	// Each row is │ list │ preview │: match against the list column only —
@@ -1064,7 +1064,7 @@ func TestAgentRowsAreTwoLines(t *testing.T) {
 	// The selected name row uses status icon + identity color on selBg;
 	// unselected rows use the same pattern, and the pause status keeps
 	// the orange "blocked" color.
-	raw := m.View()
+	raw := m.View().Content
 	listW, _ := m.panelWidths(120 - 2)
 	bg := m.st.selBgColor
 	nameLine := selFit(m.st,
@@ -1073,19 +1073,19 @@ func TestAgentRowsAreTwoLines(t *testing.T) {
 			identityStyle(m.st, "Grok").Bold(true).Background(bg).Render("Popup preview scroll (Grok Build)"),
 		listW,
 	)
-	if !strings.Contains(raw, nameLine) {
+	if !strings.Contains(stripThemeBg(m.st, raw), nameLine) {
 		t.Fatal("selected agent name should be identity-colored on selBg")
 	}
 	claudeLine := " " +
 		statusStyle(m.st, agent.StatusBlocked).Render("B ") +
 		identityStyle(m.st, "Claude").Bold(true).Render("Claude Code")
-	if !strings.Contains(raw, claudeLine) {
+	if !strings.Contains(stripThemeBg(m.st, raw), claudeLine) {
 		t.Fatal("unselected agent name should use identity color")
 	}
-	if !strings.Contains(raw, styleDim.Render("site")) {
+	if !strings.Contains(stripThemeBg(m.st, raw), styleDim.Render("project: site")) {
 		t.Fatal("cwd should be dimmed in the raw view")
 	}
-	if !strings.Contains(raw, styleOrange.Render("  paused")) {
+	if !strings.Contains(stripThemeBg(m.st, raw), styleOrange.Render("  paused")) {
 		t.Fatal("blocked agent should show an orange pause status")
 	}
 }
@@ -1097,7 +1097,7 @@ func TestFooterShowsActiveFilter(t *testing.T) {
 	m.width, m.height = 80, 24
 
 	m = applyMsg(t, m, key('b'))
-	v := ansi.Strip(m.View())
+	v := ansi.Strip(m.View().Content)
 	if !strings.Contains(v, "b:blocked") {
 		t.Fatalf("footer missing the filter label in:\n%s", v)
 	}
@@ -1116,7 +1116,7 @@ func TestContextLineMovesToPreview(t *testing.T) {
 	// Wide enough that status icon + session title fit in the list column.
 	m.width, m.height = 120, 24
 
-	v := ansi.Strip(m.View())
+	v := ansi.Strip(m.View().Content)
 	lines := strings.Split(v, "\n")
 
 	// Every agent spans exactly three rows: name, project, pane. The
@@ -1161,8 +1161,8 @@ func TestContextLineMovesToPreview(t *testing.T) {
 
 	// An agent without token stats or quota still shows "📊 Usage: ?" and
 	// "💬 Context window: ?" in the preview.
-	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyDown}) // select Claude
-	v = ansi.Strip(m.View())
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyDown}) // select Claude
+	v = ansi.Strip(m.View().Content)
 	if !strings.Contains(v, "📊 Usage: ?") {
 		t.Fatalf("preview should show 📊 Usage: ? for Claude:\n%s", v)
 	}
@@ -1190,10 +1190,10 @@ func TestQuotaWindowsInPreview(t *testing.T) {
 	f := &fakeLoader{data: Data{Rows: rows}}
 	m := New(f.load, true)
 	m = applyMsg(t, m, initMsg{})
-	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyDown}) // select Claude
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyDown}) // select Claude
 	m.width, m.height = 120, 24
 
-	v := ansi.Strip(m.View())
+	v := ansi.Strip(m.View().Content)
 	lines := strings.Split(v, "\n")
 
 	// The list column stays three lines per agent: no usage or quota rows.
@@ -1253,10 +1253,10 @@ func TestBalanceSharesUsageHeader(t *testing.T) {
 	f := &fakeLoader{data: Data{Rows: rows}}
 	m := New(f.load, true)
 	m = applyMsg(t, m, initMsg{})
-	m = applyMsg(t, m, tea.KeyMsg{Type: tea.KeyDown}) // select Claude
+	m = applyMsg(t, m, tea.KeyPressMsg{Code: tea.KeyDown}) // select Claude
 	m.width, m.height = 120, 24
 
-	v := ansi.Strip(m.View())
+	v := ansi.Strip(m.View().Content)
 	lines := strings.Split(v, "\n")
 
 	// The balance text sits on the same line as the usage header.
@@ -1296,7 +1296,7 @@ func TestWorkingAgentShowsSpinner(t *testing.T) {
 	if frame == "" {
 		t.Fatal("spinnerFrame() should return a frame")
 	}
-	lines := strings.Split(ansi.Strip(m.View()), "\n")
+	lines := strings.Split(ansi.Strip(m.View().Content), "\n")
 	var grok string
 	for _, ln := range lines {
 		if strings.Contains(ln, "Grok Build") {
@@ -1474,12 +1474,9 @@ func TestUsageBarColor(t *testing.T) {
 // empty cells must now carry the dim color as their own background, never
 // the selection color.
 func TestUsageBarTrackBackground(t *testing.T) {
-	lipgloss.SetColorProfile(termenv.ANSI256)
-	t.Cleanup(func() { lipgloss.SetColorProfile(termenv.Ascii) })
-
 	m := Model{st: defaultStyles, theme: theme.Default, contextWarn: defaultContextWarn}
 	dim := styleHex(m.st.dim)
-	selBg := string(m.st.selBgColor)
+	selBg := colorHex(m.st.selBgColor)
 	if dim == "" || dim == selBg {
 		t.Fatalf("need distinct dim and selection colors, dim=%q selBg=%q", dim, selBg)
 	}
@@ -1551,7 +1548,7 @@ func TestHeaderOmitsFleetCounts(t *testing.T) {
 	m = applyMsg(t, m, initMsg{})
 	m.width, m.height = 80, 24
 
-	raw := m.View()
+	raw := m.View().Content
 	rawLines := strings.Split(ansi.Strip(raw), "\n")
 	// Rows 1..mainHeaderHeight sit below the top border and carry the ascii
 	// wordmark; each must match one row of the logo.
@@ -1571,7 +1568,7 @@ func TestHeaderOmitsFleetCounts(t *testing.T) {
 	}
 
 	m3 := m.WithTheme(theme.Default)
-	header3Lines := strings.Split(ansi.Strip(m3.View()), "\n")[1 : 1+mainHeaderHeight]
+	header3Lines := strings.Split(ansi.Strip(m3.View().Content), "\n")[1 : 1+mainHeaderHeight]
 	for _, headerRow := range header3Lines {
 		for _, bad := range []string{"🚨1", "⚡️1", "💤1"} {
 			if strings.Contains(headerRow, bad) {
@@ -1595,7 +1592,7 @@ func TestProjectLineHasNoStatusAge(t *testing.T) {
 	m = applyMsg(t, m, initMsg{})
 	m.width, m.height = 120, 24
 
-	v := ansi.Strip(m.View())
+	v := ansi.Strip(m.View().Content)
 	lines := strings.Split(v, "\n")
 	for i, ln := range lines {
 		parts := strings.SplitN(ln, "│", 3)

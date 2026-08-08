@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/bubbles/spinner"
+	"charm.land/bubbles/v2/spinner"
 	"github.com/guillaumemeyer/tmon/internal/agent"
 )
 
@@ -113,7 +113,9 @@ func TestLipgloss(t *testing.T) {
 		"colour208": "208",
 		"colour0":   "0",
 		"colour15":  "15",
-		"cyan":      "cyan",
+		"cyan":      "6",
+		"green":     "2",
+		"brightred": "9",
 		"#88c0d0":   "#88c0d0",
 		"default":   "default",
 		"":          "",
